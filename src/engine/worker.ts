@@ -4,9 +4,11 @@
 // and replayed by the library's `executeRun` with its three seams as requests under the item's
 // lease (Journal → load/append, Scheduler → wake, Children → child), with `extend` on a third of the
 // ack wait meanwhile; the `ExecOutcome` goes back as `done`. On `expired` from any request the item
-// is dropped and the slot polls on. The worker holds no state across items: the consumers, the
-// inbound event, the run lease, the ack matrix, the obligations after a terminal, the cascade, the
-// forward, the parked index and the lost-wake repair are the engine's.
+// is dropped and the slot polls on. Every poll names this worker, and stop() withdraws its waiting
+// polls (`poll {cancelPoll}`), so a stop takes as long as the items in flight, not a poll's wait.
+// The worker holds no state across items: the consumers, the inbound event, the run lease, the ack
+// matrix, the obligations after a terminal, the cascade, the forward, the parked index and the
+// lost-wake repair are the engine's.
 
 import { type NatsConnection } from "@nats-io/nats-core";
 import { type ChildStart, type Children } from "../core/children.js";
@@ -157,6 +159,8 @@ export function createWorker(opts: WorkerOptions): Worker {
 
   let running = false;
   let closedReported = false;
+  /** This worker's name on its polls, so that stop() withdraws its polls and no one else's. */
+  const workerId = globalThis.crypto.randomUUID();
   const slots: WorkerHealth["pumps"] = [];
   /** runId of every item held right now, by item. */
   const held = new Map<symbol, string>();
@@ -350,7 +354,7 @@ export function createWorker(opts: WorkerOptions): Worker {
       }
       let r: PollReply;
       try {
-        r = await request<PollReply>("poll", { workflows, waitMs: pollWaitMs }, { waitMs: pollWaitMs }); // prettier-ignore
+        r = await request<PollReply>("poll", { workflows, waitMs: pollWaitMs, worker: workerId }, { waitMs: pollWaitMs }); // prettier-ignore
         failures = 0;
         state.alive = running;
       } catch (e) {
@@ -407,11 +411,20 @@ export function createWorker(opts: WorkerOptions): Worker {
       }
     },
     async stop(): Promise<void> {
+      const wasRunning = running;
       running = false;
       for (const s of slots) s.alive = false;
-      // The items in flight finish (bounded). A poll still waiting in the engine is not
-      // abandoned: its loop stays subscribed until the engine answers, and an item it is handed
-      // then goes straight back (`done retry`) instead of waiting out its ack wait.
+      // Withdraw this worker's polls still waiting in the engine (API.md "Withdrawing polls"):
+      // every instance answers them `none` at once and never hands them an item. An item handed in
+      // the instant before goes straight back (`done retry`). Without an engine to answer, the
+      // polls end at their own wait, as before.
+      if (wasRunning && !opts.nc.isClosed()) {
+        const withdraw = { workflows: [], worker: workerId, cancelPoll: true };
+        await request("poll", withdraw).catch((e: unknown) => {
+          logger.debug("durable: withdrawing the polls failed; they end at their wait", { error: String(e) }); // prettier-ignore
+        });
+      }
+      // The items in flight finish (bounded).
       let t: ReturnType<typeof setTimeout> | undefined;
       const bound = new Promise<"bound">((r) => {
         t = setTimeout(() => r("bound"), STOP_DRAIN_MS);

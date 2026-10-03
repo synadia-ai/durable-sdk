@@ -6,7 +6,9 @@ the journal is paged in with ``load`` while ``more``, reversed through the paylo
 replayed by the library's ``execute_run`` with its three seams as requests under the item's lease
 (Journal → load/append, Scheduler → wake, Children → child), with ``extend`` on a third of the ack
 wait meanwhile; the ``ExecOutcome`` goes back as ``done``. On ``expired`` from any request the item
-is dropped and the slot polls on. The worker holds no state across items: the consumers, the
+is dropped and the slot polls on. Every poll names this worker, and ``stop()`` withdraws its waiting
+polls (``poll {cancelPoll}``), so a stop takes as long as the items in flight, not a poll's wait.
+The worker holds no state across items: the consumers, the
 inbound event, the run lease, the ack matrix, the obligations after a terminal, the cascade, the
 forward, the parked index and the lost-wake repair are the engine's.
 """
@@ -16,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+import uuid
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -134,6 +137,8 @@ class Worker:
 
         self._running = False
         self._closed_reported = False
+        #: This worker's name on its polls, so that stop() withdraws its polls and no one else's.
+        self._worker_id = str(uuid.uuid4())
         self._slots: list[PumpHealth] = []
         self._polls: list[asyncio.Task[None]] = []
         #: run_id of every item held right now, by item.
@@ -171,17 +176,26 @@ class Worker:
     async def stop(self, drain_timeout_s: float = DEFAULT_DRAIN_TIMEOUT_S) -> None:
         """Stop polling, and let the items in flight finish (bounded by ``drain_timeout_s``).
 
-        A poll still waiting in the engine is not abandoned: its loop stays subscribed until the
-        engine answers, and an item it is handed then goes straight back (``done retry``) instead
-        of waiting out its ack wait (docs/findings.md F5).
+        This worker's polls still waiting in the engine are withdrawn (``poll {cancelPoll}``,
+        API.md "Withdrawing polls"): every instance answers them ``none`` at once and never hands
+        them an item. An item handed in the instant before goes straight back (``done retry``).
+        Without an engine to answer, the polls end at their own wait, as before.
 
         Past the timeout the items still in flight are cancelled, as the library's ``stop()`` did: a
         shutdown must complete. They send no ``done``, so their leases lapse and the items
         redeliver at the ack wait, which is correct, just slower.
         """
+        was_running = self._running
         self._running = False
         for s in self._slots:
             s.alive = False
+        if was_running and not self._nc.is_closed:
+            try:
+                await self._request.request(
+                    "poll", {"workflows": [], "worker": self._worker_id, "cancelPoll": True}
+                )
+            except Exception as e:  # noqa: BLE001 — the polls then end at their own wait
+                self._log.debug("durable: withdrawing the polls failed; they end at their wait", error=str(e))  # fmt: skip
         if self._inflight:
             _done, pending = await asyncio.wait(set(self._inflight), timeout=drain_timeout_s)
             if pending:
@@ -242,7 +256,11 @@ class Worker:
             try:
                 r = await self._request.request(
                     "poll",
-                    {"workflows": self._workflows, "waitMs": self._poll_wait_ms},
+                    {
+                        "workflows": self._workflows,
+                        "waitMs": self._poll_wait_ms,
+                        "worker": self._worker_id,
+                    },
                     wait_ms=self._poll_wait_ms,
                 )
                 failures = 0
