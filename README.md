@@ -1,6 +1,6 @@
 # durable-sdk
 
-The thin durable execution SDKs, TypeScript first. Each keeps the replay core of the library `@synadia-ai/durable` (`synadia-ai/durable-ts`, frozen at `7456c75`): workflows as ordinary functions over a `ctx`, every side-effecting or nondeterministic step journaled and replayed after a crash, the determinism guards, the out-of-band halts. Behind the core's three seams (`Journal`, `Scheduler`, `Children`) and the client's five calls sits a request/reply client for [`durable-engine`](https://github.com/synadia-ai/durable-engine), which owns the streams. A customer's workflow functions run in the customer's process; nothing runs without the engine.
+The thin durable execution SDKs, TypeScript and Python. Each keeps the replay core of the library `@synadia-ai/durable` (`synadia-ai/durable-ts`, frozen at `7456c75`): workflows as ordinary functions over a `ctx`, every side-effecting or nondeterministic step journaled and replayed after a crash, the determinism guards, the out-of-band halts. Behind the core's three seams (`Journal`, `Scheduler`, `Children`) and the client's five calls sits a request/reply client for [`durable-engine`](https://github.com/synadia-ai/durable-engine), which owns the streams. A customer's workflow functions run in the customer's process; nothing runs without the engine.
 
 Private until published. Created 2026-10-03 on the Synadia Agent Fabric's decision 61 (`synadia-agent-fabric-docs`, `DECISIONS.md`; the research `docs/research/2026-10-03--durable-execution-as-a-product.md`).
 
@@ -8,7 +8,7 @@ Private until published. Created 2026-10-03 on the Synadia Agent Fabric's decisi
 - **The only dependency** is `@nats-io/nats-core`: every call is one request to `{prefix}.api.v1.<op>` (`../durable-engine/docs/API.md`). There are no consumers, streams or buckets here, and no JetStream client.
 - **Documentation** is this README, the [examples](examples/), [`docs/findings.md`](docs/findings.md) (what building it found) and [`docs/ORIGIN.md`](docs/ORIGIN.md) (which file came from where), kept minimal on purpose. The protocol stays in the frozen library (`../synadia-durable-execution/docs/PROTOCOL.md`).
 
-**Status:** the TypeScript SDK, `0.7.0-alpha` (board row P2-19a). The Python SDK is next (P2-19b).
+**Status:** the TypeScript SDK, `0.7.0-alpha` (board row P2-19a), and the Python SDK in [`python/`](python/), `0.7.0a0` (P2-19b), with its own [README](python/README.md).
 
 ## Quickstart
 
@@ -71,10 +71,10 @@ A refusal from the engine is a typed error: `fenced` → `FencedError` (with `ex
 
 ```sh
 bun install && npm test            # the 13 unit suites of the pure core (no server)
-npm run test:integration           # the library's 10 integration suites on durable-engine serve
+npm run test:integration           # 9 of the library's integration suites, and interop-py, on durable-engine serve
 ```
 
-The integration suites spawn a `nats-server` (≥ 2.14, from `PATH`) under the library's account-limits profile (`DE_TEST_PROFILE=ngs|tight|none`, default `ngs`), and one `durable-engine serve` per prefix a test uses, stopped after each test. The engine binary is `DE_ENGINE` (a path), or is built with `go build -o .engine-bin/…` from `../durable-engine` (`DE_ENGINE_REPO`) at the commit in `engine.pin`. A checkout at another commit, or with local changes, is refused unless `DE_ENGINE_ANY=1`. Without the binary or Go the suites skip, saying why. `DE_ENGINE_LOG=1` echoes the engines' logs, and `DE_SDK_LOG=1` gives a worker without a logger a console one. `upgrade-compat` also needs `NATS_SERVER_OLD` (a nats-server ≤ 2.14.1) and skips without it. Nothing reaches beyond 127.0.0.1.
+The integration suites spawn a `nats-server` (≥ 2.14, from `PATH`) under the library's account-limits profile (`DE_TEST_PROFILE=ngs|tight|none`, default `ngs`), and one `durable-engine serve` per prefix a test uses, stopped after each test. The engine binary is `DE_ENGINE` (a path), or is built with `go build -o .engine-bin/…` from `../durable-engine` (`DE_ENGINE_REPO`) at the commit in `engine.pin`. A checkout at another commit, or with local changes, is refused unless `DE_ENGINE_ANY=1`. Without the binary or Go the suites skip, saying why. `DE_ENGINE_LOG=1` echoes the engines' logs, and `DE_SDK_LOG=1` gives a worker without a logger a console one. Nothing reaches beyond 127.0.0.1.
 
 `npm run check` adds the typecheck, lint and formatting.
 
@@ -85,3 +85,5 @@ The integration suites spawn a `nats-server` (≥ 2.14, from `PATH`) under the l
 ```sh
 NATS_URL=nats://127.0.0.1:4222 DE_PREFIX=de npx tsx conformance/interop/ts-worker.ts   # prints READY
 ```
+
+The Python suites drive it (`python/tests/integration/test_interop.py`), and `test/integration/interop-py.test.ts` drives the Python interop worker (`python/conformance/worker.py`) with the TypeScript client, each with and without `DE_PAYLOAD_KEY`. `conformance/interop/ts-client.ts` is the library's TypeScript client for the Python reverse suite.
