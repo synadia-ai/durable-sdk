@@ -54,9 +54,9 @@ describe("one way in: the payload-blob choke point", () => {
       .filter((f) => f.path !== "journal/blobs.ts" && /storePayloadBlob\s*\(/.test(f.text))
       .map((f) => f.path)
       .sort();
+    // durable-sdk: `nats/runs.ts` (the DE_RUNS status hint) is the engine's now and not in src/.
     expect(callers).toEqual([
       "nats/protocol.ts", // a work item's signal data / child outcome
-      "nats/runs.ts", // the DE_RUNS status hint's result / error
     ]);
   });
 });

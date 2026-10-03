@@ -161,6 +161,8 @@ export function createWorker(opts: WorkerOptions): Worker {
   /** runId of every item held right now, by item. */
   const held = new Map<symbol, string>();
   const inflight = new Set<Promise<void>>();
+  /** The tail of each run's items executing on this worker (removed when it settles). */
+  const runChains = new Map<string, Promise<void>>();
 
   function reportConnectionClosed(): void {
     if (closedReported) return;
@@ -174,8 +176,12 @@ export function createWorker(opts: WorkerOptions): Worker {
     );
   }
 
-  /** One item, from its journal to its `done`. Never throws. */
-  async function processItem(it: PollReply): Promise<void> {
+  /**
+   * One item, from its journal to its `done`. Never throws. `before` is the run's previous item
+   * on this worker, still executing (a redelivery after its lease ended): this one waits for it,
+   * its lease kept live meanwhile, so one process never executes a run twice at once.
+   */
+  async function processItem(it: PollReply, before: Promise<void> | undefined): Promise<void> {
     const { runId, lease } = it;
     const kind = it.item?.kind ?? "";
     const startedAt = Date.now();
@@ -251,8 +257,17 @@ export function createWorker(opts: WorkerOptions): Worker {
     };
 
     let outcome: ExecOutcome | { kind: "retry"; error: unknown } = { kind: "retry", error: undefined };
-    let extender: ReturnType<typeof setInterval> | undefined;
+    /** The library's `work.done` outcome when it is not the ExecOutcome's kind. */
+    let label: string | undefined;
+    // Extend from dispatch: the wait behind `before` and the journal's pages count too.
+    const extender = setInterval(() => {
+      leased("extend", { runId }).catch((e: unknown) => {
+        if (!(e instanceof LeaseExpiredError)) logger.debug("durable: extend failed", { runId, error: String(e) }); // prettier-ignore
+      });
+    }, Math.max(100, Math.floor(it.ackWaitMs / 3)));
+    extender.unref?.();
     try {
+      if (before !== undefined) await before;
       const loaded = await loadAll(it.journal, it.more === true);
       const wf = registry.resolve(it.workflow, it.version);
       if (wf === undefined) {
@@ -260,12 +275,6 @@ export function createWorker(opts: WorkerOptions): Worker {
         logger.error("durable: an item for a version this worker does not run; handing it back", { runId, workflow: it.workflow, version: it.version }); // prettier-ignore
         outcome = { kind: "retry", error: new Error(`${it.workflow} v${it.version} not registered`) }; // prettier-ignore
       } else {
-        extender = setInterval(() => {
-          leased("extend", { runId }).catch((e: unknown) => {
-            if (!(e instanceof LeaseExpiredError)) logger.debug("durable: extend failed", { runId, error: String(e) }); // prettier-ignore
-          });
-        }, Math.max(100, Math.floor(it.ackWaitMs / 3)));
-        extender.unref?.();
         outcome = await executeRun(runId, {
           workflow: wf,
           journal,
@@ -278,6 +287,7 @@ export function createWorker(opts: WorkerOptions): Worker {
       }
     } catch (e) {
       if (e instanceof PayloadCodecError) {
+        label = "payload-codec";
         // The journal is readable but its payloads are not, and every cause (no codec, the wrong
         // key, altered bytes) is operational: hand it back (the engine naks with backoff), loud.
         logger.error(
@@ -290,10 +300,10 @@ export function createWorker(opts: WorkerOptions): Worker {
       }
       outcome = { kind: "retry", error: e };
     } finally {
-      if (extender !== undefined) clearInterval(extender);
+      clearInterval(extender);
     }
 
-    let reported: string = outcome.kind;
+    let reported: string = label ?? outcome.kind;
     if (outcome.kind === "retry" && !(outcome.error instanceof LeaseExpiredError) && dropped === undefined) {
       logger.warn("durable: infra error during run; will retry", { runId, error: String(outcome.error) }); // prettier-ignore
     }
@@ -354,13 +364,15 @@ export function createWorker(opts: WorkerOptions): Worker {
       }
       const key = Symbol(r.runId);
       held.set(key, r.runId);
-      const p = processItem(r);
+      const p = processItem(r, runChains.get(r.runId));
+      runChains.set(r.runId, p);
       inflight.add(p);
       try {
         await p;
       } finally {
         inflight.delete(p);
         held.delete(key);
+        if (runChains.get(r.runId) === p) runChains.delete(r.runId);
       }
     }
     state.alive = false;

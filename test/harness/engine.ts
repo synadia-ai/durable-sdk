@@ -174,6 +174,14 @@ export async function stopEngines(): Promise<void> {
   await Promise.allSettled(all.map(async (p) => (await p).stop()));
 }
 
+/** `DE_SDK_LOG=1`: a worker without a logger of its own logs to the console (debugging a suite). */
+const consoleLogger = {
+  debug: (m: string, f?: Record<string, unknown>) => console.error(`[sdk debug] ${m}`, f ?? ""),
+  info: (m: string, f?: Record<string, unknown>) => console.error(`[sdk info] ${m}`, f ?? ""),
+  warn: (m: string, f?: Record<string, unknown>) => console.error(`[sdk warn] ${m}`, f ?? ""),
+  error: (m: string, f?: Record<string, unknown>) => console.error(`[sdk error] ${m}`, f ?? ""),
+};
+
 function flagsOf(o: EngineFlags): EngineFlags {
   const f: EngineFlags = {};
   if (o.streamMaxBytes !== undefined) f.streamMaxBytes = o.streamMaxBytes;
@@ -188,7 +196,7 @@ function flagsOf(o: EngineFlags): EngineFlags {
 
 /** The SDK's createWorker, with the prefix's engine started before the worker's first poll. */
 export function createWorker(opts: WorkerOptions): Worker {
-  const w = sdkCreateWorker(opts);
+  const w = sdkCreateWorker(process.env.DE_SDK_LOG === "1" && opts.logger === undefined ? { ...opts, logger: consoleLogger } : opts); // prettier-ignore
   return {
     async start(): Promise<void> {
       await ensureEngine(opts.prefix ?? "de", flagsOf(opts));
@@ -247,4 +255,48 @@ declare module "vitest" {
   interface ProvidedContext {
     engineBin: string | null;
   }
+}
+
+/**
+ * The engine's own counters (`info`'s `counts`, its /metrics numbers by series name), for a suite
+ * whose assertion was about what the library's worker did and is now the engine's: a terminal
+ * re-drive, an item pulled for a run that had already ended. One engine per prefix, so the
+ * counts are the prefix's.
+ */
+export async function engineCounts(
+  nc: { request(subject: string, data?: Uint8Array, opts?: { timeout: number }): Promise<{ json<T>(): T }> }, // prettier-ignore
+  prefix: string,
+): Promise<Record<string, number>> {
+  const r = await nc.request(`${prefix}.api.v1.info`, new TextEncoder().encode("{}"), { timeout: 5_000 }); // prettier-ignore
+  return r.json<{ counts?: Record<string, number> }>().counts ?? {};
+}
+
+/** The sum of every series of `name` whose labels include all of `labels`. */
+export function countOf(counts: Record<string, number>, name: string, labels: Record<string, string> = {}): number { // prettier-ignore
+  let n = 0;
+  for (const [k, v] of Object.entries(counts)) {
+    if (k !== name && !k.startsWith(`${name}{`)) continue;
+    if (Object.entries(labels).every(([l, val]) => k.includes(`${l}="${val}"`))) n += v;
+  }
+  return n;
+}
+
+/** The log lines of the engine serving `prefix` (its stderr, as `durable-engine serve` writes it). */
+export async function engineLog(prefix: string): Promise<string[]> {
+  const e = await engineFor(prefix);
+  return e ? [...e.log] : [];
+}
+
+/**
+ * Stop the engine serving `prefix` (gracefully, or `kill: true` for a crash); the next worker or
+ * client on the prefix starts a fresh one, which provisions what is missing — the library's "a
+ * restarted worker re-provisions", now the engine's.
+ */
+export async function restartEngine(prefix: string, opts: { kill?: boolean } = {}): Promise<void> {
+  const key = `${serverUrl()}|${prefix}`;
+  const p = engines.get(key);
+  engines.delete(key);
+  if (p === undefined) return;
+  const e = await p;
+  await (opts.kill === true ? e.kill() : e.stop());
 }

@@ -99,6 +99,20 @@ export function createClient(opts: ClientOptions): Client {
   const request = createTransport(opts.nc, prefix, logger);
   const codec = opts.payloadCodec;
 
+  // A `result` request in flight across a disconnect loses its reply (the engine answers an inbox
+  // nobody is subscribed to for that moment): the wait is cut short at the next reconnect and the
+  // engine asked again, instead of waiting out the request's timeout. One status watch per client,
+  // started by the first result() and ended by the connection's close.
+  let reconnected: Promise<void> | undefined;
+  function nextReconnect(): Promise<void> {
+    reconnected ??= (async () => {
+      for await (const s of opts.nc.status()) if (s.type === "reconnect") break;
+    })().finally(() => {
+      reconnected = undefined;
+    });
+    return reconnected;
+  }
+
   function closedError(runId: string): ConnectionClosedError {
     return new ConnectionClosedError(
       `run ${runId}: the NATS connection closed while waiting for the result — the run ` +
@@ -121,7 +135,7 @@ export function createClient(opts: ClientOptions): Client {
           try {
             // The request may outlive the caller's deadline by its margin when the engine is
             // unresponsive; the race below keeps result() to the deadline it was given.
-            r = await raceDeadline(request<ResultReply>("result", { runId, waitMs }, { waitMs }), deadline); // prettier-ignore
+            r = await raceDeadline(request<ResultReply>("result", { runId, waitMs }, { waitMs }), deadline, nextReconnect()); // prettier-ignore
           } catch (e) {
             if (e instanceof ConnectionClosedError) throw closedError(runId);
             if (!(e instanceof EngineUnavailableError)) throw e;
@@ -196,12 +210,12 @@ export function createClient(opts: ClientOptions): Client {
   };
 }
 
-/** Settle with `p`, or reject with nothing useful at `deadline` (the caller turns that into a timeout). */
-function raceDeadline<T>(p: Promise<T>, deadline: number): Promise<T | undefined> {
+/** Settle with `p`, or with `undefined` at `deadline` or at `cut` (the caller asks again or times out). */
+function raceDeadline<T>(p: Promise<T>, deadline: number, cut: Promise<void>): Promise<T | undefined> {
   const ms = deadline - Date.now();
   let t: ReturnType<typeof setTimeout> | undefined;
   const timer = new Promise<undefined>((r) => {
     t = setTimeout(() => r(undefined), Math.max(0, ms) + 50);
   });
-  return Promise.race([p, timer]).finally(() => clearTimeout(t));
+  return Promise.race([p, timer, cut.then(() => undefined)]).finally(() => clearTimeout(t));
 }
