@@ -1,0 +1,18 @@
+# Runtime scratch — the coding-agent example writes model-generated files here. It's already in the
+# example's .gitignore, but prettier only reads the root ignore files, so list it here too (otherwise a
+# real-model run leaves un-prettier'd files that fail `format:check`).
+examples/durable-agent/coding-agent/workspace/
+python/examples/durable_agent/workspace/
+
+# Python SDK — the venv and tool caches are not ours to format.
+python/.venv/
+python/.pytest_cache/
+python/.mypy_cache/
+python/.ruff_cache/
+
+# Generated: conformance/vectors/*.json is written by conformance/generate-vectors.ts and its bytes
+# are the cross-SDK golden. A formatter must not get a second opinion about them.
+conformance/vectors/
+
+# load/soak harness output (raw JSONL)
+bench/out/

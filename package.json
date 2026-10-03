@@ -1,0 +1,73 @@
+{
+  "name": "@synadia-ai/durable",
+  "version": "0.7.0-alpha",
+  "description": "The thin durable execution SDK: the replay core of @synadia-ai/durable in your process, durable-engine behind it.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "default": "./dist/index.js"
+    },
+    "./errors": {
+      "types": "./dist/errors.d.ts",
+      "import": "./dist/errors.js",
+      "require": "./dist/errors.cjs",
+      "default": "./dist/errors.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "Apache-2.0",
+  "author": "Synadia Communications",
+  "private": true,
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run test/unit",
+    "test:unit": "vitest run test/unit",
+    "test:integration": "vitest run -c vitest.integration.config.ts",
+    "test:all": "vitest run && vitest run -c vitest.integration.config.ts",
+    "example:charge": "tsx examples/charge.ts",
+    "example:saga": "tsx examples/saga.ts",
+    "example:crash-replay": "tsx examples/crash-replay.ts",
+    "example:fan-out": "tsx examples/fan-out.ts",
+    "example:cancel": "tsx examples/cancel.ts",
+    "interop:worker": "tsx conformance/interop/ts-worker.ts",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm run test"
+  },
+  "dependencies": {
+    "@nats-io/nats-core": "^3.4.0"
+  },
+  "devDependencies": {
+    "@nats-io/jetstream": "^3.4.0",
+    "@nats-io/kv": "^3.4.0",
+    "@nats-io/obj": "^3.4.0",
+    "@nats-io/transport-node": "^3.4.0",
+    "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.3.0",
+    "tsup": "^8.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^2.1.0"
+  }
+}
