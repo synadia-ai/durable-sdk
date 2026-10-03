@@ -1,0 +1,24 @@
+{
+  "$doc": "Account limits the test server enforces, by profile. Read by BOTH harnesses (test/harness/nats-server.ts and python/tests/conftest.py) so they cannot drift. `ngs` is the managed service's R1 tier as read from the bench account on 2026-09-16 (docs/plans/test-axes.md, increment 1); `tight` is for hunting \u2014 4 consumers per stream and a 64 KiB max_payload bite fastest; its 12 GiB storage admits two DEFAULT-sized prefixes (~5.1 GiB each, the stream cap's worth) so the hunt is not drowned by the suites that deliberately provision with library defaults; `none` is a default local server (no accounts block, 1 MiB max_payload). Selected with DE_TEST_PROFILE (default ngs).",
+  "ngs": {
+    "maxPayload": 8388608,
+    "account": {
+      "max_mem": 0,
+      "max_file": 53687091200,
+      "max_streams": 16,
+      "max_consumers": 250,
+      "max_bytes_required": true
+    }
+  },
+  "tight": {
+    "maxPayload": 65536,
+    "account": {
+      "max_mem": 0,
+      "max_file": 12884901888,
+      "max_streams": 16,
+      "max_consumers": 4,
+      "max_bytes_required": true
+    }
+  },
+  "none": null
+}

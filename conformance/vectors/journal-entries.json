@@ -1,0 +1,511 @@
+{
+  "generatedBy": "@synadia-ai/durable jsonCodec",
+  "ts": 1781667505735,
+  "vectors": [
+    {
+      "name": "start",
+      "note": "PROTOCOL Appendix C, seq 267",
+      "entry": {
+        "kind": "start",
+        "seq": 0,
+        "wf": "checkout",
+        "wfVersion": 1,
+        "input": {
+          "cartId": "c-100",
+          "region": "us-west"
+        },
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"start\",\"seq\":0,\"wf\":\"checkout\",\"wfVersion\":1,\"input\":{\"cartId\":\"c-100\",\"region\":\"us-west\"},\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "start-child",
+      "note": "a sub-workflow's start carries the parent link (PROTOCOL §9)",
+      "entry": {
+        "kind": "start",
+        "seq": 0,
+        "wf": "ship",
+        "wfVersion": 1,
+        "input": {
+          "orderId": "ord-c-100"
+        },
+        "parent": {
+          "runId": "checkout-ok",
+          "seq": 4,
+          "wf": "checkout"
+        },
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"start\",\"seq\":0,\"wf\":\"ship\",\"wfVersion\":1,\"input\":{\"orderId\":\"ord-c-100\"},\"parent\":{\"runId\":\"checkout-ok\",\"seq\":4,\"wf\":\"checkout\"},\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "start-generation",
+      "note": "a continue-as-new generation carries generation + base",
+      "entry": {
+        "kind": "start",
+        "seq": 0,
+        "wf": "subscription",
+        "wfVersion": 2,
+        "input": {
+          "cycle": 7
+        },
+        "generation": 3,
+        "base": "sub-acme",
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"start\",\"seq\":0,\"wf\":\"subscription\",\"wfVersion\":2,\"input\":{\"cycle\":7},\"generation\":3,\"base\":\"sub-acme\",\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "step-begin",
+      "note": "PROTOCOL Appendix C, seq 269 — intent, appended before the effect",
+      "entry": {
+        "kind": "step-begin",
+        "seq": 0,
+        "name": "reserve-inventory",
+        "key": "checkout-ok:0",
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"step-begin\",\"seq\":0,\"name\":\"reserve-inventory\",\"key\":\"checkout-ok:0\",\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "step-end",
+      "note": "PROTOCOL Appendix C, seq 270",
+      "entry": {
+        "kind": "step-end",
+        "seq": 0,
+        "name": "reserve-inventory",
+        "value": "ord-c-100",
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"step-end\",\"seq\":0,\"name\":\"reserve-inventory\",\"value\":\"ord-c-100\",\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "now",
+      "entry": {
+        "kind": "now",
+        "seq": 1,
+        "value": 1781667505735,
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"now\",\"seq\":1,\"value\":1781667505735,\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "random",
+      "entry": {
+        "kind": "random",
+        "seq": 2,
+        "value": 0.4816,
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"random\",\"seq\":2,\"value\":0.4816,\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "uuid",
+      "entry": {
+        "kind": "uuid",
+        "seq": 3,
+        "value": "0bc7e5a2-3f10-4a7c-9b1e-6d2f8c4a5e90",
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"uuid\",\"seq\":3,\"value\":\"0bc7e5a2-3f10-4a7c-9b1e-6d2f8c4a5e90\",\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "sleep",
+      "note": "PROTOCOL Appendix C, seq 278",
+      "entry": {
+        "kind": "sleep",
+        "seq": 3,
+        "name": "settle",
+        "dueMs": 1781753905735,
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"sleep\",\"seq\":3,\"name\":\"settle\",\"dueMs\":1781753905735,\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "await-with-timeout",
+      "note": "PROTOCOL Appendix C, seq 271 — dueMs present only when a timeout was given",
+      "entry": {
+        "kind": "await",
+        "seq": 1,
+        "name": "payment",
+        "dueMs": 1781671105735,
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"await\",\"seq\":1,\"name\":\"payment\",\"dueMs\":1781671105735,\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "await-no-timeout",
+      "entry": {
+        "kind": "await",
+        "seq": 1,
+        "name": "payment",
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"await\",\"seq\":1,\"name\":\"payment\",\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "signal",
+      "note": "PROTOCOL Appendix C, seq 275 — non-command, seq -1",
+      "entry": {
+        "kind": "signal",
+        "seq": -1,
+        "name": "payment",
+        "data": {
+          "approved": true
+        },
+        "signalId": "0bc7e5a2-3f10-4a7c-9b1e-6d2f8c4a5e90",
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"signal\",\"seq\":-1,\"name\":\"payment\",\"data\":{\"approved\":true},\"signalId\":\"0bc7e5a2-3f10-4a7c-9b1e-6d2f8c4a5e90\",\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "call",
+      "note": "PROTOCOL Appendix C, seq 284 — childRunId is derived {parent}_{seq}",
+      "entry": {
+        "kind": "call",
+        "seq": 4,
+        "name": "ship",
+        "childRunId": "checkout-ok_4",
+        "wf": "ship",
+        "input": {
+          "orderId": "ord-c-100"
+        },
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"call\",\"seq\":4,\"name\":\"ship\",\"childRunId\":\"checkout-ok_4\",\"wf\":\"ship\",\"input\":{\"orderId\":\"ord-c-100\"},\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "resolve-timer",
+      "note": "PROTOCOL Appendix C, seq 283 — neither value nor error: a fired sleep",
+      "entry": {
+        "kind": "resolve",
+        "seq": -1,
+        "resolvesSeq": 3,
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"resolve\",\"seq\":-1,\"resolvesSeq\":3,\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "resolve-child-value",
+      "note": "PROTOCOL Appendix C, seq 291",
+      "entry": {
+        "kind": "resolve",
+        "seq": -1,
+        "resolvesSeq": 4,
+        "value": {
+          "tracking": "TRK-ord-c-100"
+        },
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"resolve\",\"seq\":-1,\"resolvesSeq\":4,\"value\":{\"tracking\":\"TRK-ord-c-100\"},\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "resolve-child-error",
+      "note": "a failed sub-workflow resolves the parent's call with an error",
+      "entry": {
+        "kind": "resolve",
+        "seq": -1,
+        "resolvesSeq": 4,
+        "error": {
+          "name": "WorkflowFailure",
+          "message": "carrier rejected the shipment"
+        },
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"resolve\",\"seq\":-1,\"resolvesSeq\":4,\"error\":{\"name\":\"WorkflowFailure\",\"message\":\"carrier rejected the shipment\"},\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "result",
+      "note": "PROTOCOL Appendix C, seq 292",
+      "entry": {
+        "kind": "result",
+        "seq": -1,
+        "value": {
+          "status": "shipped",
+          "detail": "ord-c-100 · TRK-ord-c-100"
+        },
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"result\",\"seq\":-1,\"value\":{\"status\":\"shipped\",\"detail\":\"ord-c-100 · TRK-ord-c-100\"},\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "fail",
+      "entry": {
+        "kind": "fail",
+        "seq": -1,
+        "error": {
+          "name": "NonDeterminismError",
+          "message": "run r1: non-determinism at seq 2"
+        },
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"fail\",\"seq\":-1,\"error\":{\"name\":\"NonDeterminismError\",\"message\":\"run r1: non-determinism at seq 2\"},\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "continued",
+      "note": "the `version` field is what makes a crash mid-rollover re-drive to the SAME version",
+      "entry": {
+        "kind": "continued",
+        "seq": -1,
+        "nextRunId": "sub-acme_g4",
+        "input": {
+          "cycle": 8
+        },
+        "generation": 4,
+        "base": "sub-acme",
+        "version": 2,
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"continued\",\"seq\":-1,\"nextRunId\":\"sub-acme_g4\",\"input\":{\"cycle\":8},\"generation\":4,\"base\":\"sub-acme\",\"version\":2,\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "continued-no-version",
+      "note": "pre-versioning entries omit `version` and coalesce to the current generation's",
+      "entry": {
+        "kind": "continued",
+        "seq": -1,
+        "nextRunId": "sub-acme_g1",
+        "input": {
+          "cycle": 2
+        },
+        "generation": 1,
+        "base": "sub-acme",
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"continued\",\"seq\":-1,\"nextRunId\":\"sub-acme_g1\",\"input\":{\"cycle\":2},\"generation\":1,\"base\":\"sub-acme\",\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "cancel-requested",
+      "entry": {
+        "kind": "cancel-requested",
+        "seq": -1,
+        "reason": "operator",
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"cancel-requested\",\"seq\":-1,\"reason\":\"operator\",\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "cancelled",
+      "entry": {
+        "kind": "cancelled",
+        "seq": -1,
+        "reason": "operator",
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"cancelled\",\"seq\":-1,\"reason\":\"operator\",\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "unicode-payload",
+      "note": "non-ASCII is emitted RAW (not \\uXXXX) — the byte-level difference between the SDKs' defaults",
+      "entry": {
+        "kind": "step-end",
+        "seq": 6,
+        "name": "translate",
+        "value": {
+          "de": "Grüße",
+          "ja": "こんにちは",
+          "emoji": "🎉"
+        },
+        "v": 1,
+        "ts": 1781667505735
+      },
+      "encoded": "{\"kind\":\"step-end\",\"seq\":6,\"name\":\"translate\",\"value\":{\"de\":\"Grüße\",\"ja\":\"こんにちは\",\"emoji\":\"🎉\"},\"v\":1,\"ts\":1781667505735}"
+    },
+    {
+      "name": "start-offloaded",
+      "note": "v:2 — a start input too large to publish inline; the client offloads before enqueuing",
+      "entry": {
+        "kind": "start",
+        "seq": 0,
+        "wf": "render",
+        "wfVersion": 1,
+        "v": 2,
+        "ts": 1781667505735,
+        "inputRef": {
+          "name": "render-ok/sha256:a339c36e1fde64609311bc1d4cacb333ba3118b4773ff2a280232e68daaad966",
+          "digest": "sha256:a339c36e1fde64609311bc1d4cacb333ba3118b4773ff2a280232e68daaad966",
+          "size": 442
+        }
+      },
+      "encoded": "{\"kind\":\"start\",\"seq\":0,\"wf\":\"render\",\"wfVersion\":1,\"v\":2,\"ts\":1781667505735,\"inputRef\":{\"name\":\"render-ok/sha256:a339c36e1fde64609311bc1d4cacb333ba3118b4773ff2a280232e68daaad966\",\"digest\":\"sha256:a339c36e1fde64609311bc1d4cacb333ba3118b4773ff2a280232e68daaad966\",\"size\":442}}"
+    },
+    {
+      "name": "step-end-offloaded",
+      "note": "v:2 — the payload slot is absent and a content-addressed ref stands in its place",
+      "entry": {
+        "kind": "step-end",
+        "seq": 5,
+        "name": "render-frames",
+        "v": 2,
+        "ts": 1781667505735,
+        "valueRef": {
+          "name": "render-ok/sha256:5b221500b8a0ad311a40d6e770ce348600e235e7cf55537f66fc441008be264c",
+          "digest": "sha256:5b221500b8a0ad311a40d6e770ce348600e235e7cf55537f66fc441008be264c",
+          "size": 362
+        }
+      },
+      "encoded": "{\"kind\":\"step-end\",\"seq\":5,\"name\":\"render-frames\",\"v\":2,\"ts\":1781667505735,\"valueRef\":{\"name\":\"render-ok/sha256:5b221500b8a0ad311a40d6e770ce348600e235e7cf55537f66fc441008be264c\",\"digest\":\"sha256:5b221500b8a0ad311a40d6e770ce348600e235e7cf55537f66fc441008be264c\",\"size\":362}}"
+    },
+    {
+      "name": "signal-offloaded",
+      "note": "v:2 — an oversized signal: the CLIENT wrote this blob, the worker journals the ref verbatim",
+      "entry": {
+        "kind": "signal",
+        "seq": -1,
+        "name": "upload",
+        "signalId": "0bc7e5a2-3f10-4a7c-9b1e-6d2f8c4a5e90",
+        "v": 2,
+        "ts": 1781667505735,
+        "dataRef": {
+          "name": "render-ok/sha256:6e44218c71720c1e38f2bf6077ec6bf8ecbb4f0c367f409e69cde2adb3314f32",
+          "digest": "sha256:6e44218c71720c1e38f2bf6077ec6bf8ecbb4f0c367f409e69cde2adb3314f32",
+          "size": 442
+        }
+      },
+      "encoded": "{\"kind\":\"signal\",\"seq\":-1,\"name\":\"upload\",\"signalId\":\"0bc7e5a2-3f10-4a7c-9b1e-6d2f8c4a5e90\",\"v\":2,\"ts\":1781667505735,\"dataRef\":{\"name\":\"render-ok/sha256:6e44218c71720c1e38f2bf6077ec6bf8ecbb4f0c367f409e69cde2adb3314f32\",\"digest\":\"sha256:6e44218c71720c1e38f2bf6077ec6bf8ecbb4f0c367f409e69cde2adb3314f32\",\"size\":442}}"
+    },
+    {
+      "name": "resolve-child-error-offloaded",
+      "note": "v:2 — errorRef: a failed child's message can be oversized too, and that path is separate code",
+      "entry": {
+        "kind": "resolve",
+        "seq": -1,
+        "resolvesSeq": 4,
+        "v": 2,
+        "ts": 1781667505735,
+        "errorRef": {
+          "name": "render-ok/sha256:63a703407332b520fcd59119572f49deb5bd70f1c31de395a9e8150d5d6c1e06",
+          "digest": "sha256:63a703407332b520fcd59119572f49deb5bd70f1c31de395a9e8150d5d6c1e06",
+          "size": 477
+        }
+      },
+      "encoded": "{\"kind\":\"resolve\",\"seq\":-1,\"resolvesSeq\":4,\"v\":2,\"ts\":1781667505735,\"errorRef\":{\"name\":\"render-ok/sha256:63a703407332b520fcd59119572f49deb5bd70f1c31de395a9e8150d5d6c1e06\",\"digest\":\"sha256:63a703407332b520fcd59119572f49deb5bd70f1c31de395a9e8150d5d6c1e06\",\"size\":477}}"
+    },
+    {
+      "name": "result-offloaded",
+      "note": "v:2 — a terminal value; the status hint carries a ref too, so this shape reaches DE_RUNS",
+      "entry": {
+        "kind": "result",
+        "seq": -1,
+        "v": 2,
+        "ts": 1781667505735,
+        "valueRef": {
+          "name": "render-ok/sha256:3fda37cd7257e14a062705a67dd52b5becb03bd228e31e227112a76cf55b04b5",
+          "digest": "sha256:3fda37cd7257e14a062705a67dd52b5becb03bd228e31e227112a76cf55b04b5",
+          "size": 362
+        }
+      },
+      "encoded": "{\"kind\":\"result\",\"seq\":-1,\"v\":2,\"ts\":1781667505735,\"valueRef\":{\"name\":\"render-ok/sha256:3fda37cd7257e14a062705a67dd52b5becb03bd228e31e227112a76cf55b04b5\",\"digest\":\"sha256:3fda37cd7257e14a062705a67dd52b5becb03bd228e31e227112a76cf55b04b5\",\"size\":362}}"
+    },
+    {
+      "name": "start-encrypted",
+      "note": "v:3 inline — inputEnc replaces input; the envelope stays legible so replay still works",
+      "entry": {
+        "kind": "start",
+        "seq": 0,
+        "wf": "checkout",
+        "wfVersion": 1,
+        "v": 3,
+        "ts": 1781667505735,
+        "inputEnc": "fCNkYnNlIzsjNTM1MzUzNTM1MzUzNTM1MyN+"
+      },
+      "encoded": "{\"kind\":\"start\",\"seq\":0,\"wf\":\"checkout\",\"wfVersion\":1,\"v\":3,\"ts\":1781667505735,\"inputEnc\":\"fCNkYnNlIzsjNTM1MzUzNTM1MzUzNTM1MyN+\"}"
+    },
+    {
+      "name": "step-end-encrypted",
+      "note": "v:3 inline — valueEnc; the step NAME stays in the clear (the dashboard reads it)",
+      "entry": {
+        "kind": "step-end",
+        "seq": 5,
+        "name": "authorize",
+        "v": 3,
+        "ts": 1781667505735,
+        "valueEnc": "fCNidnVpIzsjYnZ1aS41MzUzI34="
+      },
+      "encoded": "{\"kind\":\"step-end\",\"seq\":5,\"name\":\"authorize\",\"v\":3,\"ts\":1781667505735,\"valueEnc\":\"fCNidnVpIzsjYnZ1aS41MzUzI34=\"}"
+    },
+    {
+      "name": "signal-encrypted",
+      "note": "v:3 inline — dataEnc; signalId stays clear because dedup is keyed on it",
+      "entry": {
+        "kind": "signal",
+        "seq": -1,
+        "name": "payment",
+        "signalId": "0bc7e5a2-3f10-4a7c-9b1e-6d2f8c4a5e90",
+        "v": 3,
+        "ts": 1781667505735,
+        "dataEnc": "fCNicXFzcHdmZSM7dXN2Zn4="
+      },
+      "encoded": "{\"kind\":\"signal\",\"seq\":-1,\"name\":\"payment\",\"signalId\":\"0bc7e5a2-3f10-4a7c-9b1e-6d2f8c4a5e90\",\"v\":3,\"ts\":1781667505735,\"dataEnc\":\"fCNicXFzcHdmZSM7dXN2Zn4=\"}"
+    },
+    {
+      "name": "fail-encrypted",
+      "note": "v:3 inline — errorEnc: an exception carrying its input is a likely place for a secret",
+      "entry": {
+        "kind": "fail",
+        "seq": -1,
+        "v": 3,
+        "ts": 1781667505735,
+        "errorEnc": "fCNvYm5mIzsjRnNzcHMjLSNuZnR0YmhmIzsjZWZkbWpvZmUhZ3BzITUzNTM1MzUzNTM1MzUzNTMjfg=="
+      },
+      "encoded": "{\"kind\":\"fail\",\"seq\":-1,\"v\":3,\"ts\":1781667505735,\"errorEnc\":\"fCNvYm5mIzsjRnNzcHMjLSNuZnR0YmhmIzsjZWZkbWpvZmUhZ3BzITUzNTM1MzUzNTM1MzUzNTMjfg==\"}"
+    },
+    {
+      "name": "step-end-encrypted-offloaded",
+      "note": "v:3 WITH a ref — the blob holds codec output, so a reader must untransform after fetching",
+      "entry": {
+        "kind": "step-end",
+        "seq": 5,
+        "name": "render-frames",
+        "v": 3,
+        "ts": 1781667505735,
+        "valueRef": {
+          "name": "render-ok/sha256:2f133f44d2314cc8cc329e918125f06ca7f8f161d51842b1f03fba9e5e46ae68",
+          "digest": "sha256:2f133f44d2314cc8cc329e918125f06ca7f8f161d51842b1f03fba9e5e46ae68",
+          "size": 482
+        }
+      },
+      "encoded": "{\"kind\":\"step-end\",\"seq\":5,\"name\":\"render-frames\",\"v\":3,\"ts\":1781667505735,\"valueRef\":{\"name\":\"render-ok/sha256:2f133f44d2314cc8cc329e918125f06ca7f8f161d51842b1f03fba9e5e46ae68\",\"digest\":\"sha256:2f133f44d2314cc8cc329e918125f06ca7f8f161d51842b1f03fba9e5e46ae68\",\"size\":482}}"
+    },
+    {
+      "name": "signal-encrypted-offloaded",
+      "note": "v:3 WITH a ref, from the work queue: the item carried payloadEnc, so the entry is v:3 not v:2",
+      "entry": {
+        "kind": "signal",
+        "seq": -1,
+        "name": "upload",
+        "signalId": "0bc7e5a2-3f10-4a7c-9b1e-6d2f8c4a5e90",
+        "v": 3,
+        "ts": 1781667505735,
+        "dataRef": {
+          "name": "render-ok/sha256:4ae9b388441a5af7db60dc8a9b3980be99b1f6c10944ba61e8ca4a2db991cbd8",
+          "digest": "sha256:4ae9b388441a5af7db60dc8a9b3980be99b1f6c10944ba61e8ca4a2db991cbd8",
+          "size": 482
+        }
+      },
+      "encoded": "{\"kind\":\"signal\",\"seq\":-1,\"name\":\"upload\",\"signalId\":\"0bc7e5a2-3f10-4a7c-9b1e-6d2f8c4a5e90\",\"v\":3,\"ts\":1781667505735,\"dataRef\":{\"name\":\"render-ok/sha256:4ae9b388441a5af7db60dc8a9b3980be99b1f6c10944ba61e8ca4a2db991cbd8\",\"digest\":\"sha256:4ae9b388441a5af7db60dc8a9b3980be99b1f6c10944ba61e8ca4a2db991cbd8\",\"size\":482}}"
+    }
+  ]
+}
