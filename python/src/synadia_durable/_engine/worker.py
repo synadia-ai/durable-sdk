@@ -34,6 +34,7 @@ from synadia_durable.errors import (
     PayloadTooLargeError,
     SerializationError,
 )
+from synadia_durable.journal.codec import json_codec
 from synadia_durable.journal.store import AppendResult, JournalAppend
 
 if TYPE_CHECKING:
@@ -173,6 +174,10 @@ class Worker:
         A poll still waiting in the engine is not abandoned: its loop stays subscribed until the
         engine answers, and an item it is handed then goes straight back (``done retry``) instead
         of waiting out its ack wait (docs/findings.md F5).
+
+        Past the timeout the items still in flight are cancelled, as the library's ``stop()`` did: a
+        shutdown must complete. They send no ``done``, so their leases lapse and the items
+        redeliver at the ack wait, which is correct, just slower.
         """
         self._running = False
         for s in self._slots:
@@ -181,8 +186,15 @@ class Worker:
             _done, pending = await asyncio.wait(set(self._inflight), timeout=drain_timeout_s)
             if pending:
                 self._log.warn(
-                    "durable: stop() returned with items still in flight", inflight=len(pending)
+                    "durable: stop() cancelled items still in flight; they redeliver at the ack "
+                    "wait",
+                    inflight=len(pending),
                 )
+                for task in pending:
+                    task.cancel()
+                for task in pending:
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await task
 
     def health(self) -> WorkerHealth:
         """A snapshot of what this worker is doing right now. Never touches the network."""
@@ -459,7 +471,10 @@ class _EngineJournal:
         self._metrics = metrics
 
     async def load_pages(self, first: WireJournal, more: bool) -> list[LoadedEntry]:
+        """The run's journal: ``first`` (the poll's), then ``load`` pages while ``more``. One
+        ``journal.load`` event per call: every replay starts with one, as the library's."""
         run_id = self._leased.run_id
+        started = time.monotonic()
         wire = list(first)
         while more:
             after = int(wire[-1]["streamSeq"]) if wire else 0
@@ -467,11 +482,7 @@ class _EngineJournal:
             page = r.get("journal") or []
             wire.extend(page)
             more = bool(r.get("more")) and len(page) > 0
-        return await reverse_journal(run_id, wire, self._codec)
-
-    async def load(self, run_id: str) -> list[LoadedEntry]:
-        started = time.monotonic()
-        out = await self.load_pages([], True)
+        out = await reverse_journal(run_id, wire, self._codec)
         emit_safe(
             self._metrics,
             "journal.load",
@@ -484,8 +495,13 @@ class _EngineJournal:
         )
         return out
 
+    async def load(self, run_id: str) -> list[LoadedEntry]:
+        _ = run_id  # the item's run: the seam is per item
+        return await self.load_pages([], True)
+
     async def append(self, run_id: str, append: JournalAppend) -> AppendResult:
         started = time.monotonic()
+        size = 0
 
         def emit(outcome: str) -> None:
             emit_safe(
@@ -495,7 +511,7 @@ class _EngineJournal:
                     "run_id": run_id,
                     "kind": str(append.entry["kind"]),
                     "seq": int(append.entry["seq"]),
-                    "bytes": 0,
+                    "bytes": size,
                     "ms": round((time.monotonic() - started) * 1000),
                     "outcome": outcome,
                 },
@@ -503,6 +519,7 @@ class _EngineJournal:
 
         try:
             entry = await wire_entry(run_id, append.entry, self._codec)
+            size = len(json_codec.encode(entry))
             r = await self._leased(
                 "append",
                 {

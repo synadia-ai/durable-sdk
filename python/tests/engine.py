@@ -89,9 +89,7 @@ def resolve_engine_binary() -> str:
     out_dir.mkdir(exist_ok=True)
     out = out_dir / f"durable-engine-{head[:12]}{'-dirty' if dirty else ''}"
     if not out.exists() or dirty:
-        subprocess.run(
-            ["go", "build", "-o", str(out), "./cmd/durable-engine"], cwd=src, check=True
-        )
+        subprocess.run(["go", "build", "-o", str(out), "./cmd/durable-engine"], cwd=src, check=True)
     return str(out)
 
 

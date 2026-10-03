@@ -10,6 +10,8 @@ replication answered underneath (the engine's findings F3 and F16 are about the 
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -27,13 +29,19 @@ from synadia_durable._internal.logger import Logger, SilentLogger
 from synadia_durable.errors import ConnectionClosedError, PayloadTooLargeError, SerializationError
 
 if TYPE_CHECKING:
+    from collections.abc import Coroutine
+
     from nats.aio.client import Client as NatsClient
+    from nats.aio.msg import Msg
 
 __all__ = ["REQUEST_MARGIN_MS", "Transport"]
 
 #: The margin over ``wait_ms`` for an op that waits (``result``, ``poll``), and the timeout of
 #: every other op.
 REQUEST_MARGIN_MS = 10_000
+
+#: How often a request in flight looks at whether its connection has closed for good.
+_CLOSED_TICK_S = 0.1
 
 
 class Transport:
@@ -65,7 +73,9 @@ class Transport:
                 f"{max_payload} — the engine's API v1 has no chunked upload",
             )
         try:
-            msg = await self._nc.request(api_subject(self._prefix, op), data, timeout=timeout_s)
+            msg = await self._or_closed(
+                self._nc.request(api_subject(self._prefix, op), data, timeout=timeout_s)
+            )
         except Exception as e:  # every transport failure is mapped, by type, in _from_nats
             raise _from_nats(op, body, e) from e
         try:
@@ -82,6 +92,29 @@ class Transport:
         if isinstance(refusal, dict) and isinstance(refusal.get("code"), str):
             raise _from_refusal(op, body, refusal, self._log)
         return reply
+
+    async def _or_closed(self, request: Coroutine[Any, Any, Msg]) -> Msg:
+        """The ``nc.request``, failed with nats-py's ``ConnectionClosedError`` as soon as the connection
+        closes for good. nats-py leaves a request in flight at its close waiting out its timeout
+        (nats.js rejects it at once), so a worker's 30 s poll would hide a dead connection."""
+        ask = asyncio.ensure_future(request)
+        closed = asyncio.ensure_future(_closed(self._nc))
+        try:
+            await asyncio.wait({ask, closed}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for t in (closed, ask):
+                if not t.done():
+                    t.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await t
+        if ask.done() and not ask.cancelled():
+            return ask.result()
+        raise nats.errors.ConnectionClosedError
+
+
+async def _closed(nc: NatsClient) -> None:
+    while not nc.is_closed:
+        await asyncio.sleep(_CLOSED_TICK_S)
 
 
 def _run_of(body: dict[str, Any]) -> str:

@@ -90,7 +90,7 @@ warn_unreachable = true
 # Examples are checked too: they are the first CONSUMER of this package, and the only place the
 # public surface is used the way a user would use it. That is how the missing py.typed marker was
 # found — the library was fully typed and shipped none of it.
-files = ["src", "tests", "examples"]
+files = ["src", "tests", "examples", "conformance"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
