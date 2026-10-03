@@ -254,11 +254,8 @@ async def test_a_terminal_redrive_repairs_a_stale_status_hint(nc: Any, prefix: s
         await worker.stop()
 
 
-@pytest.mark.skip(
-    reason="durable-sdk: BLOCKED by docs/findings.md F7 — with DE_TIMERS gone the engine refuses "
-    "every poll `unavailable` (it re-binds both durables per poll), so a run that never sleeps "
-    "stops too; the library's work pump kept serving (the maintenance half, re-expressed, passes)"
-)
+# durable-sdk: docs/findings.md F7, answered by the engine's F19 (the work durable is bound on its
+# own, so polls keep being served with DE_TIMERS gone).
 async def test_the_maintenance_pass_and_pumps_survive_a_deleted_timers_stream(
     nc: Any, prefix: str
 ) -> None:

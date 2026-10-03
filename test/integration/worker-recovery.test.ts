@@ -297,10 +297,9 @@ describe.skipIf(!natsUrl)("worker recovery paths (real nats-server)", () => {
     }
   }, 90_000);
 
-  // durable-sdk: BLOCKED by docs/findings.md F8: the gating run lease is the engine's, and the engine neither logs
-  // nor counts losing it mid-drive, so `logs.saw("run lease lost mid-drive")` has nothing to read.
-  // (The run does finish: the first assertion holds.)
-  it.skip("the run lease being taken away mid-drive is survivable — it is advisory, not correctness", async () => {
+  // durable-sdk: docs/findings.md F8, answered by the engine's F21: the gating run lease is the
+  // engine's, so the "lease lost" line is the engine's log, read below.
+  it("the run lease being taken away mid-drive is survivable — it is advisory, not correctness", async () => {
     // The lease narrows the at-least-once window; it never carries correctness (the journal CAS
     // does). So when a renewal loses its CAS and the key now names somebody else, the right
     // behaviour is to notice, stop renewing, and CARRY ON — not to abort a run that is perfectly
@@ -336,7 +335,8 @@ describe.skipIf(!natsUrl)("worker recovery paths (real nats-server)", () => {
 
       // The run still finishes — losing an advisory lease must never lose work.
       expect(await h.result(30_000)).toBe("done");
-      expect(logs.saw("run lease lost mid-drive")).toBe(true);
+      // durable-sdk: the engine's log (`run lease lost mid-drive; continuing under the journal CAS`).
+      expect(logs.saw("run lease lost mid-drive") || (await engineLog(REC)).some((l) => l.includes("run lease lost mid-drive"))).toBe(true); // prettier-ignore
     } finally {
       await worker.stop();
     }
@@ -352,10 +352,9 @@ describe.skipIf(!natsUrl)("worker recovery — a broken timers stream", () => {
     await nc.drain();
   });
 
-  // durable-sdk: BLOCKED by docs/findings.md F7: with DE_TIMERS gone the engine refuses every `poll`
-  // `unavailable` (it re-binds both durables per poll), so a run that never sleeps stops too; the
-  // library's work pump kept serving. (The maintenance half, re-expressed below, does pass.)
-  it.skip("the maintenance pass and the pumps survive DE_TIMERS disappearing, and heal on restart", async () => {
+  // durable-sdk: docs/findings.md F7, answered by the engine's F19 (the work durable is bound on
+  // its own, so polls keep being served with DE_TIMERS gone).
+  it("the maintenance pass and the pumps survive DE_TIMERS disappearing, and heal on restart", async () => {
     // Its own prefix, because this test destroys a stream. The scenario is real: a server upgraded
     // across nats-server 2.14.2 / 2.12.10 does not bring DE_TIMERS back after a restart
     // (LEARNINGS #40), so the worker must keep serving — loudly — rather than dying in a background

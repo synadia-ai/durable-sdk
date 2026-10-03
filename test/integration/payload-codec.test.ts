@@ -296,10 +296,9 @@ describe.skipIf(!natsUrl)("payload encryption — the work-item boundary", () =>
     bigSecret = `${SECRET}-${"s".repeat(2 * maxPayload(nc))}`;
   });
 
-  // durable-sdk: BLOCKED by docs/findings.md F6 — the engine journals a signal sent as `dataEnc`
-  // as a blob ref (`dataRef`), whatever its size, so `typeof sig.dataEnc` is "undefined" (v:3 and
-  // no plaintext both hold). The library's work item has no inline encrypted form to carry it in.
-  it.skip("a SMALL signal is encrypted inline — the baseline the large one has to match", async () => {
+  // durable-sdk: docs/findings.md F6, answered by the engine's F20 (an inline `signal.dataEnc` on
+  // the work item, journaled verbatim).
+  it("a SMALL signal is encrypted inline — the baseline the large one has to match", async () => {
     const payloadCodec = aesGcmPayloadCodec(KEY);
     const wf = defineWorkflow("enc_sig_small", async (ctx) => {
       const data = await ctx.await<string>("card");
