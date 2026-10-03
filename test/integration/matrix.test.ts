@@ -312,8 +312,7 @@ describe.skipIf(!natsUrl)("feature × concurrency crossings", () => {
       await assertJournalSane(nc, h.runId);
       // The value really did ride as a ref — otherwise this proved nothing about offload.
       const stepEnd = (await raw(nc, h.runId)).find((l) => l.entry.kind === "step-end")?.entry as
-        | { valueRef?: { name: string } }
-        | undefined;
+        { valueRef?: { name: string } } | undefined;
       expect(stepEnd?.valueRef?.name).toMatch(new RegExp(`^${h.runId}/sha256:`));
       await drives.settled(h.runId);
       expect(drives.piledUp(h.runId)).toBe(drives.expected(h.runId));

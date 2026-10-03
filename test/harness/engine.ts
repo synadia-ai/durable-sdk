@@ -82,7 +82,7 @@ export class EngineProcess {
     let buf = "";
     await new Promise<void>((resolve, reject) => {
       const t = setTimeout(() => reject(new Error(`durable-engine serve did not come up in 30 s:\n${this.log.join("\n")}`)), 30_000); // prettier-ignore
-      proc.stderr!.on("data", (d: Buffer) => {
+      proc.stderr.on("data", (d: Buffer) => {
         buf += d.toString("utf8");
         let i: number;
         while ((i = buf.indexOf("\n")) >= 0) {
@@ -272,7 +272,12 @@ export async function engineCounts(
 }
 
 /** The sum of every series of `name` whose labels include all of `labels`. */
-export function countOf(counts: Record<string, number>, name: string, labels: Record<string, string> = {}): number { // prettier-ignore
+export function countOf(
+  counts: Record<string, number>,
+  name: string,
+  labels: Record<string, string> = {},
+): number {
+  // prettier-ignore
   let n = 0;
   for (const [k, v] of Object.entries(counts)) {
     if (k !== name && !k.startsWith(`${name}{`)) continue;

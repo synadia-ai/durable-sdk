@@ -68,7 +68,7 @@ export function createTransport(
     if (typeof reply === "object" && reply !== null && "error" in reply && isRefusal(reply)) {
       throw fromRefusal(op, body, reply, logger);
     }
-    return reply as R;
+    return reply;
   };
 }
 

@@ -28,7 +28,12 @@ export type {
 
 // The engine client (the library's NATS shell is the engine's now)
 export { createClient, type Client, type ClientOptions } from "./engine/client.js";
-export { createWorker, type Worker, type WorkerOptions, type WorkerHealth } from "./engine/worker.js";
+export {
+  createWorker,
+  type Worker,
+  type WorkerOptions,
+  type WorkerHealth,
+} from "./engine/worker.js";
 export { type WorkItem } from "./core/work-item.js";
 
 // Connection helpers (BYO NatsConnection)

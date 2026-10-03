@@ -53,7 +53,9 @@ export function resolveEngineBinary(): string {
   const pin = enginePin();
   const src = process.env.DE_ENGINE_REPO ?? join(repo, "..", "durable-engine");
   if (!existsSync(join(src, "go.mod"))) {
-    throw new EngineNotAvailableError(`no DE_ENGINE and no engine checkout at ${src} (DE_ENGINE_REPO)`);
+    throw new EngineNotAvailableError(
+      `no DE_ENGINE and no engine checkout at ${src} (DE_ENGINE_REPO)`,
+    );
   }
   if (onPath("go") === null) {
     throw new EngineNotAvailableError(`no DE_ENGINE, and Go is not on PATH to build ${src}`);
@@ -76,8 +78,10 @@ export function resolveEngineBinary(): string {
   mkdirSync(outDir, { recursive: true });
   const out = join(outDir, `durable-engine-${head.slice(0, 12)}${dirty ? "-dirty" : ""}`);
   if (!existsSync(out) || dirty) {
-    execFileSync("go", ["build", "-o", out, "./cmd/durable-engine"], { cwd: src, stdio: "inherit" });
+    execFileSync("go", ["build", "-o", out, "./cmd/durable-engine"], {
+      cwd: src,
+      stdio: "inherit",
+    });
   }
   return out;
 }
-

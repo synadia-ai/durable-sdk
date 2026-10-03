@@ -7,13 +7,7 @@ import { DurableError, FencedError } from "../errors.js";
 
 /** The closed set of refusal codes of API v1. */
 export type EngineErrorCode =
-  | "invalid"
-  | "fenced"
-  | "expired"
-  | "not_found"
-  | "too_large"
-  | "unavailable"
-  | "internal";
+  "invalid" | "fenced" | "expired" | "not_found" | "too_large" | "unavailable" | "internal";
 
 /** A refusal (or a failure to reach the engine) on one op. */
 export class EngineError extends DurableError {
@@ -54,7 +48,12 @@ export class InvalidRequestError extends EngineError {
  * worker reports `done retry`; a client call may simply be repeated.
  */
 export class EngineUnavailableError extends EngineError {
-  constructor(op: string, code: "unavailable" | "internal", message: string, options?: ErrorOptions) {
+  constructor(
+    op: string,
+    code: "unavailable" | "internal",
+    message: string,
+    options?: ErrorOptions,
+  ) {
     super(op, code, message, options);
     this.name = "EngineUnavailableError";
   }

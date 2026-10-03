@@ -204,8 +204,7 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
       const journal = new NatsJournal(jetstream(nc), jsm, names(prefix), jsonCodec);
       const raw = await journal.loadRaw(handle.runId);
       const sig = raw.find((l) => l.entry.kind === "signal")?.entry as
-        | { data?: unknown; dataRef?: { name: string } }
-        | undefined;
+        { data?: unknown; dataRef?: { name: string } } | undefined;
       expect(sig?.dataRef?.name).toMatch(new RegExp(`^${handle.runId}/sha256:`));
       expect(sig?.data).toBeUndefined();
     } finally {

@@ -256,15 +256,21 @@ export function createWorker(opts: WorkerOptions): Worker {
       },
     };
 
-    let outcome: ExecOutcome | { kind: "retry"; error: unknown } = { kind: "retry", error: undefined };
+    let outcome: ExecOutcome | { kind: "retry"; error: unknown } = {
+      kind: "retry",
+      error: undefined,
+    };
     /** The library's `work.done` outcome when it is not the ExecOutcome's kind. */
     let label: string | undefined;
     // Extend from dispatch: the wait behind `before` and the journal's pages count too.
-    const extender = setInterval(() => {
-      leased("extend", { runId }).catch((e: unknown) => {
-        if (!(e instanceof LeaseExpiredError)) logger.debug("durable: extend failed", { runId, error: String(e) }); // prettier-ignore
-      });
-    }, Math.max(100, Math.floor(it.ackWaitMs / 3)));
+    const extender = setInterval(
+      () => {
+        leased("extend", { runId }).catch((e: unknown) => {
+          if (!(e instanceof LeaseExpiredError)) logger.debug("durable: extend failed", { runId, error: String(e) }); // prettier-ignore
+        });
+      },
+      Math.max(100, Math.floor(it.ackWaitMs / 3)),
+    );
     extender.unref?.();
     try {
       if (before !== undefined) await before;
@@ -304,7 +310,11 @@ export function createWorker(opts: WorkerOptions): Worker {
     }
 
     let reported: string = label ?? outcome.kind;
-    if (outcome.kind === "retry" && !(outcome.error instanceof LeaseExpiredError) && dropped === undefined) {
+    if (
+      outcome.kind === "retry" &&
+      !(outcome.error instanceof LeaseExpiredError) &&
+      dropped === undefined
+    ) {
       logger.warn("durable: infra error during run; will retry", { runId, error: String(outcome.error) }); // prettier-ignore
     }
     if (dropped !== undefined) {

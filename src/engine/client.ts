@@ -211,7 +211,11 @@ export function createClient(opts: ClientOptions): Client {
 }
 
 /** Settle with `p`, or with `undefined` at `deadline` or at `cut` (the caller asks again or times out). */
-function raceDeadline<T>(p: Promise<T>, deadline: number, cut: Promise<void>): Promise<T | undefined> {
+function raceDeadline<T>(
+  p: Promise<T>,
+  deadline: number,
+  cut: Promise<void>,
+): Promise<T | undefined> {
   const ms = deadline - Date.now();
   let t: ReturnType<typeof setTimeout> | undefined;
   const timer = new Promise<undefined>((r) => {

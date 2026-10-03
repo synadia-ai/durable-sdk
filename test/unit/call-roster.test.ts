@@ -77,7 +77,9 @@ describe("where the broker is spoken to at all", () => {
 
   it("no file under src/ imports @nats-io/jetstream, kv, obj or a transport", () => {
     const hits = lib
-      .filter((f) => /from\s+"@nats-io\/(?!nats-core")[^"]+"|import\(\s*"@nats-io\/(?!nats-core")/.test(f.text)) // prettier-ignore
+      .filter((f) =>
+        /from\s+"@nats-io\/(?!nats-core")[^"]+"|import\(\s*"@nats-io\/(?!nats-core")/.test(f.text),
+      ) // prettier-ignore
       .map((f) => f.path);
     expect(hits).toEqual([]);
   });
@@ -112,10 +114,14 @@ describe("where the broker is spoken to at all", () => {
       ["a JetStream API subject", /\$JS\./],
       ["a KV subject", /\$KV\./],
       ["an object-store subject", /\$O\./],
-      ["a journal/work/timer subject", /["`'](?:[A-Za-z0-9_-]+|\$\{[^}]+\})\.(?:journal|work|timer)\./],
+      [
+        "a journal/work/timer subject",
+        /["`'](?:[A-Za-z0-9_-]+|\$\{[^}]+\})\.(?:journal|work|timer)\./,
+      ],
     ];
     for (const f of lib) {
-      for (const [what, re] of routes) if (re.test(code(f.text))) offenders.push(`${f.path}: ${what}`);
+      for (const [what, re] of routes)
+        if (re.test(code(f.text))) offenders.push(`${f.path}: ${what}`);
     }
     expect(offenders).toEqual([]);
   });
@@ -127,12 +133,16 @@ describe("the consumer roster — the SDK creates no consumer at all", () => {
       ["consumers.add/get", /consumers\s*\.\s*(?:add|get)\s*\(/],
       ["ordered/push consumer", /getPushConsumer|getPullConsumer|getBoundPushConsumer/],
       ["consume/fetch/next", /\.(?:consume|fetch|next)\s*\(\s*\{/],
-      ["KV watch / history / keys", /\.(?:watch|watchAll|history)\s*\(|await\s+[^;\n]*?\.keys\s*\(/],
+      [
+        "KV watch / history / keys",
+        /\.(?:watch|watchAll|history)\s*\(|await\s+[^;\n]*?\.keys\s*\(/,
+      ],
       ["object-store get/list", /\.getBlob\s*\(|(?<![\w$])os\.(?:get|list)\s*\(/],
     ];
     const offenders: string[] = [];
     for (const f of lib) {
-      for (const [what, re] of routes) if (re.test(code(f.text))) offenders.push(`${f.path}: ${what}`);
+      for (const [what, re] of routes)
+        if (re.test(code(f.text))) offenders.push(`${f.path}: ${what}`);
     }
     expect(offenders).toEqual([]);
   });
@@ -163,7 +173,8 @@ describe("the consumer roster — the SDK creates no consumer at all", () => {
       for (const [what, re] of CALLS) {
         const all = [...c.matchAll(new RegExp(re.source, "g"))];
         if (all.length === 0) continue;
-        if (!allowed || !all.every((m) => allowed.calls.test(m[0]))) offenders.push(`${f.path}: ${what}`);
+        if (!allowed || !all.every((m) => allowed.calls.test(m[0])))
+          offenders.push(`${f.path}: ${what}`);
       }
       if (allowed && !allowed.owner.test(c)) offenders.push(`${f.path}: owner missing`);
     }

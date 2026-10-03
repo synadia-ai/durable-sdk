@@ -19,7 +19,13 @@ import { defineWorkflow } from "../../src/core/workflow.js";
 import { encodeJson } from "../../src/internal/json.js";
 import { type DurableEventFields, type DurableEventName } from "../../src/internal/metrics.js";
 import { jsonCodec } from "../../src/journal/codec.js";
-import { countOf, createClient, engineCounts, engineLog, restartEngine } from "../harness/engine.js";
+import {
+  countOf,
+  createClient,
+  engineCounts,
+  engineLog,
+  restartEngine,
+} from "../harness/engine.js";
 import { NatsJournal } from "../harness/shell/journal-store.js";
 import { names } from "../harness/shell/names.js";
 import { type WorkItem } from "../../src/core/work-item.js";
@@ -80,7 +86,11 @@ async function waitUntil(cond: () => boolean | Promise<boolean>, timeoutMs: numb
  * reach a worker; the engine counts them in `de_engine_acks_total{outcome, ack}` (`info`).
  * Order is not observable through counts.
  */
-async function engineOutcomes(nc: NatsConnection, prefix: string, labels: string[]): Promise<string[]> {
+async function engineOutcomes(
+  nc: NatsConnection,
+  prefix: string,
+  labels: string[],
+): Promise<string[]> {
   const counts = await engineCounts(nc, prefix);
   return labels.flatMap((l) => Array.from({ length: countOf(counts, "de_engine_acks_total", { outcome: l }) }, () => l)); // prettier-ignore
 }
@@ -464,8 +474,7 @@ describe.skipIf(!natsUrl)("worker recovery — kills, chains and oversized failu
         gen1,
       );
       const cancelled = entries.find((l) => l.entry.kind === "cancelled")?.entry as
-        | { reason?: string }
-        | undefined;
+        { reason?: string } | undefined;
       expect(cancelled?.reason).toBe("budget revoked");
     } finally {
       await worker.stop();
@@ -524,8 +533,7 @@ describe.skipIf(!natsUrl)("worker recovery — kills, chains and oversized failu
         childId,
       );
       const cancelled = entries.find((l) => l.entry.kind === "cancelled")?.entry as
-        | { reason?: string }
-        | undefined;
+        { reason?: string } | undefined;
       expect(cancelled?.reason).toBe("v2 will never ship");
       expect(entries.some((l) => l.entry.kind === "step-begin")).toBe(false); // no code ever ran
     } finally {
@@ -566,8 +574,7 @@ describe.skipIf(!natsUrl)("worker recovery — kills, chains and oversized failu
         h.runId,
       );
       const resolve = entries.find((l) => l.entry.kind === "resolve")?.entry as
-        | { error?: unknown; errorRef?: { name: string } }
-        | undefined;
+        { error?: unknown; errorRef?: { name: string } } | undefined;
       expect(resolve?.errorRef?.name).toMatch(new RegExp(`^${h.runId}/sha256:`));
       expect(resolve?.error).toBeUndefined();
     } finally {
