@@ -135,56 +135,62 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
 
   // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
-  it("a missing blob PARKS the run (loud, never a terminal) and a restored blob heals it", async () => {
-    const prefix = "off3";
-    const outcomes: string[] = [];
-    const sink = {
-      onEvent: (name: DurableEventName, fields: DurableEventFields): void => {
-        if (name === "work.done") outcomes.push(String(fields.outcome));
-      },
-    };
-    const wf = defineWorkflow("parky", async (ctx) => {
-      const big = await ctx.run("big", () => "y".repeat(2 * P));
-      await ctx.await("go");
-      return big.length;
-    });
-    const worker = createWorker({ nc, workflows: [wf], prefix, metrics: sink });
-    await worker.start();
-    try {
-      const client = createClient({ nc, prefix });
-      const handle = await client.start(wf, {});
-      await waitUntil(async () => (await handle.status()).state === "suspended", 15_000);
+  it(
+    "a missing blob PARKS the run (loud, never a terminal) and a restored blob heals it",
+    async () => {
+      const prefix = "off3";
+      const outcomes: string[] = [];
+      const sink = {
+        onEvent: (name: DurableEventName, fields: DurableEventFields): void => {
+          if (name === "work.done") outcomes.push(String(fields.outcome));
+        },
+      };
+      const wf = defineWorkflow("parky", async (ctx) => {
+        const big = await ctx.run("big", () => "y".repeat(2 * P));
+        await ctx.await("go");
+        return big.length;
+      });
+      const worker = createWorker({ nc, workflows: [wf], prefix, metrics: sink });
+      await worker.start();
+      try {
+        const client = createClient({ nc, prefix });
+        const handle = await client.start(wf, {});
+        await waitUntil(async () => (await handle.status()).state === "suspended", 15_000);
 
-      // Sabotage: delete the step's blob out-of-band (an early GC / lost bucket), keeping a copy.
-      const bucket = names(prefix).blobsBucket;
-      const mine = (await listObjects(nc, bucket)).filter((o) => o.name.startsWith(`${handle.runId}/`)); // prettier-ignore
-      expect(mine).toHaveLength(1);
-      const name = mine[0]!.name;
-      const bytes = await readBlob(nc, bucket, name);
-      expect(bytes).not.toBeNull();
-      const os = await new Objm(nc).open(bucket); // delete + putBlob are publishes: no consumer
-      await os.delete(name);
+        // Sabotage: delete the step's blob out-of-band (an early GC / lost bucket), keeping a copy.
+        const bucket = names(prefix).blobsBucket;
+        const mine = (await listObjects(nc, bucket)).filter((o) => o.name.startsWith(`${handle.runId}/`)); // prettier-ignore
+        expect(mine).toHaveLength(1);
+        const name = mine[0]!.name;
+        const bytes = await readBlob(nc, bucket, name);
+        expect(bytes).not.toBeNull();
+        const os = await new Objm(nc).open(bucket); // delete + putBlob are publishes: no consumer
+        await os.delete(name);
 
-      // The signal cannot be processed — the journal is unreadable — so the run PARKS: work items
-      // NAK with the distinct outcome, and the run's status never becomes a terminal.
-      await client.signal(handle.runId, "go", null);
-      // durable-sdk: the engine reads the journal before it hands an item over, so the parking is
-      // the engine's decision (docs/findings.md F10): its log, or the worker's outcome when a ref
-      // too large for a reply reaches it and its `get` finds the blob gone.
-      const parked = async (): Promise<boolean> =>
-        outcomes.includes("blob-unresolvable") ||
-        (await engineLog(prefix)).some((l) => l.includes("run's journal unreadable; parking it"));
-      await waitUntil(parked, 10_000);
-      expect((await handle.status()).state).toBe("suspended");
+        // The signal cannot be processed — the journal is unreadable — so the run PARKS: work items
+        // NAK with the distinct outcome, and the run's status never becomes a terminal.
+        await client.signal(handle.runId, "go", null);
+        // durable-sdk: the engine reads the journal before it hands an item over, so the parking is
+        // the engine's decision (docs/findings.md F10): its log, or the worker's outcome when a ref
+        // too large for a reply reaches it and its `get` finds the blob gone.
+        const parked = async (): Promise<boolean> =>
+          outcomes.includes("blob-unresolvable") ||
+          (await engineLog(prefix)).some((l) => l.includes("run's journal unreadable; parking it"));
+        await waitUntil(parked, 10_000);
+        expect((await handle.status()).state).toBe("suspended");
 
-      // Heal: restore the object (same name, same bytes — content-addressed) → the next
-      // redelivery resolves, the signal lands, the run completes.
-      await os.putBlob({ name }, bytes);
-      expect(await handle.result(20_000)).toBe(2 * P);
-    } finally {
-      await worker.stop();
-    }
-  });
+        // Heal: restore the object (same name, same bytes — content-addressed) → the next
+        // redelivery resolves, the signal lands, the run completes.
+        await os.putBlob({ name }, bytes);
+        expect(await handle.result(20_000 + BIG_CHILD_PER_RTT_MS * rtt)).toBe(2 * P);
+      } finally {
+        await worker.stop();
+      }
+      // durable-sdk: the park backs off (the engine naks at 0.25 s doubling) and a 2 × max_payload
+      // value crosses the proxy twice; under DE_TEST_RTT_MS that outlives the default 30 s.
+    },
+    30_000 + BIG_CHILD_PER_RTT_MS * rtt,
+  );
 
   // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).

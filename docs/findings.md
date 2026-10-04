@@ -3,20 +3,21 @@
 What building the thin TypeScript SDK found against the engine's API (`../durable-engine/docs/API.md` at `d8c0d73`, which `engine.pin` names), the frozen library (`../synadia-durable-execution` at `7456c75`) and the brief (`synadia-agent-fabric/local/briefs/2026-10-03-durable-sdk-ts.md`). Where the brief and `API.md` differ, `API.md` won and the difference is here. Nothing in the engine or the library was changed; each gap in them is an **ask**.
 
 **Date:** 2026-10-03 · **Engine:** `d8c0d73` (`0.2.0-dev`) · **Library:** `7456c75` · **Server:** nats-server 2.14.6 · **Node:** 25.9 · **Python:** 3.14.7, nats-py 2.15.0
+**Follow-up:** 2026-10-04 · **Engine:** `1efd2ec` (its PR #3, which answered F1, F2, F5 to F9 as its own F18 to F25) · the brief `2026-10-04-durable-sdk-followup.md`
 
-F1 to F14 came from the TypeScript SDK (P2-19a). F15 onwards came from the Python SDK (P2-19b, the brief `2026-10-03-durable-sdk-py.md`); where a TypeScript finding also blocks a Python test, its **Blocks** line says so.
+F1 to F14 came from the TypeScript SDK (P2-19a). F15 to F21 came from the Python SDK (P2-19b, the brief `2026-10-03-durable-sdk-py.md`); where a TypeScript finding also blocks a Python test, its **Blocks** line says so. F22 onwards came from the follow-up. A finding the engine answered keeps its text and gains a **Closed** line.
 
 | #   | Kind             | One line                                                                                                                            | Blocks                 |
 | --- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| F1  | **engine gap**   | API v1 has no chunked upload: a value over `max_payload` − 16 KiB cannot reach the engine, where the library offloaded it           | 16 TS + 5 Python tests |
-| F2  | engine gap       | `serve` has no `--offload-threshold`, and at the default threshold the engine never offloads an appended entry                      | 6 Python tests         |
+| F1  | closed           | API v1 has no chunked upload: a value over `max_payload` − 16 KiB cannot reach the engine, where the library offloaded it           | — (was 16 TS + 5 Py)   |
+| F2  | closed           | `serve` has no `--offload-threshold`, and at the default threshold the engine never offloads an appended entry                      | — (was 6 Python tests) |
 | F3  | brief vs cut     | The cut needs four files the brief left behind or trimmed: `inbound.ts`, all of `blobs.ts`, `nats/protocol.ts`, `nats/connect.ts`   | —                      |
 | F4  | brief vs suites  | Three of the 13 unit suites cannot pass unchanged: `call-roster`, `payload-paths`, `version`                                        | —                      |
-| F5  | engine gap       | A poll cannot be withdrawn: the engine hands an item to a poll whose caller is gone, and the item waits out its ack wait            | —                      |
-| F6  | **engine gap**   | A signal sent as `dataEnc` is journaled as a blob ref whatever its size, where the library journals a small one inline              | 1                      |
-| F7  | **engine gap**   | With `DE_TIMERS` gone the engine refuses every `poll`; the library's work pump kept serving                                         | 1 TS + 1 Python        |
-| F8  | engine gap       | The engine neither logs nor counts losing a run lease mid-drive                                                                     | 1                      |
-| F9  | **engine gap**   | Past `maxWorkMs` the lease is gone and refuses the holder's late appends: a step longer than `maxWorkMs` never completes            | 1 TS + 1 Python        |
+| F5  | closed           | A poll cannot be withdrawn: the engine hands an item to a poll whose caller is gone, and the item waits out its ack wait            | —                      |
+| F6  | closed           | A signal sent as `dataEnc` is journaled as a blob ref whatever its size, where the library journals a small one inline              | —                      |
+| F7  | closed           | With `DE_TIMERS` gone the engine refuses every `poll`; the library's work pump kept serving                                         | —                      |
+| F8  | closed           | The engine neither logs nor counts losing a run lease mid-drive                                                                     | —                      |
+| F9  | closed           | Past `maxWorkMs` the lease is gone and refuses the holder's late appends: a step longer than `maxWorkMs` never completes            | —                      |
 | F10 | note             | Engine-side decisions are invisible to the worker; seven assertions and five waits re-expressed through `info` and the engine's log | —                      |
 | F11 | note             | With one engine instance a run's items are serialised: the library's two-worker races no longer race                                | —                      |
 | F12 | library note     | A `fail` terminal that cannot be journaled ends as a fence for ever, in the pure core                                               | (with F1)              |
@@ -28,7 +29,14 @@ F1 to F14 came from the TypeScript SDK (P2-19a). F15 onwards came from the Pytho
 | F18 | brief vs cut     | The `durable_agent` example is left out: it needs the fabric's agent SDK                                                            | —                      |
 | F19 | note             | `upgrade-compat` is deleted in TypeScript; the library's Python tree never had one                                                  | —                      |
 | F20 | brief vs suites  | Eight of the library's 21 Python integration suites test the shell only and are not copied; five tests dropped in place             | —                      |
-| F21 | behaviour change | Where the Python SDK differs from the TypeScript one, and why                                                                       | —                      |
+| F21 | behaviour change | Where the Python SDK differs from the TypeScript one, and why (its metrics ask closed)                                              | —                      |
+| F22 | note             | The engine checkout carried someone's uncommitted changes; the suites built the pin from `../wt/durable-engine`                     | —                      |
+| F23 | note             | A missing blob is parked by the engine before an item reaches the worker; the offload test reads the engine's log                   | —                      |
+| F24 | **API gap**      | `get` of a blob that is gone answers `internal`, the code of any operational fault: the SDK must read `internal` as "gone"          | —                      |
+| F25 | brief vs suites  | The chunked upload is a fourth payload-blob route: both `payload-paths` rosters name it                                             | —                      |
+| F26 | behaviour        | What the chunked transport decides: who mints the runId, `offload: false`, the lease on a part, the cache                           | —                      |
+| F27 | **engine gap**   | `status` lags `result` by the worker's `done`: a run whose `result` is terminal can still read `suspended` for a round trip         | —                      |
+| F28 | note             | The suites over the delay proxy, at 150 and 300 ms: what changed, and what an NGS run needs                                         | —                      |
 
 ---
 
@@ -42,6 +50,8 @@ F1 to F14 came from the TypeScript SDK (P2-19a). F15 onwards came from the Pytho
 
 **Ask.** A chunked upload (the research's §3.9): for example `put {runId, slot, part, last}` into the run's blob namespace under the lease, answered with a ref the following `append`, `start`, `child` or `signal` carries, with the engine verifying the digest. Or raise the per-request bound by putting large requests through the object store. Either way the SDK keeps sending whole values and the chunking stays in the transport.
 
+**Closed** (2026-10-04, engine `1efd2ec`, its F25): `put` and `get`; the SDKs' transports chunk any value over `request_max` and fetch a ref they are handed (`src/engine/blobs.ts`, `python/src/synadia_durable/_engine/blobs.py`, F26). All 16 TypeScript and 5 Python tests run and pass.
+
 ### F2 — The engine's offload of an appended entry is unreachable
 
 **Where.** `API.md` "Sizes" (`offload_threshold`, "`max_payload` less 16 KiB by default"); `engine/engine.go:96` (`Options.OffloadThreshold`); `cmd/durable-engine/serve.go` (no flag sets it).
@@ -51,6 +61,8 @@ F1 to F14 came from the TypeScript SDK (P2-19a). F15 onwards came from the Pytho
 **Blocks (Python).** 6 tests. The library's Python offload suite runs on a 1 KiB threshold (`OffloadOptions(threshold_bytes=1)`, clamped to the 1 KiB floor) with values of about 3 KiB, so its refs never appear: 5 of `test_offload` (all but "offload disabled still fails loud") and `test_interop_reverse` "TS reads a payload Python offloaded". Before the skips every value round-tripped; only the `v:2` and `*Ref` assertions failed. Two of `test_metrics` ("offload traffic is visible") and the hygiene pass are dropped for the same reason and F20's.
 
 **Ask.** A `--offload-threshold` flag on `serve`, and a default some margin below `request_max`, so that an entry between the two is offloaded rather than refused. This does not replace F1; it makes the existing code reachable.
+
+**Closed** (2026-10-04, the engine's F22): `serve --offload-threshold`. Python's harness turns `offload=OffloadOptions(threshold_bytes=…)` into the flag; the 6 tests run and pass.
 
 ### F3 — The cut, as the suites need it
 
@@ -83,6 +95,8 @@ The other ten pass byte for byte.
 
 **Ask.** A way to withdraw a poll, such as `poll` carrying a `pollId` and an `unpoll {pollId}` op, or the engine dropping a waiting poll when its requester's connection goes away. Either would let `stop()` end its polls at once without losing an item to the lapse.
 
+**Closed** (2026-10-04, the engine's F23): every poll carries the worker's `worker` id and `stop()` sends `poll {cancelPoll}`, both SDKs. 16 waiting polls are released 0.9 to 1.9 ms after `stop()` begins (three rounds each, TypeScript and Python), against 29,979 to 29,990 ms before. A connection that drops still leaves its polls to their wait (the engine's **Not done**).
+
 ### F6 — An encrypted signal is journaled as a blob ref, whatever its size
 
 **Where.** `API.md` "Payloads" ("a signal sent as `dataEnc` reach[es] the parent's journal as `v:3` entries"); the library: a client puts the signal's **plaintext** on the work item, and the worker's append encrypts it inline (`{"kind":"signal",…,"v":3,"dataEnc":"…"}`); the library's `WorkItem` (`src/core/work-item.ts`) has `data` or `dataRef` and no inline encrypted form.
@@ -92,6 +106,8 @@ The other ten pass byte for byte.
 **Blocks.** `payload-codec` "a SMALL signal is encrypted inline" (`typeof sig.dataEnc` is `"undefined"`; its `v:3` and no-plaintext assertions hold).
 
 **Ask.** An inline encrypted slot on the work item (`signal.dataEnc`, `child.valueEnc` / `errorEnc`) for a payload under the offload threshold, journaled verbatim as the entry's `<slot>Enc`. That is the same bytes as the library's, and a blob only when the payload is large.
+
+**Closed** (2026-10-04, the engine's F20): the test runs unchanged and passes.
 
 ### F7 — With `DE_TIMERS` gone, every poll is refused
 
@@ -103,6 +119,8 @@ The other ten pass byte for byte.
 
 **Ask.** Bind and pull the work durable independently of the timers one, so a poll keeps handing out work items while the timers stream is missing, with the timers half logged loud, as the library's pumps did.
 
+**Closed** (2026-10-04, the engine's F19): both tests run and pass, their maintenance wait still read from the engine's log.
+
 ### F8 — A lost run lease is silent
 
 **Where.** The library: `src/nats/lease.ts` warns `run lease lost mid-drive` and emits `lease.gate`; the engine: `store/lease.go` `held` (a renewal that finds another owner stops renewing and keeps driving, with no log line and no counter).
@@ -113,6 +131,8 @@ The other ten pass byte for byte.
 
 **Ask.** A warning line and a counter (`de_engine_leases_lost_total`) when a renewal finds another owner.
 
+**Closed** (2026-10-04, the engine's F21): the test runs; its log assertion reads the engine's line `run lease lost mid-drive` (`engineLog`), or the worker's, which never logs it now.
+
 ### F9 — Past `maxWorkMs` the holder's late appends are refused, so a long step never completes
 
 **Where.** `API.md` "The lease" ("gone: … `maxWorkMs` passed since the item was pulled … everything is `expired`"); `engine/ops.go` `leaseFor` (`!now.Before(h.workDeadline)` → `expired`); the library's `maxWorkMs` (stop extending, and a late append still lands under the CAS: "a stale ack after a takeover is harmless").
@@ -122,6 +142,8 @@ The other ten pass byte for byte.
 **Blocks.** `network` "…and the control: the same run with renewal cut short IS taken over" (`it.skip`), and its Python twin in `test_network`. Note: the engine checkout `../durable-engine` carried uncommitted changes on 2026-10-03 that read as a fix for this (a lease past `maxWorkMs` lapsed, not gone); the suites ran the `d8c0d73` binary, and `engine.pin` is not moved.
 
 **Ask.** Past `maxWorkMs`, treat the lease as **lapsed** (the item redelivers, and the holder's requests still answer under the CAS), not gone. Or, if the hard bound is intended, document it in `API.md` as a bound on any one step's duration.
+
+**Closed** (2026-10-04, the engine's F18): both controls run and pass; the `lease.gate {outcome: takeover}` assertion reads the engine's log (`taken over`: `run taken over past max work`, or `run lease taken over` across instances).
 
 ### F10 — Engine-side decisions are invisible to the worker
 
@@ -204,3 +226,79 @@ Within the thirteen, five tests are dropped in place with a note, each a test of
 - **`journal.load` and append sizes.** The pure core never calls `Journal.load` in an ordinary run, because the engine hands the journal over with the poll, so a worker built strictly to `API.md`'s seam table reports no `journal.load` at all and `bytes: 0` on each `journal.append`. `test_metrics` asserts both, so the Python worker emits one `journal.load` per item (the poll's journal and its pages) and the encoded entry's size. **Ask (TypeScript SDK):** do the same, so a dashboard reads one number from both.
 - **A minted runId** is the engine's UUID (with hyphens). The library's Python client minted `uuid4().hex`.
 - **`create_client` gains `logger`**, as TypeScript's has; `metrics`, `stream_max_bytes` and `offload` are accepted and ignored. `create_worker` gains `poll_wait_ms`; the options that became `serve` flags are accepted and ignored.
+
+**Closed** (2026-10-04), the TypeScript ask above: the TypeScript worker emits `journal.load` once per item, its `bytes` the journal as the engine handed it, and `journal.append` with the size of the entry it sends, as Python's does; Python's `journal.load` gained the same `bytes`. `test/integration/metrics.test.ts` is the twin of `test_metrics`'s first test (both assert one load per item with `bytes > 0`); without the change it fails.
+
+### F22 — The engine checkout carried someone else's uncommitted changes
+
+**What.** On 2026-10-04 `../durable-engine` stood at `1efd2ec` with uncommitted changes to `engine/{drive,engine,metrics,ops}.go` and `internal/scriptworker/proof03_test.go` (another session's work, not this one's). The harness refuses a dirty checkout, as it should. Nothing there was touched: every run of this follow-up built the pin from the clean worktree `../wt/durable-engine` at `1efd2ec` (`DE_ENGINE_REPO=../wt/durable-engine`, the binary `.engine-bin/durable-engine-1efd2ec3bc33`), which is where the coordinator verifies too. During the 300 ms run that worktree was moved to `51b0cae` by someone else, and the Python half refused it in 1 s (88 setup errors, not test results); it was re-run, and every later run used the binary already built from the clean `1efd2ec` tree (`DE_ENGINE=.engine-bin/durable-engine-1efd2ec3bc33`). **For the coordinator:** `../wt/durable-engine` is no longer at the pin; verify with `DE_ENGINE` pointing at a build of `1efd2ec`, or check the worktree out at it first.
+
+### F23 — A missing blob is parked by the engine, before the worker sees the item
+
+**Where.** The `offload` suite, "a missing blob PARKS the run … and a restored blob heals it", which waits for the worker's `work.done` outcome `blob-unresolvable`; the engine's `view` (`engine/obligations.go`), which inflates the journal before it hands an item over.
+
+**What.** The engine reads the run's journal, refs inflated, before a poll is handed the item. With the step's blob deleted, that read fails and the engine parks the run itself (`run's journal unreadable; parking it (restore the blob or cancel the run)`, naked with backoff): the item never reaches a worker. The worker's own `blob-unresolvable` path (a `get` that finds the blob gone, `BlobMissingError`) is still there and still labelled as the library labels it, but it is reachable only for a ref the engine hands over as too large for a reply, and only in the window between the engine's read and the worker's `get`. The wait is re-expressed as either the worker's outcome or the engine's log line, marked `durable-sdk:` (the F10 class). The heal half (restore the blob, the run completes) passes unchanged.
+
+### F24 — `get` of a blob that is gone answers `internal`
+
+**Where.** `API.md` `get` ("Errors: … `internal` (the blob is gone)"); `engine/blobs.go` `opGet` (`wire.BlobMissingError` → `toAPIError` → `internal`, the code of every operational fault).
+
+**What.** The SDK has to tell a blob that is gone (park the run: `BlobMissingError`, restorable) from a transient fault (retry). The closed set has no code for the first, so both transports read `internal` from `get` as "gone", which is what `API.md` says it means for that op. Any other `internal` from `get` (a corrupt object, a store fault the engine classes operational) is therefore also read as "gone"; the run parks rather than retries, which heals the same way.
+
+**Ask.** A distinct refusal for a blob that is not there: `not_found` on `get` (the code exists, today only for `signal` and `cancel`), or `internal` with a `missing: true` member.
+
+### F25 — The chunked upload is a fourth payload-blob route
+
+**Where.** `test/unit/payload-paths.test.ts` and `python/tests/test_payload_paths.py`, "every caller outside the choke point is a KNOWN payload route": a roster of the callers of `storePayloadBlob` / `store_payload_blob`, which says "whoever adds [a route] has to come and say what it is".
+
+**What.** `fitSlot` / `fit_slot` (`src/engine/payload.ts`, `python/src/synadia_durable/_engine/payload.py`) is that route: a start's input, a signal's data or a child's input too large for one request is `put` through `storePayloadBlob`, so the codec decision stays the choke point's. Each roster gains one line naming it, marked `durable-sdk:`, as F4 and F15 edited the same suite. An appended entry goes through `offloadEntry`, which is already the choke point's.
+
+### F26 — What the chunked transport decides
+
+- **The library's code, the engine as its blob store.** `EngineBlobs` (`src/engine/blobs.ts`, `python/src/synadia_durable/_engine/blobs.py`) implements the library's `BlobStore`: `put(name, bytes)` uploads in parts of `(request_max − 4096) / 4 × 3` raw bytes under the run the name begins with and checks the ref the engine answers names the same blob; `get(name)` downloads in parts. `offloadEntry`, `storePayloadBlob` and `resolveEntry` (unchanged, `src/journal/blobs.ts`) do the rest: the ref's name, `v:2` or `v:3`, the digest check, the codec. So an offloaded entry is the library's bytes, and the pure core never sees a ref.
+- **When.** A request whose body would pass `request_max` (from `info` once per client or worker; `max_payload` − 16 KiB until an engine answers): an `append` (its entry's slot), a `start` or a `signal` (`inputRef` / `dataRef`, `payloadEnc` over codec output), a `child` (the child's input, `put` under the **child's** runId). Anything that fits travels inline as before and the engine offloads it past its threshold.
+- **A start without a runId** whose input is too large: the client mints the runId (a UUID, the engine's own form), since a `put` needs the run; a start that fits still lets the engine mint it.
+- **The lease** goes with a part of the item's own run only; a child's input, under another run, carries none (the engine would answer `expired`).
+- **`offload: false`** keeps the library's meaning: nothing goes up in parts, and a value too large for a request fails loud (`PayloadTooLargeError`), as `e2e` and `test_offload` "offload disabled still fails loud" pin. The option's tuning (`thresholdBytes`, `cacheBytes`, `maxBytes`) stays ignored: the threshold is `serve --offload-threshold`.
+- **A cache.** The TypeScript worker keeps the library's 64 MiB content-addressed byte cache for refs it fetched; Python's `resolve_entry` takes none, as in the library.
+- **Metrics.** `blob.put` and `blob.get` (`name`, `bytes`, `ms`, `outcome`), from the worker and, newly, from the client (`metrics` is no longer ignored by `createClient` / `create_client`), as the library's `offload` suite expects.
+- **Abandoned uploads.** A `put` that stops part way leaves its staged parts in the blob store (the engine's F25 says so too); nothing collects them.
+
+### F27 — `status` lags `result` by the worker's `done`
+
+**Where.** `engine/ops.go` `finish` (the obligations, the `DE_RUNS` status hint among them, run at `done`); `result` (answers from the journal's terminal as soon as it is appended). The library's worker wrote the status hint before it acked, and its `result()` resolved on that hint, so a `status()` after `result()` always read the terminal.
+
+**What.** Between the worker's terminal `append` and its `done` (one round trip of the worker's), `result` already answers the terminal while `status` still reads the state before it (`suspended`, `running`). With the worker next to the engine the window is a millisecond and no test sees it. Over the delay proxy (F28) four tests lost the race: at 150 ms TypeScript `interop-py` "a TypeScript cancel hard-stops a parked Python run" and Python `test_worker` "cancel hard-stops a parked python run" (`'suspended'` for `'cancelled'`), at 300 ms TypeScript `e2e` "status() reports 'suspended' … then 'completed'" and "CANCEL: a run parked on an await is cancelled". About 25 assertions in the suites have the same shape (`e2e`, `offload`, `versioning`, `matrix`, `payload-codec`, `worker-recovery`, `cancel-running`); they won the race in these runs. The four (and `interop-py`'s `failed` twin) now wait for the state, bounded at 10 s, marked `durable-sdk:`. A customer who calls `status()` after `result()` sees the same lag.
+
+**Ask.** Make `status` read-your-terminal: answer the terminal's state from the journal when the hint is behind it (`status` could look at the run's last entry, as `result` does), or write the terminal hint when the terminal is appended rather than at `done`.
+
+### F28 — The suites over the delay proxy, at 150 and 300 ms
+
+**How.** `DE_TEST_RTT_MS=150`, then `300`: the library's delay proxy (`test/harness/proxy.ts`, `python/tests/netproxy.py`) between every test's connection and the server; each `durable-engine serve` on the direct URL, next to the server, as the library's harness arranged; the hygiene (leftovers, stream deletion) on the direct URL too. The suites otherwise unchanged, on the `ngs` account profile, against `1efd2ec`.
+
+| Run                     | TypeScript integration                     | Python integration                                                          |
+| ----------------------- | ------------------------------------------ | --------------------------------------------------------------------------- |
+| direct (0 ms)           | 136 passed, 1 skipped, 289 s               | 88 passed, 1 skipped, 237 s                                                 |
+| 150 ms                  | 134 passed, **2 failed**, 1 skipped, 572 s | 87 passed, **1 failed**, 1 skipped, 380 s                                   |
+| 300 ms                  | 134 passed, **2 failed**, 1 skipped, 909 s | 88 passed, 1 skipped, 537 s (with the F27 wait; the first attempt is F22's) |
+| 300 ms, after the fixes | 136 passed, 1 skipped, 911 s               | 88 passed, 1 skipped, 544 s                                                 |
+
+**Every deviation:**
+
+- **TypeScript `interop-py` "a TypeScript cancel hard-stops a parked Python run"** (150 ms): `expected 'suspended' to be 'cancelled'`, the `status()` read right after `result()` rejected. The engine's logic, F27; the test now waits for the state, bounded (and its `failed` twin likewise).
+- **Python `test_worker` "cancel hard-stops a parked python run"** (150 ms): the same, F27, the same wait.
+- **TypeScript `e2e` "status() reports 'suspended' … then 'completed'" and "CANCEL: a run parked on an await is cancelled"** (300 ms): the same race, `expected 'suspended' to be 'completed'` / `'cancelled'`; they had won it at 150 ms. F27; bounded waits.
+- **TypeScript `offload` "a missing blob PARKS the run … and a restored blob heals it"** (150 ms): `Test timed out in 30000ms`. A timing assumption in the test: the park backs off (the engine naks at 0.25 s doubling), and the 2 × `max_payload` value crosses the proxy twice; fixed by the library's own allowance (`30 s + 1 s per ms of RTT`, as its big-child test). At 300 ms it then passed in 72.6 s.
+- Nothing flaked otherwise, and no failure was the SDK's: the chunked transport, `cancelPoll` and the metrics held at both latencies.
+
+**What grows.** The TypeScript suite takes 2.0× at 150 ms and 3.1× at 300 ms, Python 1.6× and 2.3×. The slowest at 300 ms: the missing-blob park (72.6 s), "a run touching EVERY payload path" (50.1 s; 31.4 s at 150), the `network` control (30.6 s), the SIGKILL storm (22.5 s), the large child outcome and the big child input/result (15.8 s, 15.5 s): the offload tests, whose `put`/`get` parts are dependent round trips, and the tests that wait on a redelivery.
+
+**What the harness would need for the dev NGS, from a laptop** (not built):
+
+- **An existing server by URL and creds** (`DE_TEST_NATS_URL`, `DE_TEST_NATS_CREDS`) instead of the spawned `nats-server`, in both `global-setup.ts` / `conftest.py`; no account profile to apply (NGS's own limits apply, and the sizes already derive from the server's `max_payload`). `natsDirectUrl` and `natsUrl` become the same URL, and `DE_TEST_RTT_MS` stays 0: the latency is real.
+- **The engine is no longer next to the server.** Here the engine sat on the direct URL; from a laptop it would pay the WAN round trip on every JetStream call, which this dry run did not measure. Either run the engine on the laptop and accept that (then every engine-side wait grows too), or the coordinator places an engine near NGS; the suites only need its prefix.
+- **One prefix for the run, not one per test** (about 86 distinct prefixes in the TypeScript suites alone, each seven resources): a run prefix like `de-sdk-<runid>`, with each test's own name below it where the suites need separation, and one engine for it, started once rather than per test (a `serve` provisions at start: seconds over the WAN, per test).
+- **The hygiene scoped to that prefix.** `setup-each.ts` deletes **every stream on the server** after each test, and Python's twin likewise: against a shared account that would delete everyone's. It must delete the run prefix's resources only, and the leftover-consumer check must look only at that prefix's streams, still after every test so a leak is named by the test that made it.
+- **The tests serial** (TypeScript `fileParallelism: false` already, Python serial already), and timeouts that scale with the measured RTT, as `offload` does now; `testTimeout` is a flat 30 s.
+- **Skipped against NGS:** what needs a server of its own or destroys infrastructure: `network`'s SIGKILL and restart of the server, its connection cuts and stalls (the proxy), `worker-recovery`'s deleted `DE_TIMERS` and its engine restarts, every test that stages journals or work items with the suites' own JetStream client unless the creds allow it, and the profile-dependent size tests if NGS's `max_payload` differs from the `ngs` profile's.
+- **F27 first**, or the ~25 `status()`-after-`result()` assertions will race at NGS round trips as two did here.
