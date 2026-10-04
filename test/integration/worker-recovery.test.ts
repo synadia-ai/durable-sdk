@@ -13,7 +13,8 @@
 
 import { jetstream, jetstreamManager } from "@nats-io/jetstream";
 import { Kvm } from "@nats-io/kv";
-import { connect, type NatsConnection } from "@nats-io/transport-node";
+import { type NatsConnection } from "@nats-io/transport-node";
+import { connect } from "../harness/existing.js";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { defineWorkflow } from "../../src/core/workflow.js";
 import { encodeJson } from "../../src/internal/json.js";
@@ -31,8 +32,11 @@ import { names } from "../harness/shell/names.js";
 import { type WorkItem } from "../../src/core/work-item.js";
 import { createWorker } from "../harness/engine.js";
 import { over } from "../harness/payload.js";
+import { DELETES_STREAMS, describeUnlessExisting, WAN } from "../harness/mode.js";
 
 const natsUrl = inject("natsUrl");
+// durable-sdk: deleting a stream of the prefix is not for a server the run does not own (harness/mode.ts).
+const brokenTimers = describeUnlessExisting(DELETES_STREAMS, !!natsUrl);
 const MIB = 1024 * 1024;
 
 // Two prefixes: one shared by the well-behaved tests, one for the test that DELETES a stream out
@@ -71,6 +75,7 @@ class Logs {
 }
 
 async function waitUntil(cond: () => boolean | Promise<boolean>, timeoutMs: number, what: string) {
+  timeoutMs *= WAN; // durable-sdk: × the round-trip factor (harness/mode.ts, F29)
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (await cond()) return;
@@ -104,6 +109,7 @@ describe.skipIf(!natsUrl)("worker recovery paths (real nats-server)", () => {
     await nc.drain();
   });
 
+  // prettier-ignore
   it("an UNDECODABLE work item is TERMed — a poison message cannot block a consumer forever", async () => {
     // DE_WORK is a WorkQueue stream with `max_deliver: -1`, so a NAK'd item comes back forever.
     // Bytes that are not JSON can never become decodable, so redelivering one is an infinite loop
@@ -131,8 +137,9 @@ describe.skipIf(!natsUrl)("worker recovery paths (real nats-server)", () => {
     } finally {
       await worker.stop();
     }
-  }, 60_000);
+  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
+  // prettier-ignore
   it("a work item for a run with NO journal is retried, then dropped — never looped on forever", async () => {
     // A forged item, or one whose journal was GC'd. Dropping immediately would strand a run whose
     // journal was merely slow to read (a fired timer wake is one-shot and would be gone), so the
@@ -175,13 +182,14 @@ describe.skipIf(!natsUrl)("worker recovery paths (real nats-server)", () => {
     } finally {
       await worker.stop();
     }
-  }, 60_000);
+  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
   // durable-sdk: "an event append that keeps losing its CAS NAKs — the event is never acked away"
   // is dropped. It injected the fences by patching NatsJournal.prototype.append inside the worker;
   // recording the signal is the engine's now (journaled before the poll hands the item out, nak'd
   // when every attempt is fenced: durable-engine core.RecordInbound, engine.TestRecordInbound*),
   // and no SDK request carries the signal entry.
+  // prettier-ignore
   it("a terminal RE-DRIVE repairs a status hint the crash window left stale", async () => {
     // A crash between the journal terminal and the KV finalize leaves status() reporting
     // running/suspended forever while result() (journal truth) already resolves. The re-drive
@@ -228,8 +236,9 @@ describe.skipIf(!natsUrl)("worker recovery paths (real nats-server)", () => {
     } finally {
       await worker.stop();
     }
-  }, 60_000);
+  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
+  // prettier-ignore
   it("re-driving an already-CANCELLED child re-notifies its parent, idempotently", async () => {
     // The other re-drive arm: a crash could have written the child's `cancelled` terminal and died
     // before telling the parent, which would park the parent forever on a child that is gone. The
@@ -295,10 +304,11 @@ describe.skipIf(!natsUrl)("worker recovery paths (real nats-server)", () => {
     } finally {
       await worker.stop();
     }
-  }, 90_000);
+  }, 90_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
   // durable-sdk: docs/findings.md F8, answered by the engine's F21: the gating run lease is the
   // engine's, so the "lease lost" line is the engine's log, read below.
+  // prettier-ignore
   it("the run lease being taken away mid-drive is survivable — it is advisory, not correctness", async () => {
     // The lease narrows the at-least-once window; it never carries correctness (the journal CAS
     // does). So when a renewal loses its CAS and the key now names somebody else, the right
@@ -340,10 +350,10 @@ describe.skipIf(!natsUrl)("worker recovery paths (real nats-server)", () => {
     } finally {
       await worker.stop();
     }
-  }, 60_000);
+  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 });
 
-describe.skipIf(!natsUrl)("worker recovery — a broken timers stream", () => {
+brokenTimers("worker recovery — a broken timers stream", () => {
   let nc: NatsConnection;
   beforeAll(async () => {
     nc = await connect({ servers: natsUrl! });
@@ -354,6 +364,7 @@ describe.skipIf(!natsUrl)("worker recovery — a broken timers stream", () => {
 
   // durable-sdk: docs/findings.md F7, answered by the engine's F19 (the work durable is bound on
   // its own, so polls keep being served with DE_TIMERS gone).
+  // prettier-ignore
   it("the maintenance pass and the pumps survive DE_TIMERS disappearing, and heal on restart", async () => {
     // Its own prefix, because this test destroys a stream. The scenario is real: a server upgraded
     // across nats-server 2.14.2 / 2.12.10 does not bring DE_TIMERS back after a restart
@@ -426,7 +437,7 @@ describe.skipIf(!natsUrl)("worker recovery — a broken timers stream", () => {
     } finally {
       await healed.stop();
     }
-  }, 90_000);
+  }, 90_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 });
 
 // The paths that only exist because something unusual is being asked of the engine: killing a run
@@ -441,6 +452,7 @@ describe.skipIf(!natsUrl)("worker recovery — kills, chains and oversized failu
     await nc.drain();
   });
 
+  // prettier-ignore
   it("a cancel REASON survives the forward across a continue-as-new rollover", async () => {
     // Cancelling the original runId of a chain has to reach whichever generation is live, and the
     // operator's reason has to travel with it — that reason is the only record of WHY a run was
@@ -478,8 +490,9 @@ describe.skipIf(!natsUrl)("worker recovery — kills, chains and oversized failu
     } finally {
       await worker.stop();
     }
-  }, 90_000);
+  }, 90_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
+  // prettier-ignore
   it("cancelling a BLOCKED child notifies its parent — a kill must not strand the caller", async () => {
     // The nastiest shape in the versioning design: a child pinned to a version nobody deploys parks
     // forever, and its parent waits on it forever. An operator kills the child — and there is no
@@ -538,10 +551,11 @@ describe.skipIf(!natsUrl)("worker recovery — kills, chains and oversized failu
     } finally {
       await worker.stop();
     }
-  }, 90_000);
+  }, 90_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
   // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
+  // prettier-ignore
   it("a child failing with an OVERSIZED message resolves the parent through a blob ref", async () => {
     // The child-done shrink path's error arm. A big failure message is not exotic — an exception
     // that embeds its input is the usual way one appears — and it cannot ride the work queue
@@ -577,8 +591,9 @@ describe.skipIf(!natsUrl)("worker recovery — kills, chains and oversized failu
     } finally {
       await worker.stop();
     }
-  }, 90_000);
+  }, 90_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
+  // prettier-ignore
   it("re-driving a COMPLETED child re-delivers its value to the parent, idempotently", async () => {
     // The success arm of the same repair the cancelled test covers: a crash between a child's
     // `result` and the child-done delivery would park the parent on a child that finished happily.
@@ -624,5 +639,5 @@ describe.skipIf(!natsUrl)("worker recovery — kills, chains and oversized failu
     } finally {
       await worker.stop();
     }
-  }, 90_000);
+  }, 90_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 });

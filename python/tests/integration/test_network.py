@@ -20,9 +20,9 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any
 from urllib.parse import urlparse
 
-import nats
 import pytest
 
+import existing
 from conftest import (
     limits_for,
     list_ephemeral_consumers,
@@ -48,7 +48,9 @@ from synadia_durable._internal.json import encode_json
 from synadia_durable.journal.entry import TERMINAL_KINDS
 from synadia_durable.types import Ctx, StartOptions
 
-pytestmark = pytest.mark.asyncio
+# durable-sdk: every test here owns the link or the server, which an existing server (DE_NATS_URL)
+# does not give it (tests/existing.py).
+pytestmark = [pytest.mark.asyncio, existing.skip_in_mode(existing.OWN_LINK)]
 
 MB = 1024 * 1024
 SIZED: dict[str, Any] = {"stream_max_bytes": 16 * MB}
@@ -116,7 +118,7 @@ class Scope:
 
     async def conn(self, url: str, *, reconnect: bool = True, link: Link | None = None) -> Any:
         """A connection that reconnects fast and forever — the posture a worker should run with."""
-        nc = await nats.connect(
+        nc = await existing.connect(
             url,
             allow_reconnect=reconnect,
             reconnect_time_wait=0.1,
@@ -851,6 +853,7 @@ async def test_a_worker_whose_connection_closes_for_good_says_so_and_stops_prete
 # --- a broker crash mid-storm ------------------------------------------------------------------
 
 
+@existing.skip_in_mode(existing.OWN_SERVER)
 async def test_sigkill_and_restart_under_a_two_worker_signal_storm(
     scope: Scope, prefix: str
 ) -> None:

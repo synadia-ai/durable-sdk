@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+import existing
 from engine import create_client, create_worker
 from synadia_durable import define_workflow
 from synadia_durable.types import Ctx
@@ -174,7 +175,11 @@ async def test_health_reports_what_the_worker_is_doing(nc: Any, prefix: str) -> 
     try:
         client = create_client(nc, prefix=prefix, stream_max_bytes=16 * MB)
         handle = await client.start(wf, None)
-        await asyncio.sleep(0.5)
+        # durable-sdk: until the item is held, rather than 0.5 s: over a WAN round trip
+        # (docs/findings.md F29) it reaches the worker later than that.
+        deadline = asyncio.get_running_loop().time() + existing.scaled(10)
+        while worker.health().inflight == 0 and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.05)
 
         live = worker.health()
         assert live.running is True

@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+import existing
 from engine import create_client, create_worker
 from synadia_durable import (
     CancelledError,
@@ -355,6 +356,7 @@ async def test_two_workers_on_one_run_stay_exactly_once(running: Any) -> None:
 
 
 async def _wait_for_state(handle: Any, state: str, timeout_s: float = 20.0) -> None:
+    timeout_s *= existing.FACTOR  # durable-sdk: × the round-trip factor (tests/existing.py, F29)
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
     while loop.time() < deadline:

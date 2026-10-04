@@ -4,7 +4,8 @@
 // after the cancel was stored, and no cancel-requested was ever journaled. PROTOCOL §11.7 step 2.
 
 import { jetstream, jetstreamManager } from "@nats-io/jetstream";
-import { connect, type NatsConnection } from "@nats-io/transport-node";
+import { type NatsConnection } from "@nats-io/transport-node";
+import { connect } from "../harness/existing.js";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { defineWorkflow } from "../../src/core/workflow.js";
 import { CancelledError } from "../../src/errors.js";

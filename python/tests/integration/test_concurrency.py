@@ -12,11 +12,13 @@ time. No code edit needed to prove the bound is real.
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from typing import Any
 
 import pytest
 
+import existing
 from conftest import rtt_from_env
 from engine import create_client, create_worker
 from shell.journal_store import NatsJournal
@@ -137,9 +139,12 @@ async def test_stop_drains_the_work_it_already_dispatched(nc: Any, prefix: str) 
     on. The drain covers the dispatched task now, not just the pump that fetched it.
     """
 
+    executing = threading.Event()
+
     def slower_than_the_pump_drain() -> str:
         # It has to outlive the pumps' own exit (bounded by their fetch timeout), or the first drain
         # stage would cover this by accident and the test would prove nothing.
+        executing.set()
         time.sleep(4.0)
         return "done"
 
@@ -151,7 +156,10 @@ async def test_stop_drains_the_work_it_already_dispatched(nc: Any, prefix: str) 
     await worker.start()
     client = create_client(nc, prefix=prefix, stream_max_bytes=16 * MB)
     handle = await client.start(wf, None)
-    await asyncio.sleep(0.4)  # the step is executing now
+    # durable-sdk: wait until the step is executing, rather than 0.4 s: over a WAN round trip
+    # (docs/findings.md F29) the item reaches the worker later than that.
+    await asyncio.to_thread(executing.wait, existing.scaled(10))
+    assert executing.is_set(), "the step never started"
 
     await worker.stop()  # mid-step: the drain must let it finish and write its terminal
 

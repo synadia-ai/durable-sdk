@@ -4,39 +4,42 @@ What building the thin TypeScript SDK found against the engine's API (`../durabl
 
 **Date:** 2026-10-03 · **Engine:** `d8c0d73` (`0.2.0-dev`) · **Library:** `7456c75` · **Server:** nats-server 2.14.6 · **Node:** 25.9 · **Python:** 3.14.7, nats-py 2.15.0
 **Follow-up:** 2026-10-04 · **Engine:** `1efd2ec` (its PR #3, which answered F1, F2, F5 to F9 as its own F18 to F25) · the brief `2026-10-04-durable-sdk-followup.md`
+**Follow-up 2:** 2026-10-04 · **Engine:** `57ae3c9` (its PR #4, pull on demand) · the brief `2026-10-04-durable-sdk-ngs-mode.md`: the harness's mode for an existing server (F29, F30)
 
 F1 to F14 came from the TypeScript SDK (P2-19a). F15 to F21 came from the Python SDK (P2-19b, the brief `2026-10-03-durable-sdk-py.md`); where a TypeScript finding also blocks a Python test, its **Blocks** line says so. F22 onwards came from the follow-up. A finding the engine answered keeps its text and gains a **Closed** line.
 
-| #   | Kind             | One line                                                                                                                            | Blocks                 |
-| --- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| F1  | closed           | API v1 has no chunked upload: a value over `max_payload` − 16 KiB cannot reach the engine, where the library offloaded it           | — (was 16 TS + 5 Py)   |
-| F2  | closed           | `serve` has no `--offload-threshold`, and at the default threshold the engine never offloads an appended entry                      | — (was 6 Python tests) |
-| F3  | brief vs cut     | The cut needs four files the brief left behind or trimmed: `inbound.ts`, all of `blobs.ts`, `nats/protocol.ts`, `nats/connect.ts`   | —                      |
-| F4  | brief vs suites  | Three of the 13 unit suites cannot pass unchanged: `call-roster`, `payload-paths`, `version`                                        | —                      |
-| F5  | closed           | A poll cannot be withdrawn: the engine hands an item to a poll whose caller is gone, and the item waits out its ack wait            | —                      |
-| F6  | closed           | A signal sent as `dataEnc` is journaled as a blob ref whatever its size, where the library journals a small one inline              | —                      |
-| F7  | closed           | With `DE_TIMERS` gone the engine refuses every `poll`; the library's work pump kept serving                                         | —                      |
-| F8  | closed           | The engine neither logs nor counts losing a run lease mid-drive                                                                     | —                      |
-| F9  | closed           | Past `maxWorkMs` the lease is gone and refuses the holder's late appends: a step longer than `maxWorkMs` never completes            | —                      |
-| F10 | note             | Engine-side decisions are invisible to the worker; seven assertions and five waits re-expressed through `info` and the engine's log | —                      |
-| F11 | note             | With one engine instance a run's items are serialised: the library's two-worker races no longer race                                | —                      |
-| F12 | library note     | A `fail` terminal that cannot be journaled ends as a fence for ever, in the pure core                                               | (with F1)              |
-| F13 | brief vs suites  | The suites' own JetStream client needs `@nats-io/jetstream`, `kv`, `obj` as devDependencies                                         | —                      |
-| F14 | behaviour change | Payloads are encrypted before they leave the process: work items carry no plaintext any more                                        | —                      |
-| F15 | brief vs suites  | Python's unit suites: four cannot pass unchanged, two are the shell's, one named in the brief does not exist                        | —                      |
-| F16 | brief vs cut     | Python's cut keeps three pure files of `_nats/`, and the suites' own JetStream client is the library's shell under `tests/shell/`   | —                      |
-| F17 | **nats-py gap**  | nats-py has no status stream and does not fail a request in flight at close: the SDK polls `stats` and `is_closed`                  | —                      |
-| F18 | brief vs cut     | The `durable_agent` example is left out: it needs the fabric's agent SDK                                                            | —                      |
-| F19 | note             | `upgrade-compat` is deleted in TypeScript; the library's Python tree never had one                                                  | —                      |
-| F20 | brief vs suites  | Eight of the library's 21 Python integration suites test the shell only and are not copied; five tests dropped in place             | —                      |
-| F21 | behaviour change | Where the Python SDK differs from the TypeScript one, and why (its metrics ask closed)                                              | —                      |
-| F22 | note             | The engine checkout carried someone's uncommitted changes; the suites built the pin from `../wt/durable-engine`                     | —                      |
-| F23 | note             | A missing blob is parked by the engine before an item reaches the worker; the offload test reads the engine's log                   | —                      |
-| F24 | **API gap**      | `get` of a blob that is gone answers `internal`, the code of any operational fault: the SDK must read `internal` as "gone"          | —                      |
-| F25 | brief vs suites  | The chunked upload is a fourth payload-blob route: both `payload-paths` rosters name it                                             | —                      |
-| F26 | behaviour        | What the chunked transport decides: who mints the runId, `offload: false`, the lease on a part, the cache                           | —                      |
-| F27 | **engine gap**   | `status` lags `result` by the worker's `done`: a run whose `result` is terminal can still read `suspended` for a round trip         | —                      |
-| F28 | note             | The suites over the delay proxy, at 150 and 300 ms: what changed, and what an NGS run needs                                         | —                      |
+| #   | Kind             | One line                                                                                                                            | Blocks                    |
+| --- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| F1  | closed           | API v1 has no chunked upload: a value over `max_payload` − 16 KiB cannot reach the engine, where the library offloaded it           | — (was 16 TS + 5 Py)      |
+| F2  | closed           | `serve` has no `--offload-threshold`, and at the default threshold the engine never offloads an appended entry                      | — (was 6 Python tests)    |
+| F3  | brief vs cut     | The cut needs four files the brief left behind or trimmed: `inbound.ts`, all of `blobs.ts`, `nats/protocol.ts`, `nats/connect.ts`   | —                         |
+| F4  | brief vs suites  | Three of the 13 unit suites cannot pass unchanged: `call-roster`, `payload-paths`, `version`                                        | —                         |
+| F5  | closed           | A poll cannot be withdrawn: the engine hands an item to a poll whose caller is gone, and the item waits out its ack wait            | —                         |
+| F6  | closed           | A signal sent as `dataEnc` is journaled as a blob ref whatever its size, where the library journals a small one inline              | —                         |
+| F7  | closed           | With `DE_TIMERS` gone the engine refuses every `poll`; the library's work pump kept serving                                         | —                         |
+| F8  | closed           | The engine neither logs nor counts losing a run lease mid-drive                                                                     | —                         |
+| F9  | closed           | Past `maxWorkMs` the lease is gone and refuses the holder's late appends: a step longer than `maxWorkMs` never completes            | —                         |
+| F10 | note             | Engine-side decisions are invisible to the worker; seven assertions and five waits re-expressed through `info` and the engine's log | —                         |
+| F11 | note             | With one engine instance a run's items are serialised: the library's two-worker races no longer race                                | —                         |
+| F12 | library note     | A `fail` terminal that cannot be journaled ends as a fence for ever, in the pure core                                               | (with F1)                 |
+| F13 | brief vs suites  | The suites' own JetStream client needs `@nats-io/jetstream`, `kv`, `obj` as devDependencies                                         | —                         |
+| F14 | behaviour change | Payloads are encrypted before they leave the process: work items carry no plaintext any more                                        | —                         |
+| F15 | brief vs suites  | Python's unit suites: four cannot pass unchanged, two are the shell's, one named in the brief does not exist                        | —                         |
+| F16 | brief vs cut     | Python's cut keeps three pure files of `_nats/`, and the suites' own JetStream client is the library's shell under `tests/shell/`   | —                         |
+| F17 | **nats-py gap**  | nats-py has no status stream and does not fail a request in flight at close: the SDK polls `stats` and `is_closed`                  | —                         |
+| F18 | brief vs cut     | The `durable_agent` example is left out: it needs the fabric's agent SDK                                                            | —                         |
+| F19 | note             | `upgrade-compat` is deleted in TypeScript; the library's Python tree never had one                                                  | —                         |
+| F20 | brief vs suites  | Eight of the library's 21 Python integration suites test the shell only and are not copied; five tests dropped in place             | —                         |
+| F21 | behaviour change | Where the Python SDK differs from the TypeScript one, and why (its metrics ask closed)                                              | —                         |
+| F22 | note             | The engine checkout carried someone's uncommitted changes; the suites built the pin from `../wt/durable-engine`                     | —                         |
+| F23 | note             | A missing blob is parked by the engine before an item reaches the worker; the offload test reads the engine's log                   | —                         |
+| F24 | **API gap**      | `get` of a blob that is gone answers `internal`, the code of any operational fault: the SDK must read `internal` as "gone"          | —                         |
+| F25 | brief vs suites  | The chunked upload is a fourth payload-blob route: both `payload-paths` rosters name it                                             | —                         |
+| F26 | behaviour        | What the chunked transport decides: who mints the runId, `offload: false`, the lease on a part, the cache                           | —                         |
+| F27 | **engine gap**   | `status` lags `result` by the worker's `done`: a run whose `result` is terminal can still read `suspended` for a round trip         | —                         |
+| F28 | note             | The suites over the delay proxy, at 150 and 300 ms: what changed, and what an NGS run needs                                         | —                         |
+| F29 | note             | The harness's mode for an existing server: one prefix, one engine, a purge by subject, the skips by name, the waits by RTT          | 17 TS + 17 Py in the mode |
+| F30 | note             | nats-py reads a creds file only with `nkeys` installed; the SDK declares `nats-py` alone                                            | —                         |
 
 ---
 
@@ -302,3 +305,51 @@ Within the thirteen, five tests are dropped in place with a note, each a test of
 - **The tests serial** (TypeScript `fileParallelism: false` already, Python serial already), and timeouts that scale with the measured RTT, as `offload` does now; `testTimeout` is a flat 30 s.
 - **Skipped against NGS:** what needs a server of its own or destroys infrastructure: `network`'s SIGKILL and restart of the server, its connection cuts and stalls (the proxy), `worker-recovery`'s deleted `DE_TIMERS` and its engine restarts, every test that stages journals or work items with the suites' own JetStream client unless the creds allow it, and the profile-dependent size tests if NGS's `max_payload` differs from the `ngs` profile's.
 - **F27 first**, or the ~25 `status()`-after-`result()` assertions will race at NGS round trips as two did here.
+
+### F29 — The harness's mode for an existing server
+
+**What.** F28's sketch, built in both languages (`test/harness/existing.ts`, `run-engine.ts`, `engine-process.ts`, `skips.ts`; `python/tests/existing.py`, `engine.py`'s `RunEngine`; both `conftest.py`). `DE_NATS_URL` switches it on; `DE_NATS_CREDS`, `DE_PREFIX`, `DE_ENGINE_URL` and `DE_CLEANUP` are the README's. What it decides, beyond the brief's list:
+
+- **Every prefix a test names is the run's.** The suites name about 90 prefixes; the harness maps each, at its own boundary (`createWorker`/`createClient`, `names()`/`Names`, `engineCounts`, the `prefix` fixture, the interop children's `DE_PREFIX`), so no test body changed. Tests are serial, and the purge after each one means a fixed runId (`ghost-no-journal`) never meets a predecessor.
+- **One engine, restarted for flags.** The run's engine is the main process's (vitest's per-file workers reach it over a 127.0.0.1 control channel; pytest holds it in the session). A test's first worker or client fixes its flags, as it fixed a spawned engine's; when they differ from the running engine's it is restarted with them (the engine reconciles the durables' ack wait at bind). `streamMaxBytes` is dropped: a test does not resize a prefix it does not own. In the plain TypeScript run the engine started 15 times for 119 tests, Python 18 for 71. Its counters are the test's own (`engineCounts` subtracts what the engine had counted when the test began, or starts at zero if it was restarted since), and so is its log (`engineLog`: the lines since the test began).
+- **The purge is a diff.** Before each test the harness snapshots each of the seven streams' subjects and counts (`subjects_filter: ">"`); after it purges every subject that is new or grew, pipelined. A subject that was there and did not change is left alone, so a prefix shared with another client (`de` on tenant-a-dev, console-de's) keeps the other client's runs. A subject the run did grow is purged whole (a work subject `de.work.<wf>` shared with another client's workflow of the same name would lose that client's items too; the suites' names end in `_e2e`, `_wf` and the like).
+- **The test's durables are deleted.** The engine makes two durables per workflow name (`de-worker-<wf>`, `de-timer-<wf>`), and the suites use about 150 names: undeleted, they pass an account's per-stream consumer cap (250 on the `ngs` profile) within one TypeScript run. The harness deletes the durables that were not there before the test; a later test reusing the name gets them back at its first poll (the engine re-binds after its 0.5 s backoff).
+- **The leftovers check counts what the test made**: consumers without a durable name on the prefix's streams, less those there before the test (before the run, at the end), so another client's KV watch on a shared prefix is not this run's leak.
+- **The engine runs where the harness runs.** Under `DE_TEST_RTT_MS` the run's engine connects through the proxy too, so every round trip in the run is the proxy's, the shape of a laptop against NGS. F28's runs had the engine on the direct URL; this is slower and closer to the real thing.
+- **The factor** is 1 up to 20 ms, then 1 + RTT/100 of the median of five round trips to where the tests connect, printed once; 2.52 at the proxy's 150 ms. It scales the default test and hook timeouts, a handle's `result()`, the engine's start, the harness's own waits, and the suites' own wait helpers (TypeScript `waitUntil` and `waitForState` in eight files; Python `_wait_until` and `_wait_for_state` in three). A test's own timeout is fixed by vitest when it collects the test, out of the harness's reach, so the 35 tests that give one now give `N * WAN` (`test/harness/mode.ts`), each under a `// prettier-ignore` that keeps prettier from re-indenting its body. F28's offload allowance already reads `natsRttMs`, which is the measured RTT in the mode.
+- **Creds** reach the clients (`connect` in `existing.ts`, `existing.connect`), the engine (`--creds`) and the interop children (`NATS_CREDS`, which `conformance/interop/ts-worker.ts`, `ts-client.ts` and `python/conformance/worker.py` now read). Proven against a local server in operator mode with a throwaway `nsc` operator and user, which refuses an unauthenticated connection: TypeScript e2e, offload, metrics and interop-py 71 passed but for interop-py's 10, which failed on F30 and then passed; Python interop, interop-reverse and worker 34 passed.
+
+**What the 150 ms run changed in the tests** (each marked `durable-sdk:`):
+
+- TypeScript `e2e` "a work item for a run with NO journal …" read the work durable right after `worker.start()`. On `57ae3c9` the engine binds a workflow's durables when the first poll for it arrives (pull on demand), which can come after `start()` returns, so the read could answer `consumer not found`. It failed so in the spawned run at 0 ms too, once; absent now counts as not yet drained.
+- TypeScript `interop-py` "runs a Python workflow and reads its result and status" lost F27's race (`'running'` for `'completed'`) and waits for the state, bounded, as its twins have since F28.
+- Python `test_stop_drains_the_work_it_already_dispatched` and `test_health_reports_what_the_worker_is_doing` slept 0.4 s and 0.5 s for "the step is executing now"; with every round trip 150 ms the item had not arrived. They wait for the step to start and for the item to be held.
+- TypeScript `working` and Python `test_working` "ESCAPE HATCH across WORKERS" (the takeover) ran out of their own 40 s and 25 s; the factor now reaches both.
+- Python `test_interop` `test_status_reports_the_terminal_state` lost F27's race in the next run (`'running'` for `'completed'`) and waits for the state too. F27 is the engine's, and timing: each run at 150 ms lost it in a different place (TypeScript `interop-py` in the first, Python `test_interop` in the second). The NGS run may meet it in another of the ~25 assertions of that shape; such a failure is F27, not the mode.
+
+The first 150 ms run, before these: TypeScript 116 passed, 3 failed; Python 68 passed, 3 failed. The second: TypeScript 119 passed; Python 70 passed, 1 failed (`test_status_reports_the_terminal_state`).
+
+**`DE_CLEANUP` stays opt-in, as the brief has it.** With a generated prefix every run leaves seven streams reserving 1 GiB each; after about ten runs the local server's store was full and the next run's engine refused to start (`the account's storage quota refused it (1073741824 bytes asked; JetStream 10047)`), which the harness reported as the run's failure in the engine's own words, the behaviour the brief asks for on a tier too small. Local runs pass `DE_CLEANUP=delete` (the README says so). Making it the default for a generated prefix, which only the run can have made, would be the obvious next step.
+
+**The skips, by name** (each title or reason says "existing server (DE_NATS_URL)" and why):
+
+- TypeScript `network.test.ts`, all of it but its already-skipped "LEASE at RTT 500 ms", 16: "the proxy itself" (5), "latency" (3 and the lease control), "disconnects" (5), "a connection that closes for good" (1): a proxy of their own between them and the server. They pass against a plain local server, but a server the run does not own can be TLS, which a byte proxy cannot carry, and their cuts are what the brief excludes. "a broker crash mid-storm" (1): it kills a server of its own.
+- TypeScript `worker-recovery.test.ts` "the maintenance pass and the pumps survive DE_TIMERS disappearing, and heal on restart": it deletes one of the prefix's streams.
+- Python `test_network.py`, its 16 that run (the twins; `test_sigkill_and_restart_under_a_two_worker_signal_storm` as a server of its own), and `test_worker_recovery.py::test_the_maintenance_pass_and_pumps_survive_a_deleted_timers_stream`.
+- The account-limits profile assertions: none of this repo's suites asserts on the profile (the library's limits suite was not copied), so none is skipped for it; in the mode no profile is applied.
+
+**The runs** (engine `57ae3c9`, a plain `nats-server -js` 2.14.6 on 127.0.0.1:14222 started by hand and given by URL):
+
+| Run                                    | TypeScript integration         | Python integration                                                             |
+| -------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------ |
+| spawned (as before)                    | 136 passed, 1 skipped, 309 s   | 88 passed, 1 skipped (the whole suite 468 passed, 1 skipped, 2 xfailed), 234 s |
+| the mode, plain (RTT 0.0 ms, × 1)      | 119 passed, 18 skipped, 72.8 s | 71 passed, 18 skipped, 71.8 s                                                  |
+| the mode, the proxy at 150 ms (× 2.53) | 119 passed, 18 skipped, 1295 s | 71 passed, 18 skipped, 738 s                                                   |
+
+The counts are the spawned ones less the 17 named skips in each language (each language's 18th skip is the "LEASE at RTT 500 ms" test dropped since F9, inside a skipped module or suite in the mode). The mode's runs went against a fresh server with `DE_CLEANUP=delete`: each left the prefix's seven empty (no messages, no consumers) before deleting them, and the server held no stream afterwards, so nothing was written outside the prefix. The time grows with the round trip about linearly: TypeScript ~8 s and Python ~4.4 s for each ms of RTT, as every round trip of the engine's is paid too (F28's 150 ms run, with the engine on the direct URL, took 572 s and 380 s).
+
+**For the NGS run.** F27's `status()`-after-`result()` race is still the engine's (about 25 assertions; five wait for the state since F28), and every round trip of the engine's now crosses the WAN as well. tenant-a-dev's `de` is console-de's too: the run leaves its subjects and durables alone (above), but its own engine and the tests share the prefix's API subjects with whatever else serves there, so the run is best done while nothing else drives `de`.
+
+### F30 — nats-py reads a creds file only with `nkeys` installed
+
+**What.** `nats.connect(url, user_credentials=…)` imports `nkeys` to sign the server's nonce. `nats-py` does not require it (it is the `nats-py[nkeys]` extra), so a client of the Python SDK on NGS, or any server that wants creds, fails with `ModuleNotFoundError: No module named 'nkeys'`. The harness's mode found it at the first creds run: every Python test errored at setup, and the TypeScript interop suite's Python worker died before `READY`. `nkeys` is now a dev dependency (`python/pyproject.toml`). The SDK still declares `nats-py` alone; `python/README.md` says to install `nats-py[nkeys]` for creds. A `creds` extra on `synadia-durable` would make it one word; that is the SDK's choice, not made here.

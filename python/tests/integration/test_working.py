@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 
+import existing
 from engine import create_client, create_worker, engine_log
 from synadia_durable import define_workflow
 from synadia_durable.types import Ctx
@@ -43,6 +44,7 @@ class _CapturingLogger:
 
 
 async def _wait_until(condition: Any, timeout_s: float = 20.0, what: str = "condition") -> None:
+    timeout_s *= existing.FACTOR  # durable-sdk: × the round-trip factor (tests/existing.py, F29)
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
     while loop.time() < deadline:

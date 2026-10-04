@@ -60,8 +60,12 @@ boom = define_workflow("boom", _boom)
 
 
 async def main() -> None:
+    # NATS_CREDS: a creds file, when the server needs one (the harness's existing-server mode).
+    creds = os.environ.get("NATS_CREDS")
     nc = await nats.connect(
-        os.environ.get("NATS_URL", "nats://127.0.0.1:4222"), **with_reconnect_defaults()
+        os.environ.get("NATS_URL", "nats://127.0.0.1:4222"),
+        **with_reconnect_defaults(),
+        **({"user_credentials": creds} if creds else {}),
     )
     key_hex = os.environ.get("DE_PAYLOAD_KEY")
     worker = create_worker(

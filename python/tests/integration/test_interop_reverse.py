@@ -15,9 +15,9 @@ import shutil
 from pathlib import Path
 from typing import Any, cast
 
-import nats
 import pytest
 
+import existing
 from conftest import over_payload
 from engine import create_worker
 from shell.journal_store import NatsJournal
@@ -58,7 +58,7 @@ async def run_ts_client(
     payload_key: bytes | None = None,
 ) -> str:
     """Drive a run from the TypeScript client and return the single line it prints."""
-    env = {**os.environ, "NATS_URL": nats_url, "DE_PREFIX": prefix}
+    env = {**os.environ, "NATS_URL": nats_url, "DE_PREFIX": existing.map_prefix(prefix)}
     if payload_key is not None:
         env["DE_PAYLOAD_KEY"] = payload_key.hex()
     if signal is not None:
@@ -207,7 +207,7 @@ async def test_typescript_reads_a_payload_python_encrypted(nats_url: str) -> Non
     """
     key = bytes(range(32))
     prefix = "ipenc"
-    nc = await nats.connect(nats_url)
+    nc = await existing.connect(nats_url)
 
     @workflow(name="enc_interop")
     async def enc_interop(ctx: Ctx, cart: dict[str, Any]) -> dict[str, Any]:
@@ -262,7 +262,7 @@ async def test_a_python_worker_honours_the_payload_enc_flag_typescript_wrote(
     key = bytes(range(32))
     prefix = "ipencbig"
     secret = "pan-4242424242424242"
-    nc = await nats.connect(nats_url)
+    nc = await existing.connect(nats_url)
 
     @workflow(name="enc_bigsig")
     async def enc_bigsig(ctx: Ctx, _input: Any) -> int:

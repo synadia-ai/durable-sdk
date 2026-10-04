@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 import engine
+import existing
 from conftest import over_payload, read_blob
 from synadia_durable import CancelledError, WorkflowFailure, create_client, define_workflow
 from synadia_durable.errors import DurableTimeoutError
@@ -108,6 +109,9 @@ async def test_status_reports_the_terminal_state(client: Any) -> None:
     handle = await client.start(greet, {"name": "grace"})
     await handle.result(20_000)
 
+    # durable-sdk: docs/findings.md F27 — `status` can lag `result` by a round trip; it lost the race
+    # in the existing-server mode at 150 ms (F29): wait for the state.
+    await _wait_for_state(handle, "completed", 10.0)
     status = await handle.status()
     assert status.state == "completed"
     assert status.workflow == "greet"
@@ -171,6 +175,7 @@ async def test_result_times_out_rather_than_hanging_forever(client: Any) -> None
 
 
 async def _wait_for_state(handle: Any, state: str, timeout_s: float = 20.0) -> None:
+    timeout_s *= existing.FACTOR  # durable-sdk: × the round-trip factor (tests/existing.py, F29)
     deadline = asyncio.get_running_loop().time() + timeout_s
     while asyncio.get_running_loop().time() < deadline:
         if (await handle.status()).state == state:

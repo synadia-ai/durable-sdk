@@ -3,7 +3,8 @@
 // the real size of every appended entry, as the Python worker does, so a dashboard reads one number
 // from both. The library's TypeScript tree has no metrics suite of its own to copy.
 
-import { connect, type NatsConnection } from "@nats-io/transport-node";
+import { type NatsConnection } from "@nats-io/transport-node";
+import { connect } from "../harness/existing.js";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { defineWorkflow } from "../../src/core/workflow.js";
 import { type DurableEventFields, type DurableEventName } from "../../src/internal/metrics.js";

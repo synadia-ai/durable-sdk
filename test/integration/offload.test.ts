@@ -8,7 +8,8 @@ import { jetstream, jetstreamManager } from "@nats-io/jetstream";
 import { Kvm } from "@nats-io/kv";
 import { Objm } from "@nats-io/obj";
 import { listObjects, readBlob } from "../harness/blobs.js";
-import { connect, type NatsConnection } from "@nats-io/transport-node";
+import { type NatsConnection } from "@nats-io/transport-node";
+import { connect } from "../harness/existing.js";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { defineWorkflow } from "../../src/core/workflow.js";
 import { BlobMissingError } from "../../src/errors.js";
@@ -19,10 +20,12 @@ import { NatsJournal } from "../harness/shell/journal-store.js";
 import { names } from "../harness/shell/names.js";
 import { createWorker } from "../harness/engine.js";
 import { maxPayload } from "../harness/payload.js";
+import { WAN } from "../harness/mode.js";
 
 const natsUrl = inject("natsUrl");
 
 async function waitUntil(cond: () => Promise<boolean>, timeoutMs: number): Promise<void> {
+  timeoutMs *= WAN; // durable-sdk: × the round-trip factor (harness/mode.ts, F29)
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (await cond()) return;

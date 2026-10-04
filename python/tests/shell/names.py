@@ -32,6 +32,10 @@ class Names:
     )
 
     def __init__(self, prefix: str = "de") -> None:
+        # durable-sdk: against an existing server every prefix is the run's one (tests/existing.py).
+        import existing
+
+        prefix = existing.map_prefix(prefix)
         assert_token("prefix", prefix)
         up = prefix.upper()
         self.prefix = prefix

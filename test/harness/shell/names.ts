@@ -1,6 +1,8 @@
 // @synadia-ai/durable — resource + subject naming (prefix configurable, default "de").
 // See DESIGN.md §5. runIds and workflow names must be single NATS subject tokens (no "." " " "*" ">").
 
+import { inject } from "vitest";
+
 export interface Names {
   prefix: string;
   journalStream: string;
@@ -26,7 +28,9 @@ export interface Names {
   timerWakeSubject(workflow: string): string;
 }
 
-export function names(prefix = "de"): Names {
+export function names(given = "de"): Names {
+  // durable-sdk: against an existing server every prefix is the run's one (harness/existing.ts).
+  const prefix = inject("runPrefix") ?? given;
   const up = prefix.toUpperCase();
   return {
     prefix,

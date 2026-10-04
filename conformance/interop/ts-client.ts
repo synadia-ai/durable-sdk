@@ -8,6 +8,8 @@
 //
 // Prints one line: `RESULT <json>`, `FAILED <message>`, or `CANCELLED`.
 
+import { readFileSync } from "node:fs";
+import { credsAuthenticator } from "@nats-io/nats-core";
 import { connect } from "@nats-io/transport-node";
 import { aesGcmPayloadCodec, createClient, defineWorkflow } from "../../src/index.js";
 import { CancelledError, WorkflowFailure } from "../../src/errors.js";
@@ -24,7 +26,12 @@ const wf = defineWorkflow(workflowName, (): Promise<never> => {
   throw new Error("this workflow's body is implemented in the Python worker");
 });
 
-const nc = await connect({ servers: process.env.NATS_URL ?? "nats://127.0.0.1:4222" });
+// NATS_CREDS: a creds file, when the server needs one (the harness's existing-server mode).
+const creds = process.env.NATS_CREDS;
+const nc = await connect({
+  servers: process.env.NATS_URL ?? "nats://127.0.0.1:4222",
+  ...(creds ? { authenticator: credsAuthenticator(readFileSync(creds)) } : {}),
+});
 // DE_PAYLOAD_KEY (hex) turns on encryption at rest, so the reverse-interop test can prove the two
 // SDKs' AES-GCM payload codecs are wire-compatible: PYTHON encrypts, this reads it back.
 const keyHex = process.env.DE_PAYLOAD_KEY;

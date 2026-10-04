@@ -3,7 +3,8 @@
 
 import { jetstream, jetstreamManager } from "@nats-io/jetstream";
 import { Kvm } from "@nats-io/kv";
-import { connect, type NatsConnection } from "@nats-io/transport-node";
+import { type NatsConnection } from "@nats-io/transport-node";
+import { connect } from "../harness/existing.js";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { over } from "../harness/payload.js";
 import { executeRun } from "../../src/core/execute.js";
@@ -15,10 +16,12 @@ import { createClient, createWorker, provision } from "../harness/engine.js";
 import { NatsJournal } from "../harness/shell/journal-store.js";
 import { names } from "../harness/shell/names.js";
 import { RunsStore } from "../harness/shell/runs.js";
+import { WAN } from "../harness/mode.js";
 
 const natsUrl = inject("natsUrl");
 
 async function waitUntil(cond: () => Promise<boolean>, timeoutMs: number): Promise<void> {
+  timeoutMs *= WAN; // durable-sdk: × the round-trip factor (harness/mode.ts, F29)
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (await cond()) return;
@@ -567,9 +570,16 @@ describe.skipIf(!natsUrl)("end-to-end (worker + client, real nats-server)", () =
         new TextEncoder().encode(JSON.stringify({ runId: "ghost-no-journal", kind: "start" })),
       );
       // Drains after the bounded NAK-with-backoff cycle (250+500+1000+2000ms, then term).
+      // durable-sdk: the engine binds the durable when the worker's first poll reaches it (pull on
+      // demand, engine 57ae3c9), which can be after start() returns: absent is not drained yet.
       await waitUntil(async () => {
-        const ci = await jsm.consumers.info(n.workStream, "de-worker-ghost_wf");
-        return ci.num_pending === 0 && ci.num_ack_pending === 0;
+        const ci = await jsm.consumers
+          .info(n.workStream, "de-worker-ghost_wf")
+          .catch((e: unknown) => {
+            if (e instanceof Error && /consumer not found/i.test(e.message)) return undefined;
+            throw e;
+          });
+        return ci !== undefined && ci.num_pending === 0 && ci.num_ack_pending === 0;
       }, 20_000);
       // The consumer is not wedged: a real run through the same worker completes normally.
       const client = createClient({ nc, prefix: "e2eghost" });

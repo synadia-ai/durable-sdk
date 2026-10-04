@@ -11,13 +11,21 @@ to the SDK's. The library's per-worker options that are the engine's flags now (
 The binary: ``DE_ENGINE`` (a path), or built with ``go build -o`` from the engine checkout
 (``DE_ENGINE_REPO``, default ``../durable-engine``) at the commit ``engine.pin`` names. A checkout
 at another commit, or with local changes, is refused unless ``DE_ENGINE_ANY=1``. Without either the
-integration suites skip, saying why. Nothing reaches beyond 127.0.0.1.
+integration suites skip, saying why. Nothing reaches beyond 127.0.0.1 unless ``DE_NATS_URL`` says
+so.
+
+Against an existing server (``existing.py``, ``DE_NATS_URL``) there is one prefix and one engine
+for the run instead: every prefix a test names is the run's, the engine is the session's
+(``RunEngine``), and a test's flags restart it only when they differ from the ones it runs with.
+Its counters (``engine_counts``) and its log (``engine_log``) are the test's own: the difference
+from the test's start, as a fresh engine per prefix gave them.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import json
 import os
 import shutil
@@ -29,6 +37,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import pytest
+
+import existing
 from synadia_durable import Client, RunHandle, Worker, WorkerHealth
 from synadia_durable import create_client as sdk_create_client
 from synadia_durable import create_worker as sdk_create_worker
@@ -158,7 +169,18 @@ _instances = 0
 class EngineProcess:
     """One ``durable-engine serve`` process. Its stderr is kept (the last 2 000 lines)."""
 
-    def __init__(self, binary: str, url: str, prefix: str, flags: EngineFlags) -> None:
+    def __init__(
+        self,
+        binary: str,
+        url: str,
+        prefix: str,
+        flags: EngineFlags,
+        *,
+        creds: str | None = None,
+        metrics_addr: str | None = None,
+        start_timeout_s: float = 30.0,
+        on_line: Any = None,
+    ) -> None:
         global _instances
         _instances += 1
         self.binary = binary
@@ -169,13 +191,23 @@ class EngineProcess:
         self.log: deque[str] = deque(maxlen=2_000)
         self._proc: subprocess.Popen[bytes] | None = None
         self._serving = threading.Event()
+        self.creds = creds
+        self.metrics_addr = metrics_addr
+        self.start_timeout_s = start_timeout_s
+        self.on_line = on_line
 
     @property
     def args(self) -> list[str]:
+        extra: list[str] = []
+        if self.creds is not None:
+            extra += ["--creds", self.creds]
+        if self.metrics_addr is not None:
+            extra += ["--metrics-addr", self.metrics_addr]
         return [
             "serve",
             "--nats",
             self.url,
+            *extra,
             "--prefix",
             self.prefix,
             "--instance",
@@ -189,6 +221,8 @@ class EngineProcess:
         for raw in proc.stderr:
             line = raw.decode("utf-8", "replace").rstrip("\n")
             self.log.append(line)
+            if self.on_line is not None:
+                self.on_line(line)
             if echo:
                 print(f"[engine {self.prefix}] {line}", file=sys.stderr)
             if "msg=serving" in line:
@@ -202,7 +236,7 @@ class EngineProcess:
         )
         self._proc = proc
         threading.Thread(target=self._read, args=(proc,), daemon=True).start()
-        up = await asyncio.to_thread(self._serving.wait, 30.0)
+        up = await asyncio.to_thread(self._serving.wait, self.start_timeout_s)
         if not up or proc.poll() is not None:
             proc.kill()
             log = "\n".join(self.log)
@@ -264,8 +298,10 @@ def _server_url() -> str:
     return url
 
 
-async def ensure_engine(prefix: str, flags: EngineFlags | None = None) -> EngineProcess:
+async def ensure_engine(prefix: str, flags: EngineFlags | None = None) -> EngineProcess | None:
     """The engine serving ``prefix`` on the current server, started on first use with ``flags``."""
+    if existing.in_mode():
+        return await _ensure_run_engine(flags or EngineFlags())
     url = _server_url()
     key = f"{url}|{prefix}"
     task = _engines.get(key)
@@ -287,6 +323,8 @@ async def ensure_engine(prefix: str, flags: EngineFlags | None = None) -> Engine
 
 
 async def engine_for(prefix: str) -> EngineProcess | None:
+    if existing.in_mode():
+        return _run.current if _run is not None else None
     task = _engines.get(f"{_server_url()}|{prefix}")
     return await task if task is not None else None
 
@@ -304,6 +342,18 @@ async def restart_engine(prefix: str, *, kill: bool = False) -> None:
     """Stop the engine serving ``prefix`` (gracefully, or ``kill=True`` for a crash); the next
     worker or client on the prefix starts a fresh one, which provisions what is missing — the
     library's "a restarted worker re-provisions", now the engine's."""
+    global _test_flags_fixed, _test_ensure
+    if existing.in_mode():
+        if _run is None or _run.external:
+            pytest.skip(
+                "existing-server mode: the engine is DE_ENGINE_URL's, it cannot be restarted"
+            )
+        await _run.halt(kill)
+        _test_flags_fixed, _test_ensure = (
+            False,
+            None,
+        )  # the next worker or client starts it again, with its flags
+        return
     task = _engines.pop(f"{_server_url()}|{prefix}", None)
     if task is None:
         return
@@ -313,6 +363,9 @@ async def restart_engine(prefix: str, *, kill: bool = False) -> None:
 
 async def engine_log(prefix: str) -> list[str]:
     """The log lines of the engine serving ``prefix`` (its stderr, as ``serve`` writes it)."""
+    if existing.in_mode():
+        # The run's one engine: the lines since the test began, as a test's own engine gave them.
+        return _run.log_since(_test_log_from) if _run is not None else []
     e = await engine_for(prefix)
     return list(e.log) if e is not None else []
 
@@ -320,9 +373,17 @@ async def engine_log(prefix: str) -> list[str]:
 async def engine_counts(nc: Any, prefix: str) -> dict[str, float]:
     """The engine's own counters (``info``'s ``counts``, its /metrics numbers by series name), for
     an assertion that was about what the library's worker did and is now the engine's."""
-    msg = await nc.request(f"{prefix}.api.v1.info", b"{}", timeout=5)
-    counts: dict[str, float] = json.loads(msg.data).get("counts") or {}
-    return counts
+    msg = await nc.request(
+        f"{existing.map_prefix(prefix)}.api.v1.info", b"{}", timeout=existing.scaled(5)
+    )
+    info = json.loads(msg.data)
+    counts: dict[str, float] = info.get("counts") or {}
+    # One engine for the run: the test's own counts are the difference from its start
+    # (begin_test), unless the engine was restarted since, when they start at zero.
+    if not existing.in_mode() or _test_counts is None or _test_counts[0] != info.get("instance"):
+        return counts
+    base = _test_counts[1]
+    return {k: v - base.get(k, 0) for k, v in counts.items()}
 
 
 def count_of(counts: dict[str, float], name: str, **labels: str) -> float:
@@ -341,6 +402,140 @@ async def provision(_nc: Any, names: Any, opts: Any = None) -> None:
     its start. A suite that provisioned a prefix to stage a journal by hand starts its engine."""
     smb = getattr(opts, "stream_max_bytes", None) if opts is not None else None
     await ensure_engine(names.prefix, EngineFlags(stream_max_bytes=smb))
+
+
+# --- the existing-server mode: one engine for the run --------------------------------------------
+
+
+def run_flags(flags: EngineFlags) -> EngineFlags:
+    """Flags as the run's engine takes them: ``stream_max_bytes`` dropped (the prefix's seven are
+    sized once, by the operator or the first provisioning, never resized by a test against a server
+    the run does not own)."""
+    return dataclasses.replace(flags, stream_max_bytes=None)
+
+
+class RunEngine:
+    """The ONE engine of a run against an existing server, the session's (integration/conftest.py).
+    ``ensure`` restarts it only when a test's flags differ from the ones it runs with. Under
+    ``DE_ENGINE_URL`` it is not the harness's: never started, stopped or restarted, and a test that
+    needs other flags or a restart is skipped, saying so."""
+
+    def __init__(
+        self,
+        binary: str | None,
+        url: str,
+        prefix: str,
+        *,
+        creds: str | None,
+        metrics_addr: str | None,
+        start_timeout_s: float,
+    ) -> None:
+        self.binary = binary
+        self.url = url
+        self.prefix = prefix
+        self.creds = creds
+        self.metrics_addr = metrics_addr
+        self.start_timeout_s = start_timeout_s
+        self.current: EngineProcess | None = None
+        self.flags = EngineFlags()
+        self.starts = 0
+        self._log: list[str] = []
+        self._dropped = 0
+
+    @property
+    def external(self) -> bool:
+        return self.binary is None
+
+    def _line(self, line: str) -> None:
+        self._log.append(line)
+        if len(self._log) > 20_000:
+            del self._log[:10_000]
+            self._dropped += 10_000
+
+    @property
+    def log_mark(self) -> int:
+        return self._dropped + len(self._log)
+
+    def log_since(self, since: int) -> list[str]:
+        return self._log[max(0, since - self._dropped) :]
+
+    async def ensure(self, flags: EngineFlags) -> None:
+        want = run_flags(flags)
+        if self.external:
+            if want != EngineFlags():
+                pytest.skip(
+                    f"existing-server mode: the engine is DE_ENGINE_URL's, it cannot take {want}"
+                )
+            return
+        cur = self.current
+        if cur is not None and cur.running and want == self.flags:
+            return
+        if cur is not None:
+            await cur.stop()
+        assert self.binary is not None
+        e = EngineProcess(
+            self.binary,
+            self.url,
+            self.prefix,
+            want,
+            creds=self.creds,
+            metrics_addr=self.metrics_addr,
+            start_timeout_s=self.start_timeout_s,
+            on_line=self._line,
+        )
+        self.current, self.flags = e, want
+        self.starts += 1
+        await e.start()
+
+    async def halt(self, kill: bool) -> None:
+        cur, self.current = self.current, None
+        if cur is not None:
+            await (cur.kill() if kill else cur.stop())
+
+    async def stop(self) -> None:
+        await self.halt(kill=False)
+
+
+_run: RunEngine | None = None
+# The current test in the mode: its flags are fixed by its first call, as the first worker or
+# client on a prefix fixed a spawned engine's.
+_test_flags_fixed = False
+_test_ensure: asyncio.Task[None] | None = None
+_test_counts: tuple[str, dict[str, float]] | None = None
+_test_log_from = 0
+
+
+def configure_run(run: RunEngine | None) -> None:
+    global _run
+    _run = run
+
+
+async def begin_test(nc: Any) -> None:
+    """Before each test in the mode: the counters and the log line the test's are measured from."""
+    global _test_flags_fixed, _test_counts, _test_log_from, _test_ensure
+    _test_flags_fixed = False
+    _test_ensure = None
+    _test_counts = None
+    _test_log_from = _run.log_mark if _run is not None else 0
+    with contextlib.suppress(Exception):  # no engine running right now: the counts start at zero
+        msg = await nc.request(
+            f"{existing.map_prefix('de')}.api.v1.info", b"{}", timeout=existing.scaled(5)
+        )
+        info = json.loads(msg.data)
+        _test_counts = (str(info.get("instance")), info.get("counts") or {})
+
+
+async def _ensure_run_engine(flags: EngineFlags) -> EngineProcess | None:
+    global _test_flags_fixed, _test_ensure
+    if _run is None:
+        raise EngineNotAvailableError("no run engine (integration/conftest.py)")
+    if not _test_flags_fixed:
+        # The first call fixes the flags; a concurrent second one waits for the same (re)start.
+        if _test_ensure is None or (_test_ensure.done() and _test_ensure.exception() is not None):
+            _test_ensure = asyncio.ensure_future(_run.ensure(flags))
+        await asyncio.shield(_test_ensure)
+        _test_flags_fixed = True
+    return _run.current
 
 
 # --- the SDK's create_worker / create_client, with the prefix's engine started first -------------
@@ -394,7 +589,9 @@ class EngineWorker:
 def create_worker(nc: Any, workflows: list[Workflow[Any, Any]], **opts: Any) -> EngineWorker:
     if os.environ.get("DE_SDK_LOG") == "1" and opts.get("logger") is None:
         opts = {**opts, "logger": _ConsoleLogger()}
-    prefix = opts.get("prefix", "de")
+    prefix = existing.map_prefix(opts.get("prefix", "de"))
+    if "prefix" in opts or existing.in_mode():
+        opts = {**opts, "prefix": prefix}
     return EngineWorker(sdk_create_worker(nc, workflows, **opts), prefix, flags_of(opts))
 
 
@@ -407,7 +604,8 @@ class EngineHandle(RunHandle[Any]):
 
     async def result(self, timeout_ms: float = 30_000) -> Any:
         await self._engine_client.ready()
-        return await super().result(timeout_ms)
+        # Against an existing server every wait is scaled by the measured round trip.
+        return await super().result(timeout_ms * existing.FACTOR)
 
     async def status(self) -> RunStatus:
         await self._engine_client.ready()
@@ -444,7 +642,9 @@ class EngineClient:
 
 
 def create_client(nc: Any, **opts: Any) -> EngineClient:
-    prefix = opts.get("prefix", "de")
+    prefix = existing.map_prefix(opts.get("prefix", "de"))
+    if "prefix" in opts or existing.in_mode():
+        opts = {**opts, "prefix": prefix}
     return EngineClient(sdk_create_client(nc, **opts), prefix, flags_of(opts))
 
 
@@ -454,7 +654,10 @@ __all__ = [
     "EngineNotAvailableError",
     "EngineProcess",
     "EngineWorker",
+    "RunEngine",
+    "begin_test",
     "configure",
+    "configure_run",
     "count_of",
     "create_client",
     "create_worker",

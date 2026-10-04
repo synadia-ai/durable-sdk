@@ -39,6 +39,9 @@ artifacts = ["src/synadia_durable/py.typed"]
 dev = [
   "cryptography>=42",
   "mypy>=1.13",
+  # nats-py reads a creds file only with nkeys installed: the harness's existing-server mode
+  # (`DE_NATS_CREDS`, tests/existing.py) and the interop worker it spawns need it.
+  "nkeys>=0.2",
   "pytest>=8.3",
   "pytest-asyncio>=0.24",
   # Coverage is a dev dependency, not a gate step: `uv run pytest --cov` on demand. Keeping it out

@@ -10,7 +10,8 @@
 // One prefix, sized small: a prefix reserves its max_bytes across six streams (test/harness).
 
 import { jetstream, jetstreamManager } from "@nats-io/jetstream";
-import { connect, type NatsConnection } from "@nats-io/transport-node";
+import { type NatsConnection } from "@nats-io/transport-node";
+import { connect } from "../harness/existing.js";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { defineWorkflow } from "../../src/core/workflow.js";
 import { encodeJson } from "../../src/internal/json.js";
@@ -22,6 +23,7 @@ import { names } from "../harness/shell/names.js";
 import { type WorkItem } from "../../src/core/work-item.js";
 import { createWorker } from "../harness/engine.js";
 import { over } from "../harness/payload.js";
+import { WAN } from "../harness/mode.js";
 
 const natsUrl = inject("natsUrl");
 const MIB = 1024 * 1024;
@@ -75,6 +77,7 @@ class Drives {
 }
 
 async function waitUntil(cond: () => boolean | Promise<boolean>, timeoutMs: number, what: string) {
+  timeoutMs *= WAN; // durable-sdk: × the round-trip factor (harness/mode.ts, F29)
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (await cond()) return;
@@ -116,6 +119,7 @@ describe.skipIf(!natsUrl)("feature × concurrency crossings", () => {
     await nc.drain();
   });
 
+  // prettier-ignore
   it("VERSIONING × fence: two workers racing ONE pinned run keep it on its own version", async () => {
     // The mixed-fleet test has a v1-only worker PARKING a v2 run — the workers never contend. Here
     // both can run it and both are woken repeatedly, so the version-pinned dispatch has to hold
@@ -175,8 +179,9 @@ describe.skipIf(!natsUrl)("feature × concurrency crossings", () => {
       await a.stop();
       await b.stop();
     }
-  }, 90_000);
+  }, 90_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
+  // prettier-ignore
   it("CONTINUE-AS-NEW × crash: a rollover interrupted before the next generation starts is repaired", async () => {
     // The crash window peculiar to a rollover: the `continued` terminal is journaled, and then the
     // process dies before `handleContinue` starts generation n+1. Nothing is left to drive the
@@ -236,8 +241,9 @@ describe.skipIf(!natsUrl)("feature × concurrency crossings", () => {
     } finally {
       await w2.stop();
     }
-  }, 90_000);
+  }, 90_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
+  // prettier-ignore
   it("CONTINUE-AS-NEW × multi-worker: a raced rollover starts ONE next generation", async () => {
     // The integration twin of the adopt unit test. Two workers drive the same run through a
     // rollover under a wake storm; whichever loses the terminal CAS must adopt the journaled spec,
@@ -281,10 +287,11 @@ describe.skipIf(!natsUrl)("feature × concurrency crossings", () => {
       await a.stop();
       await b.stop();
     }
-  }, 120_000);
+  }, 120_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
   // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
+  // prettier-ignore
   it("OFFLOAD × multi-worker: a storm over blob-backed payloads journals each step once", async () => {
     // Offload is proven against crash, fence and redelivery, but never under contention. What is
     // specific here: two workers re-running the same step both WRITE a blob, and the names are
@@ -320,8 +327,9 @@ describe.skipIf(!natsUrl)("feature × concurrency crossings", () => {
       await a.stop();
       await b.stop();
     }
-  }, 120_000);
+  }, 120_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
+  // prettier-ignore
   it("CANCELLATION × multi-worker: a cancel racing two drivers still lands exactly one terminal", async () => {
     // A cancel is deliberately UNGATED by the lease so the kill switch always works, which means it
     // races execution by design. Under two workers the run can be mid-step on one while the other
@@ -367,5 +375,5 @@ describe.skipIf(!natsUrl)("feature × concurrency crossings", () => {
       await a.stop();
       await b.stop();
     }
-  }, 90_000);
+  }, 90_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 });

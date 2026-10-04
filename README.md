@@ -74,9 +74,48 @@ bun install && npm test            # the 13 unit suites of the pure core (no ser
 npm run test:integration           # 9 of the library's integration suites, interop-py and metrics, on durable-engine serve
 ```
 
-The integration suites spawn a `nats-server` (≥ 2.14, from `PATH`) under the library's account-limits profile (`DE_TEST_PROFILE=ngs|tight|none`, default `ngs`), and one `durable-engine serve` per prefix a test uses, stopped after each test. The engine binary is `DE_ENGINE` (a path), or is built with `go build -o .engine-bin/…` from `../durable-engine` (`DE_ENGINE_REPO`) at the commit in `engine.pin`. A checkout at another commit, or with local changes, is refused unless `DE_ENGINE_ANY=1`. Without the binary or Go the suites skip, saying why. `DE_ENGINE_LOG=1` echoes the engines' logs, and `DE_SDK_LOG=1` gives a worker without a logger a console one. `DE_TEST_RTT_MS=<ms>` puts the library's delay proxy between every test's connection and the server (the engines stay on the direct URL); `docs/findings.md` F28 has the runs at 150 and 300 ms. Nothing reaches beyond 127.0.0.1.
+The integration suites spawn a `nats-server` (≥ 2.14, from `PATH`) under the library's account-limits profile (`DE_TEST_PROFILE=ngs|tight|none`, default `ngs`), and one `durable-engine serve` per prefix a test uses, stopped after each test. The engine binary is `DE_ENGINE` (a path), or is built with `go build -o .engine-bin/…` from `../durable-engine` (`DE_ENGINE_REPO`) at the commit in `engine.pin`. A checkout at another commit, or with local changes, is refused unless `DE_ENGINE_ANY=1`. Without the binary or Go the suites skip, saying why. `DE_ENGINE_LOG=1` echoes the engines' logs, and `DE_SDK_LOG=1` gives a worker without a logger a console one. `DE_TEST_RTT_MS=<ms>` puts the library's delay proxy between every test's connection and the server (the engines stay on the direct URL); `docs/findings.md` F28 has the runs at 150 and 300 ms. Nothing reaches beyond 127.0.0.1 but in the mode below.
 
 `npm run check` adds the typecheck, lint and formatting.
+
+### Against an existing server
+
+`DE_NATS_URL` points both suites at a server the run does not own (`test/harness/existing.ts`, `python/tests/existing.py`; `docs/findings.md` F29): no spawn and no account profile, **one prefix and one `durable-engine serve` for the run**, started by the harness on the prefix (it provisions the seven; an account too small for them fails the start with the engine's own message). A test whose engine flags (`ackWaitMs`, `lease: false`, …) differ from the running engine's restarts it with them; `streamMaxBytes` is never applied. After each test the harness purges what the test changed under the prefix, subject by subject (journal, work, timers, the KV keys, the blobs), and deletes the durables made for the test's workflow names. It never deletes a stream or touches anything outside the prefix. The leftovers check runs after every test, on the prefix's streams, counting only consumers that were not there before the test. Every wait (the test and hook timeouts, a handle's `result()`, the engine's start) is scaled by a factor from the round trip measured at the start, printed once: 1 up to 20 ms, then 1 + RTT/100 (2.52 at the proxy's 150 ms). The tests that need a server or a link of their own are skipped, their titles saying why: TypeScript `network` (the 16 of its 17 that run; the 17th was already skipped) and `worker-recovery` "a broken timers stream" (1); Python `test_network` (16, likewise) and `test_the_maintenance_pass_and_pumps_survive_a_deleted_timers_stream` (1).
+
+| Variable         | Meaning                                                                                                                                       |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DE_NATS_URL`    | the server; switches the mode on                                                                                                              |
+| `DE_NATS_CREDS`  | its creds file (the clients, the engine's `--creds`, the interop children's `NATS_CREDS`)                                                     |
+| `DE_PREFIX`      | the run's prefix (default a generated `de-<8 hex>`)                                                                                           |
+| `DE_ENGINE_URL`  | an engine already serving the prefix, by its `/metrics` address; then none is started, and a test needing other flags or a restart is skipped |
+| `DE_CLEANUP`     | `delete`: delete the prefix's seven at the end (default: kept)                                                                                |
+| `DE_TEST_RTT_MS` | as before: the delay proxy in front of the server, for the tests **and the engine**                                                           |
+
+Without `DE_CLEANUP=delete` a generated prefix's seven stay, each reserving its `max_bytes` (1 GiB by default): a local server's store fills after a handful of runs, and the next run's engine refuses to start with the server's "storage quota" message. At the end the harness prints the prefix's streams (messages, bytes, consumers) and writes them, the engine's `/metrics` and its log to `.de-run/<prefix>/` (Python: `.de-run/<prefix>-py/`).
+
+Locally, against a server started by hand:
+
+```sh
+nats-server -js -a 127.0.0.1 -p 14222 -sd /tmp/de-js &
+export DE_NATS_URL=nats://127.0.0.1:14222 DE_CLEANUP=delete   # a generated prefix each run: delete its seven at the end
+npm run test:integration                                       # 119 passed, 18 skipped, ~75 s
+DE_TEST_RTT_MS=150 npm run test:integration                    # every round trip 150 ms, the engine's too
+(cd python && uv run pytest tests/integration -rs)             # 71 passed, 18 skipped
+```
+
+**The dev NGS run** (the coordinator's, on Mario's word; nothing here runs it):
+
+```sh
+# at the PR's head, e.g. ../wt/durable-sdk; the engine built from a clean checkout of engine.pin
+export DE_NATS_URL=tls://connect.ngs.global
+export DE_NATS_CREDS=<agent-fabric-tests>/local/ngs/creds/tenant-a-dev/<user>.creds
+export DE_PREFIX=de                          # the seven exist there: the engine's start reconciles, creates none
+export DE_ENGINE=$PWD/.engine-bin/durable-engine-57ae3c9d8bd9
+npm run test:integration 2>&1 | tee ngs-ts.log
+(cd python && uv run pytest tests/integration -rs 2>&1 | tee ../ngs-py.log)
+```
+
+No `DE_TEST_RTT_MS` (the latency is real; a byte proxy cannot carry TLS anyway), and no `DE_CLEANUP=delete` (the seven are the tenant's). Expect TypeScript 119 passed and 18 skipped, Python 71 passed and 18 skipped. The duration follows the round trip the harness prints at the start: locally, at the proxy's 150 ms (the engine behind the proxy too), TypeScript took 21.6 min and Python 12 min, about 84 s + 8 s per ms of RTT and 70 s + 4.4 s per ms; at 50 ms from a laptop that is about 8 and 5 min. The tests that met F27's `status()`-after-`result()` race at 150 ms now wait for the state; another of that shape failing there is F27 (`docs/findings.md`), not the run. Afterwards read the printed report, or `.de-run/de/` and `.de-run/de-py/`: `leftovers.txt` should show no consumers but the tenant's own durables, and no messages the run wrote; `metrics.txt` is the engine's `/metrics` (`de_engine_pull_errors_total`, the acks by outcome); `engine.log` is its log.
 
 ## The interop worker
 
