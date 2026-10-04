@@ -531,8 +531,9 @@ class _EngineJournal:
         self._sizes = sizes
 
     async def load_pages(self, first: WireJournal, more: bool) -> list[LoadedEntry]:
-        """The run's journal: ``first`` (the poll's), then ``load`` pages while ``more``. One
-        ``journal.load`` event per call: every replay starts with one, as the library's."""
+        """The run's journal: ``first`` (the poll's), then ``load`` pages while ``more``, every ref
+        fetched and every ``<slot>Enc`` reversed. One ``journal.load`` event per call: every replay
+        starts with one, as the library's, and ``bytes`` is the journal as the engine handed it."""
         run_id = self._leased.run_id
         started = time.monotonic()
         wire = list(first)
@@ -549,6 +550,8 @@ class _EngineJournal:
             {
                 "run_id": run_id,
                 "entries": len(out),
+                # The journal as the engine handed it (refs and `<slot>Enc` as they came).
+                "bytes": sum(len(json_codec.encode(le["entry"])) for le in wire),
                 "ms": round((time.monotonic() - started) * 1000),
                 "outcome": "ok",
             },

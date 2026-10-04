@@ -31,6 +31,7 @@ import {
   emitSafe,
 } from "../internal/metrics.js";
 import { BlobBytesCache, DEFAULT_BLOB_CACHE_BYTES, type OffloadOptions } from "../journal/blobs.js";
+import { jsonCodec } from "../journal/codec.js";
 import { type LoadedEntry } from "../journal/entry.js";
 import { type PayloadCodec } from "../journal/payload-codec.js";
 import { type AppendResult, type Journal, type JournalAppend } from "../journal/store.js";
@@ -63,8 +64,10 @@ export interface WorkerOptions {
   pollWaitMs?: number;
   logger?: Logger;
   /**
-   * Optional metrics sink (default: silent): `journal.append`, `journal.load`, `work.dispatch`,
-   * `work.done`, and `blob.put` / `blob.get` for a value too large for a request or a reply.
+   * Optional metrics sink (default: silent): `journal.append` (the size of the entry sent),
+   * `journal.load` (one per item: the journal it replays from, the poll's and its pages),
+   * `work.dispatch`, `work.done`, and `blob.put` / `blob.get` for a value too large for a request
+   * or a reply. The Python worker emits the same.
    */
   metrics?: Metrics;
   /** Payload encryption at rest: the same codec on every worker and client of a prefix. */
@@ -237,8 +240,13 @@ export function createWorker(opts: WorkerOptions): Worker {
       emit,
     });
 
-    /** The run's journal: `first` (the poll's), then `load` pages while `more`, refs fetched. */
+    /**
+     * The run's journal: `first` (the poll's), then `load` pages while `more`, every ref fetched
+     * and every `<slot>Enc` reversed. One `journal.load` per call: every replay starts with one,
+     * as the library's, and `bytes` is the journal as the engine handed it.
+     */
     async function loadAll(first: WireJournal, more: boolean): Promise<LoadedEntry[]> {
+      const t0 = Date.now();
       const wire = [...first];
       while (more) {
         const after = wire.at(-1)?.streamSeq ?? 0;
@@ -246,23 +254,25 @@ export function createWorker(opts: WorkerOptions): Worker {
         wire.push(...r.journal);
         more = r.more === true && r.journal.length > 0;
       }
-      return reverseJournal(runId, wire, codec, blobs, blobCache);
+      const out = await reverseJournal(runId, wire, codec, blobs, blobCache);
+      const bytes = wire.reduce((n, l) => n + jsonCodec.encode(l.entry).byteLength, 0);
+      emit("journal.load", { runId, entries: out.length, bytes, ms: Date.now() - t0, outcome: "ok" }); // prettier-ignore
+      return out;
     }
 
     const journal: Journal = {
-      async load(id: string): Promise<LoadedEntry[]> {
-        const t0 = Date.now();
-        const out = await loadAll([], true);
-        emit("journal.load", { runId: id, entries: out.length, bytes: 0, ms: Date.now() - t0, outcome: "ok" }); // prettier-ignore
-        return out;
+      async load(_id: string): Promise<LoadedEntry[]> {
+        return loadAll([], true);
       },
       async append(id: string, a: JournalAppend): Promise<AppendResult> {
         const t0 = Date.now();
+        let bytes = 0;
         const done = (outcome: string): void =>
-          emit("journal.append", { runId: id, kind: a.entry.kind, seq: a.entry.seq, bytes: 0, ms: Date.now() - t0, outcome }); // prettier-ignore
+          emit("journal.append", { runId: id, kind: a.entry.kind, seq: a.entry.seq, bytes, ms: Date.now() - t0, outcome }); // prettier-ignore
         try {
           const envelope = { runId: id, msgID: a.msgID, expectLastSeq: a.expectLastSeq, lease };
           const entry = await fitEntry(id, await wireEntry(id, a.entry, codec), envelope, fit, blobs); // prettier-ignore
+          bytes = jsonCodec.encode(entry).byteLength;
           const r = await leased<AppendResult>("append", { runId: id, entry, msgID: a.msgID, expectLastSeq: a.expectLastSeq }); // prettier-ignore
           done(r.duplicate ? "duplicate" : "ok");
           return { streamSeq: r.streamSeq, duplicate: r.duplicate === true };
