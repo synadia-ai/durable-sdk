@@ -13,6 +13,8 @@ export interface EngineFlags {
   leaseTtlMs?: number;
   maintenanceIntervalMs?: number;
   reconcileGraceMs?: number;
+  /** `serve --offload-threshold` (the engine's F22): a test that wants the engine to offload small values. */
+  offloadThreshold?: number;
 }
 
 export function flagArgs(f: EngineFlags): string[] {
@@ -24,6 +26,7 @@ export function flagArgs(f: EngineFlags): string[] {
   if (f.leaseTtlMs !== undefined) out.push("--lease-ttl", `${f.leaseTtlMs}ms`);
   if (f.maintenanceIntervalMs !== undefined) out.push("--maintenance-interval", `${f.maintenanceIntervalMs}ms`); // prettier-ignore
   if (f.reconcileGraceMs !== undefined) out.push("--reconcile-grace", `${f.reconcileGraceMs}ms`);
+  if (f.offloadThreshold !== undefined) out.push("--offload-threshold", String(f.offloadThreshold));
   return out;
 }
 

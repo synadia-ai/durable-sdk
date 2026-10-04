@@ -15,12 +15,21 @@ import { defineWorkflow } from "../../src/core/workflow.js";
 import { BlobMissingError } from "../../src/errors.js";
 import { type DurableEventFields, type DurableEventName } from "../../src/internal/metrics.js";
 import { jsonCodec } from "../../src/journal/codec.js";
-import { createClient, engineLog } from "../harness/engine.js";
+import { BlobIntegrityError } from "../../src/errors.js";
+import { EngineBlobs, sizesOf } from "../../src/engine/blobs.js";
+import { createTransport } from "../../src/engine/transport.js";
+import {
+  countOf,
+  createClient,
+  engineCounts,
+  mapPrefix,
+  restartEngine,
+} from "../harness/engine.js";
 import { NatsJournal } from "../harness/shell/journal-store.js";
 import { names } from "../harness/shell/names.js";
 import { createWorker } from "../harness/engine.js";
 import { maxPayload } from "../harness/payload.js";
-import { WAN } from "../harness/mode.js";
+import { EXISTING, WAN } from "../harness/mode.js";
 
 const natsUrl = inject("natsUrl");
 
@@ -174,11 +183,12 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
         // NAK with the distinct outcome, and the run's status never becomes a terminal.
         await client.signal(handle.runId, "go", null);
         // durable-sdk: the engine reads the journal before it hands an item over, so the parking is
-        // the engine's decision (docs/findings.md F10): its log, or the worker's outcome when a ref
-        // too large for a reply reaches it and its `get` finds the blob gone.
+        // the engine's decision (docs/findings.md F10, F23): its `parked` ack, which `info` counts,
+        // or the worker's outcome when a gone blob reaches it as `blob_gone` (the engine's F30,
+        // the library's BlobMissingError since this repo's F31).
         const parked = async (): Promise<boolean> =>
           outcomes.includes("blob-unresolvable") ||
-          (await engineLog(prefix)).some((l) => l.includes("run's journal unreadable; parking it"));
+          countOf(await engineCounts(nc, prefix), "de_engine_acks_total", { outcome: "parked" }) > 0; // prettier-ignore
         await waitUntil(parked, 10_000);
         expect((await handle.status()).state).toBe("suspended");
 
@@ -194,6 +204,55 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
     },
     30_000 + BIG_CHILD_PER_RTT_MS * rtt,
   );
+
+  // durable-sdk: the engine's F30 (`blob_gone`, naming the blob), which the transport makes the
+  // library's BlobMissingError, or BlobIntegrityError for bytes that are not the digest's
+  // (docs/findings.md F31). Not the library's: its blob store was its own.
+  it("blob_gone: a gone blob is BlobMissingError and a corrupt one BlobIntegrityError, at get and at result, and a restored one heals", async () => {
+    const prefix = "off7";
+    // The engine offloads past 1 KiB, so an 8 KiB result is a ref in the journal that `result`
+    // itself inflates (it fits a reply) and the SDK sends it inline.
+    const flags = { offloadThreshold: 1024 };
+    const value = "g".repeat(8 * 1024);
+    const wf = defineWorkflow("gone", async () => Promise.resolve(value));
+    const worker = createWorker({ nc, workflows: [wf], prefix, ...flags });
+    await worker.start();
+    try {
+      const handle = await createClient({ nc, prefix, ...flags }).start(wf, {});
+      expect(await handle.result(15_000)).toBe(value);
+      const bucket = names(prefix).blobsBucket;
+      const mine = (await listObjects(nc, bucket)).filter((o) => o.name.startsWith(`${handle.runId}/`)); // prettier-ignore
+      expect(mine).toHaveLength(1);
+      const name = mine[0]!.name;
+      const bytes = (await readBlob(nc, bucket, name))!;
+      const os = await new Objm(nc).open(bucket);
+
+      // `get`, through the SDK's blob store: a name never put answers blob_gone.
+      const request = createTransport(nc, mapPrefix(prefix));
+      const blobs = new EngineBlobs({ request, sizes: sizesOf(request, () => nc.info?.max_payload) }); // prettier-ignore
+      const never = `${handle.runId}/sha256:${"0".repeat(64)}`;
+      await expect(request("get", { runId: handle.runId, name: never, part: 0 })).rejects.toMatchObject({ name: "BlobMissingError", runId: handle.runId, blobName: never }); // prettier-ignore
+      expect(await blobs.get(never)).toBeNull();
+      // …and bytes that are not the digest the name carries answer blob_gone as integrity.
+      const forged = `${handle.runId}/sha256:${"1".repeat(64)}`;
+      await os.putBlob({ name: forged }, new TextEncoder().encode("not those bytes"));
+      await expect(blobs.get(forged)).rejects.toBeInstanceOf(BlobIntegrityError);
+
+      // `result`: the engine read the blob when the terminal landed and keeps it cached, so the
+      // blob goes and the engine restarts. A gone blob is BlobMissingError naming it…
+      await os.delete(name);
+      await restartEngine(prefix);
+      const again = createClient({ nc, prefix, ...flags }).get(handle.runId);
+      await expect(again.result(5_000)).rejects.toMatchObject({ name: "BlobMissingError", blobName: name }); // prettier-ignore
+      // …a corrupt one BlobIntegrityError, and the right bytes back heal it.
+      await os.putBlob({ name }, new TextEncoder().encode("corrupt"));
+      await expect(again.result(5_000)).rejects.toBeInstanceOf(BlobIntegrityError);
+      await os.putBlob({ name }, bytes);
+      expect(await again.result(5_000)).toBe(value);
+    } finally {
+      await worker.stop();
+    }
+  });
 
   // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
@@ -375,7 +434,10 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
       const client = createClient({ nc, prefix });
       const handle = await client.start(wf, 20);
       expect(await handle.result(15_000)).toBe(41);
-      expect(await listObjects(nc, names(prefix).blobsBucket)).toHaveLength(0);
+      // durable-sdk: against an existing server the run's own blobs, not the bucket's: the prefix
+      // is shared with the run's other tests and whatever a failed one left (docs/findings.md F33).
+      const all = await listObjects(nc, names(prefix).blobsBucket);
+      expect(EXISTING ? all.filter((o) => o.name.startsWith(`${handle.runId}/`)) : all).toHaveLength(0); // prettier-ignore
     } finally {
       await worker.stop();
     }

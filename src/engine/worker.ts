@@ -40,7 +40,7 @@ import { EngineBlobs, sizesOf } from "./blobs.js";
 import { EngineError, InvalidRequestError, LeaseExpiredError } from "./errors.js";
 import { DEFAULT_PREFIX, type Op } from "./names.js";
 import { fitEntry, fitSlot, reverseJournal, type WireJournal, wireEntry } from "./payload.js";
-import { createTransport } from "./transport.js";
+import { createTransport, type RequestOptions } from "./transport.js";
 
 /** How long one `poll` asks the engine to wait (API.md's loop: 30 s; the engine caps it). */
 const POLL_WAIT_MS = 30_000;
@@ -222,10 +222,14 @@ export function createWorker(opts: WorkerOptions): Worker {
       });
     };
     // Every request for this item carries its lease; after an `expired` nothing more is sent.
-    const leased = async <R>(op: Op, body: Record<string, unknown>): Promise<R> => {
+    const leased = async <R>(
+      op: Op,
+      body: Record<string, unknown>,
+      o?: RequestOptions,
+    ): Promise<R> => {
       if (dropped !== undefined) throw new LeaseExpiredError(op, `run ${runId}: the item's lease expired; not sent`); // prettier-ignore
       try {
-        return await request<R>(op, { ...body, lease });
+        return await request<R>(op, { ...body, lease }, o);
       } catch (e) {
         if (e instanceof LeaseExpiredError) drop(e);
         throw e;
@@ -234,9 +238,10 @@ export function createWorker(opts: WorkerOptions): Worker {
 
     // A part of this run's blob carries the lease; another run's (a child's input) does not.
     const blobs = new EngineBlobs({
-      request: (op, body, o) => ("lease" in body ? leased(op, body as Record<string, unknown>) : request(op, body, o)), // prettier-ignore
+      request: (op, body, o) => ("lease" in body ? leased(op, body as Record<string, unknown>, o) : request(op, body, o)), // prettier-ignore
       sizes,
       lease: { runId, lease },
+      rtt: () => opts.nc.rtt(),
       emit,
     });
 
@@ -338,11 +343,7 @@ export function createWorker(opts: WorkerOptions): Worker {
       }
     } catch (e) {
       if (e instanceof BlobMissingError || e instanceof BlobIntegrityError) {
-        label = "blob-unresolvable";
-        // An offloaded payload that cannot be resolved (gone, or its digest wrong) makes the
-        // journal unreadable: operational, so hand the item back (the engine naks with backoff),
-        // loud, and never a terminal. It heals when the blob is restored, or the run is cancelled.
-        logger.error("durable: offloaded payload unresolvable; parking run — restore the blob or cancel the run", { runId, blob: e.blobName, error: String(e) }); // prettier-ignore
+        label = parkOnBlob(runId, e);
       } else if (e instanceof PayloadCodecError) {
         label = "payload-codec";
         // The journal is readable but its payloads are not, and every cause (no codec, the wrong
@@ -360,9 +361,20 @@ export function createWorker(opts: WorkerOptions): Worker {
       clearInterval(extender);
     }
 
+    // A blob the engine said is gone (`blob_gone`) under a step-end `load` or a ref's `get` inside
+    // the execution: the pure core halted with `retry` on it, as on any infrastructure error; park
+    // it as the library did, with its label and its loud line.
+    if (
+      label === undefined &&
+      outcome.kind === "retry" &&
+      (outcome.error instanceof BlobMissingError || outcome.error instanceof BlobIntegrityError)
+    ) {
+      label = parkOnBlob(runId, outcome.error);
+    }
     let reported: string = label ?? outcome.kind;
     if (
       outcome.kind === "retry" &&
+      label === undefined &&
       !(outcome.error instanceof LeaseExpiredError) &&
       dropped === undefined
     ) {
@@ -380,6 +392,16 @@ export function createWorker(opts: WorkerOptions): Worker {
       }
     }
     emit("work.done", { workflow: it.workflow, runId, kind, outcome: reported, ms: Date.now() - startedAt, waitMs: 0, deliveryCount: it.attempt }); // prettier-ignore
+  }
+
+  /**
+   * An offloaded payload that cannot be resolved (gone, or its digest wrong) makes the journal
+   * unreadable: operational, so hand the item back (the engine naks with backoff and parks the run
+   * too), loud, and never a terminal. It heals when the blob is restored, or the run is cancelled.
+   */
+  function parkOnBlob(runId: string, e: BlobMissingError | BlobIntegrityError): string {
+    logger.error("durable: offloaded payload unresolvable; parking run — restore the blob or cancel the run", { runId, blob: e.blobName, error: String(e) }); // prettier-ignore
+    return "blob-unresolvable";
   }
 
   /** Hand an item back unexecuted (a poll answered after stop()): `done retry`, the engine naks it. */
@@ -408,6 +430,12 @@ export function createWorker(opts: WorkerOptions): Worker {
         if (e instanceof ConnectionClosedError || opts.nc.isClosed()) {
           if (running) reportConnectionClosed();
           break;
+        }
+        if (e instanceof BlobMissingError || e instanceof BlobIntegrityError) {
+          // The engine parked the run whose item this poll was to be handed (its journal met a gone
+          // blob at the hand-off, API.md `poll`): the run's, not this worker's. Loud, and poll again.
+          logger.error("durable: the engine parked a run whose blob is gone — restore the blob or cancel the run", { runId: e.runId, blob: e.blobName, error: e.message }); // prettier-ignore
+          continue;
         }
         failures += 1;
         state.alive = false;

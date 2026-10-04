@@ -23,6 +23,7 @@ closed and its workers are stopped. Scoped to this directory: the pure suites ne
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from collections.abc import AsyncIterator, Iterator
 
@@ -92,14 +93,23 @@ def run_engine(
     try:
         yield
     finally:
+        metrics = _engine_metrics(ex, run)
         try:
-            asyncio.run(_report(ex, run))
-        finally:
             asyncio.run(run.stop())
             engine.configure_run(None)
+            # The engine stopped, nothing re-creates a durable or writes a blob: what a test that
+            # failed or timed out left after its own cleanup goes now (docs/findings.md F33).
+            blobs, durables = asyncio.run(_sweep(ex))
+            existing.say(
+                f"the run's end: {blobs} blobs of its {len(existing.RUN_IDS)} runs and "
+                f"{durables} durables deleted"
+            )
+            asyncio.run(_report(ex, run, metrics))
+        finally:
             if ex.delete_at_end:
                 gone = asyncio.run(_delete(ex))
-                existing.say(f"DE_CLEANUP=delete: deleted {', '.join(gone) or 'nothing'}")
+                how = os.environ.get("DE_CLEANUP") or "delete (the default for a generated prefix)"
+                existing.say(f"DE_CLEANUP={how}: deleted {', '.join(gone) or 'nothing'}")
 
 
 def _free_port() -> int:
@@ -118,6 +128,28 @@ async def _snapshot(ex: existing.ExistingServer) -> existing.Snapshot:
         await nc.close()
 
 
+async def _sweep(ex: existing.ExistingServer) -> tuple[int, int]:
+    nc = await existing.connect(ex.url)
+    try:
+        return await existing.sweep_run(nc, ex.prefix, existing.AT_START)
+    finally:
+        await nc.close()
+
+
+def _engine_metrics(ex: existing.ExistingServer, run: engine.RunEngine) -> bytes | Exception | None:
+    """The engine's /metrics (or why not), read while it still runs."""
+    import urllib.request
+
+    base = ex.engine_url or (f"http://{run.metrics_addr}" if run.metrics_addr else None)
+    if base is None:
+        return None
+    try:
+        with urllib.request.urlopen(f"{base}/metrics", timeout=10) as r:
+            return bytes(r.read())
+    except Exception as e:  # noqa: BLE001 — a report line, never the run's failure
+        return e
+
+
 async def _delete(ex: existing.ExistingServer) -> list[str]:
     nc = await existing.connect(ex.url)
     try:
@@ -126,9 +158,10 @@ async def _delete(ex: existing.ExistingServer) -> list[str]:
         await nc.close()
 
 
-async def _report(ex: existing.ExistingServer, run: engine.RunEngine) -> None:
+async def _report(
+    ex: existing.ExistingServer, run: engine.RunEngine, metrics: bytes | Exception | None
+) -> None:
     """What the run leaves for the reader: the prefix's leftovers and the engine's /metrics."""
-    import urllib.request
     from pathlib import Path
 
     nc = await existing.connect(ex.url)
@@ -150,13 +183,10 @@ async def _report(ex: existing.ExistingServer, run: engine.RunEngine) -> None:
     out = Path(__file__).resolve().parents[3] / ".de-run" / f"{ex.prefix}-py"
     out.mkdir(parents=True, exist_ok=True)
     (out / "leftovers.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    base = ex.engine_url or (f"http://{run.metrics_addr}" if run.metrics_addr else None)
-    if base is not None:
-        try:
-            with urllib.request.urlopen(f"{base}/metrics", timeout=10) as r:
-                (out / "metrics.txt").write_bytes(r.read())
-        except Exception as e:  # noqa: BLE001 — a report line, never the run's failure
-            lines.append(f"/metrics: {e}")
+    if isinstance(metrics, bytes):
+        (out / "metrics.txt").write_bytes(metrics)
+    elif metrics is not None:
+        lines.append(f"/metrics: {metrics}")
     if not run.external:
         (out / "engine.log").write_text("\n".join(run.log_since(0)) + "\n", encoding="utf-8")
     body = "\n  ".join(lines)
@@ -215,7 +245,11 @@ async def _existing_hygiene(
         await engine.begin_test(nc)
         yield
         engine.set_engine_server(None)
+        # A test that failed or timed out is cleaned like any other (docs/findings.md F33): its
+        # workers are stopped (bounded) and its polls withdrawn first, so neither a worker it left
+        # running nor a fetch the engine still holds re-creates what the cleanup deletes.
         try:
+            await engine.end_test_workers(nc)
             left = await existing.prefix_ephemeral_consumers(nc, prefix, before.consumers)
             if left:
                 await asyncio.sleep(existing.scaled(0.5))
@@ -223,6 +257,9 @@ async def _existing_hygiene(
             if left:
                 raise AssertionError(leftover_message(left, f'after "{request.node.name}"'))
         finally:
+            run_ids = await existing.run_ids_since(nc, prefix, before)
+            existing.RUN_IDS.update(run_ids)
             await existing.purge_since(nc, prefix, before)
+            await existing.delete_run_blobs(nc, prefix, existing.RUN_IDS)
     finally:
         await nc.drain()

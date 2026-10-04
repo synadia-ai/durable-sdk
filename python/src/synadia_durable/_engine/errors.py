@@ -4,7 +4,8 @@
 A refusal is ``{"error": {"code", "message"}}`` from a closed set (``durable-engine``
 ``docs/API.md`` "Errors"); the transport turns each code into one of these, or into a library error
 where the library already has the class: ``fenced`` → :class:`FencedError`, ``too_large`` →
-:class:`PayloadTooLargeError`.
+:class:`PayloadTooLargeError`, ``blob_gone`` → :class:`BlobMissingError` (or
+:class:`BlobIntegrityError` when the bytes are not the digest's).
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ __all__ = [
 
 #: The closed set of refusal codes of API v1.
 EngineErrorCode = Literal[
-    "invalid", "fenced", "expired", "not_found", "too_large", "unavailable", "internal"
+    "invalid", "fenced", "expired", "not_found", "too_large", "unavailable", "blob_gone", "internal"
 ]
 
 
@@ -62,8 +63,17 @@ class EngineUnavailableError(EngineError):
     said ``unavailable`` or ``internal``. Inside an execution the pure core halts with ``retry`` on
     it and the worker reports ``done retry``; a client call may simply be repeated."""
 
-    def __init__(self, op: str, code: Literal["unavailable", "internal"], message: str) -> None:
+    def __init__(
+        self,
+        op: str,
+        code: Literal["unavailable", "internal"],
+        message: str,
+        *,
+        timed_out: bool = False,
+    ) -> None:
         super().__init__(op, code, message)
+        #: No answer within the request's timeout (rather than no responders or a refusal).
+        self.timed_out = timed_out
 
 
 class RunNotFoundError(EngineError, LookupError):

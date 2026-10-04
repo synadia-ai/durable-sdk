@@ -115,6 +115,7 @@ export function createClient(opts: ClientOptions): Client {
   const blobs = new EngineBlobs({
     request,
     sizes,
+    rtt: () => opts.nc.rtt(),
     ...(metrics !== undefined ? { emit: (n, f) => emitSafe(metrics, n, f) } : {}),
   });
 

@@ -16,14 +16,19 @@ from typing import Any
 
 import pytest
 
+import existing
 from conftest import over_payload
-from engine import create_client, create_worker
+from engine import count_of, create_client, create_worker, engine_counts, restart_engine
+from shell.blob_store import NatsBlobStore
 from shell.names import Names
 from shell.runs import RunsStore
 from synadia_durable import (
     PayloadTooLargeError,
     define_workflow,
 )
+from synadia_durable._engine.blobs import EngineBlobs, Sizes
+from synadia_durable._engine.transport import Transport
+from synadia_durable.errors import BlobIntegrityError, BlobMissingError
 from synadia_durable.journal.blobs import OffloadOptions, entry_ref
 from synadia_durable.types import Ctx
 from synadia_durable.version import WIRE_VERSION_BLOBS
@@ -66,10 +71,19 @@ async def _raw_entries(nc: Any, prefix: str, run_id: str) -> list[dict[str, Any]
     return [dict(le.entry) for le in await journal.load_raw(run_id)]
 
 
-async def _object_names(nc: Any, prefix: str) -> list[str]:
+async def _object_names(nc: Any, prefix: str, *run_ids: str) -> list[str]:
+    """The bucket's objects; against an existing server only those of ``run_ids``.
+
+    durable-sdk: there the prefix is the run's, shared with its other tests and whatever a failed
+    one left, so an assertion over the store counts the test's own runs only (docs/findings.md
+    F33). A spawned server's prefix is the test's own: every object, as the library counted.
+    """
     from conftest import list_object_names
 
-    return await list_object_names(nc, Names(prefix).blobs_bucket)
+    names = await list_object_names(nc, Names(prefix).blobs_bucket)
+    if not existing.in_mode():
+        return names
+    return [n for n in names if n.split("/", 1)[0] in run_ids]
 
 
 # durable-sdk: docs/findings.md F1/F2, answered by the engine's F25 (put and get) and F22
@@ -194,7 +208,7 @@ async def test_a_big_result_does_not_wedge_the_status_hint(
     assert "resultRef" in record
     assert "result" not in record
 
-    names = await _object_names(nc, prefix)
+    names = await _object_names(nc, prefix, handle.run_id)
     assert record["resultRef"]["name"] in names
     # step-end value, terminal result and status record are all the same bytes → ONE object.
     assert len(names) == 1, f"content addressing should have deduped these: {names}"
@@ -251,7 +265,137 @@ async def test_the_same_value_in_two_runs_is_stored_per_run(
     assert await first.result(RESULT_TIMEOUT_MS) == BIG
     assert await second.result(RESULT_TIMEOUT_MS) == BIG
 
-    names = await _object_names(nc, prefix)
+    names = await _object_names(nc, prefix, first.run_id, second.run_id)
     assert len(names) == 2, names
     assert {n.split("/", 1)[0] for n in names} == {first.run_id, second.run_id}
     assert len({n.split("/", 1)[1] for n in names}) == 1, "same content, same digest"
+
+
+async def _delete_object(nc: Any, bucket: str, name: str) -> None:
+    """Delete an object out of band, as the engine's Go object store will read it: its meta and its
+    chunks purged. durable-sdk: nats-py's ``ObjectStore.delete`` writes a deleted marker with
+    ``mtime: ""``, which nats.go cannot parse (``object-store meta information invalid``), so the
+    engine would read that blob as a transient fault, not a gone one (docs/findings.md F32)."""
+    import base64
+
+    store = await nc.jetstream().object_store(bucket)
+    info = await store.get_info(name)
+    meta = base64.urlsafe_b64encode(name.encode()).decode()
+    jsm = nc.jsm()
+    await jsm.purge_stream(f"OBJ_{bucket}", subject=f"$O.{bucket}.M.{meta}")
+    await jsm.purge_stream(f"OBJ_{bucket}", subject=f"$O.{bucket}.C.{info.nuid}")
+
+
+async def _wait_until(cond: Any, timeout_s: float) -> None:
+    deadline = asyncio.get_running_loop().time() + existing.scaled(timeout_s)
+    while not await cond():
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError("_wait_until timed out")
+        await asyncio.sleep(0.05)
+
+
+# durable-sdk: the twin of TypeScript `offload` "a missing blob PARKS the run (loud, never a
+# terminal) and a restored blob heals it" (the library's, in TypeScript only). The engine reads the
+# journal before it hands an item over, so the parking is the engine's (docs/findings.md F23): its
+# `parked` ack, which `info` counts, or the worker's outcome when `blob_gone` reaches it (F31).
+async def test_a_missing_blob_parks_the_run_and_a_restored_blob_heals_it(
+    nc: Any, prefix: str, running: Any
+) -> None:
+    outcomes: list[str] = []
+
+    class Sink:
+        def on_event(self, name: str, fields: dict[str, Any]) -> None:
+            if name == "work.done":
+                outcomes.append(str(fields.get("outcome")))
+
+    async def body(ctx: Ctx, _input: Any) -> Any:
+        big = await ctx.run("big", lambda: BIG)
+        await ctx.wait("go")
+        return len(big["frames"])
+
+    wf = define_workflow("pyoff7", body)
+    _worker, client = await running([wf], metrics=Sink())
+    handle = await client.start(wf, None)
+
+    async def suspended() -> bool:
+        return bool((await handle.status()).state == "suspended")
+
+    await _wait_until(suspended, 15)
+
+    # Sabotage: delete the step's blob out of band, keeping a copy.
+    bucket = Names(prefix).blobs_bucket
+    mine = await _object_names(nc, prefix, handle.run_id)
+    mine = [n for n in mine if n.startswith(f"{handle.run_id}/")]
+    assert len(mine) == 1, mine
+    name = mine[0]
+    blobs = NatsBlobStore(nc, bucket)
+    data = await blobs.get(name)
+    await _delete_object(nc, bucket, name)
+
+    # The signal cannot be processed (the journal is unreadable), so the run parks, never a terminal.
+    await client.signal(handle.run_id, "go", None)
+
+    async def parked() -> bool:
+        if "blob-unresolvable" in outcomes:
+            return True
+        counts = await engine_counts(nc, prefix)
+        return count_of(counts, "de_engine_acks_total", outcome="parked") > 0
+
+    await _wait_until(parked, 10)
+    assert (await handle.status()).state == "suspended"
+
+    # Heal: the same name, the same bytes; the next redelivery resolves and the run completes.
+    await blobs.put(name, data)
+    assert await handle.result(RESULT_TIMEOUT_MS) == len(BIG["frames"])
+
+
+# durable-sdk: the engine's F30 (`blob_gone`, naming the blob), which the transport makes the
+# library's BlobMissingError, or BlobIntegrityError for bytes that are not the digest's
+# (docs/findings.md F31). The twin of TypeScript `offload` "blob_gone: …". Not the library's: its
+# blob store was its own.
+async def test_blob_gone_is_blob_missing_or_integrity_at_get_and_at_result_and_heals(
+    nc: Any, prefix: str, running: Any
+) -> None:
+    async def body(_ctx: Ctx, _input: Any) -> Any:
+        return BIG  # past TINY's 1 KiB: a ref in the journal that `result` itself inflates
+
+    wf = define_workflow("pyoff8", body)
+    _worker, client = await running([wf])
+    handle = await client.start(wf, None)
+    assert await handle.result(RESULT_TIMEOUT_MS) == BIG
+    bucket = Names(prefix).blobs_bucket
+    mine = [n for n in await _object_names(nc, prefix, handle.run_id) if n.startswith(f"{handle.run_id}/")]  # fmt: skip
+    assert len(mine) == 1, mine
+    name = mine[0]
+    store = NatsBlobStore(nc, bucket)
+    data = await store.get(name)
+
+    # `get`, through the SDK's blob store: a name never put answers blob_gone…
+    transport = Transport(nc, prefix)
+    engine_blobs = EngineBlobs(transport.request, Sizes(transport, lambda: nc.max_payload))
+    never = f"{handle.run_id}/sha256:{'0' * 64}"
+    with pytest.raises(BlobMissingError) as missing:
+        await transport.request("get", {"runId": handle.run_id, "name": never, "part": 0})
+    assert (missing.value.run_id, missing.value.blob_name) == (handle.run_id, never)
+    with pytest.raises(BlobMissingError):
+        await engine_blobs.get(never)
+    # …and bytes that are not the digest the name carries answer blob_gone as integrity.
+    forged = f"{handle.run_id}/sha256:{'1' * 64}"
+    await store.put(forged, b"not those bytes")
+    with pytest.raises(BlobIntegrityError):
+        await engine_blobs.get(forged)
+
+    # `result`: the engine read the blob when the terminal landed and keeps it cached, so the blob
+    # goes and the engine restarts. A gone blob is BlobMissingError naming it…
+    await _delete_object(nc, bucket, name)
+    await restart_engine(prefix)
+    again = create_client(nc, prefix=prefix, stream_max_bytes=64 * MB, offload=TINY)
+    with pytest.raises(BlobMissingError) as gone:
+        await again.get(handle.run_id).result(5_000)
+    assert gone.value.blob_name == name
+    # …a corrupt one BlobIntegrityError, and the right bytes back heal it.
+    await store.put(name, b"corrupt")
+    with pytest.raises(BlobIntegrityError):
+        await again.get(handle.run_id).result(5_000)
+    await store.put(name, data)
+    assert await again.get(handle.run_id).result(5_000) == BIG

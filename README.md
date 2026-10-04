@@ -70,7 +70,7 @@ A refusal from the engine is a typed error: `fenced` → `FencedError` (with `ex
 ## Testing
 
 ```sh
-bun install && npm test            # the 13 unit suites of the pure core (no server)
+bun install && npm test            # the 14 unit suites: the pure core, and the transport (no server)
 npm run test:integration           # 9 of the library's integration suites, interop-py and metrics, on durable-engine serve
 ```
 
@@ -80,7 +80,7 @@ The integration suites spawn a `nats-server` (≥ 2.14, from `PATH`) under the l
 
 ### Against an existing server
 
-`DE_NATS_URL` points both suites at a server the run does not own (`test/harness/existing.ts`, `python/tests/existing.py`; `docs/findings.md` F29): no spawn and no account profile, **one prefix and one `durable-engine serve` for the run**, started by the harness on the prefix (it provisions the seven; an account too small for them fails the start with the engine's own message). A test whose engine flags (`ackWaitMs`, `lease: false`, …) differ from the running engine's restarts it with them; `streamMaxBytes` is never applied. After each test the harness purges what the test changed under the prefix, subject by subject (journal, work, timers, the KV keys, the blobs), and deletes the durables made for the test's workflow names. It never deletes a stream or touches anything outside the prefix. The leftovers check runs after every test, on the prefix's streams, counting only consumers that were not there before the test. Every wait (the test and hook timeouts, a handle's `result()`, the engine's start) is scaled by a factor from the round trip measured at the start, printed once: 1 up to 20 ms, then 1 + RTT/100 (2.52 at the proxy's 150 ms). The tests that need a server or a link of their own are skipped, their titles saying why: TypeScript `network` (the 16 of its 17 that run; the 17th was already skipped) and `worker-recovery` "a broken timers stream" (1); Python `test_network` (16, likewise) and `test_the_maintenance_pass_and_pumps_survive_a_deleted_timers_stream` (1).
+`DE_NATS_URL` points both suites at a server the run does not own (`test/harness/existing.ts`, `python/tests/existing.py`; `docs/findings.md` F29): no spawn and no account profile, **one prefix and one `durable-engine serve` for the run**, started by the harness on the prefix (it provisions the seven; an account too small for them fails the start with the engine's own message). A test whose engine flags (`ackWaitMs`, `lease: false`, …) differ from the running engine's restarts it with them; `streamMaxBytes` is never applied. After each test, a failed or timed-out one too, the harness stops the workers the test left running, withdraws its workflows' polls (`cancelPoll`), purges what the test changed under the prefix, subject by subject (journal, work, timers, the KV keys, the blobs), deletes the durables made for the test's workflow names, and deletes its runs' blobs by name; at the end, with the engine stopped, it deletes every blob of the run's runs and every durable the run made (`docs/findings.md` F33). It never deletes a stream during the run or touches anything outside the prefix. An assertion over a store's contents counts the test's own runs only. The leftovers check runs after every test, on the prefix's streams, counting only consumers that were not there before the test. Every wait (the test and hook timeouts, a handle's `result()`, the engine's start) is scaled by a factor from the round trip measured at the start, printed once: 1 up to 20 ms, then 1 + RTT/100 (2.52 at the proxy's 150 ms). The tests that need a server or a link of their own are skipped, their titles saying why: TypeScript `network` (the 16 of its 17 that run; the 17th was already skipped) and `worker-recovery` "a broken timers stream" (1); Python `test_network` (16, likewise) and `test_the_maintenance_pass_and_pumps_survive_a_deleted_timers_stream` (1).
 
 | Variable         | Meaning                                                                                                                                       |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -88,19 +88,19 @@ The integration suites spawn a `nats-server` (≥ 2.14, from `PATH`) under the l
 | `DE_NATS_CREDS`  | its creds file (the clients, the engine's `--creds`, the interop children's `NATS_CREDS`)                                                     |
 | `DE_PREFIX`      | the run's prefix (default a generated `de-<8 hex>`)                                                                                           |
 | `DE_ENGINE_URL`  | an engine already serving the prefix, by its `/metrics` address; then none is started, and a test needing other flags or a restart is skipped |
-| `DE_CLEANUP`     | `delete`: delete the prefix's seven at the end (default: kept)                                                                                |
+| `DE_CLEANUP`     | `delete` or `keep` the prefix's seven at the end; by default a generated prefix is deleted and a `DE_PREFIX` one kept                         |
 | `DE_TEST_RTT_MS` | as before: the delay proxy in front of the server, for the tests **and the engine**                                                           |
 
-Without `DE_CLEANUP=delete` a generated prefix's seven stay, each reserving its `max_bytes` (1 GiB by default): a local server's store fills after a handful of runs, and the next run's engine refuses to start with the server's "storage quota" message. At the end the harness prints the prefix's streams (messages, bytes, consumers) and writes them, the engine's `/metrics` and its log to `.de-run/<prefix>/` (Python: `.de-run/<prefix>-py/`).
+A generated prefix is only ever the run's, so its seven are deleted at the end unless `DE_CLEANUP=keep` (kept, each reserves its `max_bytes`, 1 GiB by default, and a local server's store fills after a handful of runs; F34). A `DE_PREFIX` is kept unless `DE_CLEANUP=delete`. `DE_INJECT_FAILURE=1` adds the tests that fail on purpose (two in each language, `injected-failure.test.ts` and `test_injected_failure.py`, and in TypeScript a passing one after them), to see that a failed or timed-out test leaves nothing behind. At the end the harness prints the prefix's streams (messages, bytes, consumers) and writes them, the engine's `/metrics` and its log to `.de-run/<prefix>/` (Python: `.de-run/<prefix>-py/`).
 
 Locally, against a server started by hand:
 
 ```sh
 nats-server -js -a 127.0.0.1 -p 14222 -sd /tmp/de-js &
-export DE_NATS_URL=nats://127.0.0.1:14222 DE_CLEANUP=delete   # a generated prefix each run: delete its seven at the end
-npm run test:integration                                       # 119 passed, 18 skipped, ~75 s
-DE_TEST_RTT_MS=150 npm run test:integration                    # every round trip 150 ms, the engine's too
-(cd python && uv run pytest tests/integration -rs)             # 71 passed, 18 skipped
+export DE_NATS_URL=nats://127.0.0.1:14222      # a generated prefix each run, deleted at the end
+npm run test:integration                        # 120 passed, 21 skipped, ~76 s
+DE_TEST_RTT_MS=150 npm run test:integration     # every round trip 150 ms, the engine's too
+(cd python && uv run pytest tests/integration -rs)   # 73 passed, 20 skipped
 ```
 
 **The dev NGS run** (the coordinator's, on Mario's word; nothing here runs it):
@@ -110,12 +110,20 @@ DE_TEST_RTT_MS=150 npm run test:integration                    # every round tri
 export DE_NATS_URL=tls://connect.ngs.global
 export DE_NATS_CREDS=<agent-fabric-tests>/local/ngs/creds/tenant-a-dev/<user>.creds
 export DE_PREFIX=de                          # the seven exist there: the engine's start reconciles, creates none
-export DE_ENGINE=$PWD/.engine-bin/durable-engine-57ae3c9d8bd9
+export DE_ENGINE=$PWD/.engine-bin/durable-engine-ee81460f09d7
 npm run test:integration 2>&1 | tee ngs-ts.log
 (cd python && uv run pytest tests/integration -rs 2>&1 | tee ../ngs-py.log)
 ```
 
-No `DE_TEST_RTT_MS` (the latency is real; a byte proxy cannot carry TLS anyway), and no `DE_CLEANUP=delete` (the seven are the tenant's). Expect TypeScript 119 passed and 18 skipped, Python 71 passed and 18 skipped. The duration follows the round trip the harness prints at the start: locally, at the proxy's 150 ms (the engine behind the proxy too), TypeScript took 21.6 min and Python 12 min, about 84 s + 8 s per ms of RTT and 70 s + 4.4 s per ms; at 50 ms from a laptop that is about 8 and 5 min. The tests that met F27's `status()`-after-`result()` race at 150 ms now wait for the state; another of that shape failing there is F27 (`docs/findings.md`), not the run. Afterwards read the printed report, or `.de-run/de/` and `.de-run/de-py/`: `leftovers.txt` should show no consumers but the tenant's own durables, and no messages the run wrote; `metrics.txt` is the engine's `/metrics` (`de_engine_pull_errors_total`, the acks by outcome); `engine.log` is its log.
+No `DE_TEST_RTT_MS` (the latency is real; a byte proxy cannot carry TLS anyway), and no `DE_CLEANUP=delete` (the seven are the tenant's; a given prefix is kept by default). Expect TypeScript 120 passed and 21 skipped, Python 73 passed and 20 skipped (the 3 and 2 skipped above the 18 are the injected failures). The time is the round trip's and, over a WAN, the offload suites': measured, not predicted (`docs/findings.md` F33):
+
+| Run                                                        | Round trip | TypeScript (of it `offload` + `payload-codec`) | Python (of it `test_offload` + `test_payload_codec_e2e`) |
+| ---------------------------------------------------------- | ---------- | ---------------------------------------------- | -------------------------------------------------------- |
+| plain, a local server (`ee81460`, this branch)             | 0.1 ms     | 76 s (9.7 s)                                   | 80 s                                                     |
+| the delay proxy, a local server (`ee81460`)                | 155 ms     | 22.8 min (8.2 min)                             | 12.6 min (2.7 min)                                       |
+| dev NGS, `tenant-a-dev`, from a laptop (`57ae3c9`, `main`) | 51 ms      | 28.4 min (12.4 min), 10 failed                 | 15.6 min, 5 failed                                       |
+
+`offload` and `payload-codec` move each large value as 128 KiB object-store chunks, one dependent round trip of the engine's each, and the value's bytes across the laptop's uplink: on NGS they took 44 % of the TypeScript run, against 13 % of the plain one. Over the WAN their `put` parts wait longer now (F33), so a slow store is waited for; a store too slow even for that fails the run, loud, as a value too large. The `status()`-after-`result()` race is the engine's to prevent since `ee81460` (its F29): a failure of that shape is the engine's. Afterwards read the printed report, or `.de-run/de/` and `.de-run/de-py/`: `leftovers.txt` should show no consumers but the tenant's own durables, and no messages the run wrote; `metrics.txt` is the engine's `/metrics` (`de_engine_pull_errors_total`, the acks by outcome); `engine.log` is its log.
 
 ## The interop worker
 

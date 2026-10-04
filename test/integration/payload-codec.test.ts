@@ -8,7 +8,7 @@
 import { jetstream, jetstreamManager } from "@nats-io/jetstream";
 import { Kvm } from "@nats-io/kv";
 import { readSubject } from "../harness/shell/direct.js";
-import { listObjects, readBlob } from "../harness/blobs.js";
+import { listObjects, type ObjectMeta, readBlob } from "../harness/blobs.js";
 import { maxPayload } from "../harness/payload.js";
 import { type NatsConnection } from "@nats-io/transport-node";
 import { connect } from "../harness/existing.js";
@@ -21,7 +21,7 @@ import { NatsJournal } from "../harness/shell/journal-store.js";
 import { names } from "../harness/shell/names.js";
 import { createWorker } from "../harness/engine.js";
 import { WIRE_VERSION_BLOBS, WIRE_VERSION_ENCODED } from "../../src/version.js";
-import { WAN } from "../harness/mode.js";
+import { EXISTING, WAN } from "../harness/mode.js";
 
 const natsUrl = inject("natsUrl");
 const KEY = new Uint8Array(32).fill(42);
@@ -811,13 +811,26 @@ describe.skipIf(!natsUrl)("payload encryption — the completeness sweep", () =>
   /** Every message on a stream, as raw text — no filtering, no per-run guessing. */
   // Both sweeps are direct gets (wildcard filters are accepted): no consumer created, so the
   // harness's leftover check stays meaningful for the library code under test.
-  async function allMessages(stream: string, filter: string): Promise<string> {
+  // durable-sdk: against an existing server (EXISTING) `run` scopes a read to one run's own
+  // messages and keys (its id, its generations' and children's, which begin with it, in the
+  // subject or the body): the prefix is shared with the run's other tests and what a failed one
+  // left (docs/findings.md F33). A spawned server's prefix is the test's own: no filtering there.
+  const ofRun = (run: string | undefined, subject: string, text: string): boolean =>
+    !EXISTING || run === undefined || subject.includes(run) || text.includes(run);
+  const runBlobs = (objects: ObjectMeta[], run: string): ObjectMeta[] =>
+    EXISTING ? objects.filter((o) => o.name.startsWith(run)) : objects;
+
+  async function allMessages(stream: string, filter: string, run?: string): Promise<string> {
     const jsm = await jetstreamManager(nc);
     const info = await jsm.streams.info(stream);
     if (info.state.messages === 0) return "";
     if (info.config.allow_direct === true) {
       const read = await readSubject(jsm, stream, filter, 500);
-      return read.out.map((m) => new TextDecoder().decode(m.data)).join("\n");
+      return read.out
+        .map((m) => [m.subject, new TextDecoder().decode(m.data)] as const)
+        .filter(([subject, text]) => ofRun(run, subject, text))
+        .map(([, text]) => text)
+        .join("\n");
     }
     // The work and timers streams take no direct gets: an ephemeral pull consumer, DELETED here.
     const c = await jsm.consumers.add(stream, {
@@ -829,7 +842,10 @@ describe.skipIf(!natsUrl)("payload encryption — the completeness sweep", () =>
       const consumer = await jsm.jetstream().consumers.get(stream, c.name);
       const msgs = await consumer.fetch({ max_messages: 500, expires: 2000 });
       const out: string[] = [];
-      for await (const m of msgs) out.push(new TextDecoder().decode(m.data));
+      for await (const m of msgs) {
+        const text = new TextDecoder().decode(m.data);
+        if (ofRun(run, m.subject, text)) out.push(text);
+      }
       return out.join("\n");
     } finally {
       await jsm.consumers.delete(stream, c.name);
@@ -837,14 +853,15 @@ describe.skipIf(!natsUrl)("payload encryption — the completeness sweep", () =>
   }
 
   /** Every LIVE value in a KV bucket (the last message per key, minus delete/purge markers). */
-  async function allKv(bucket: string): Promise<string> {
+  async function allKv(bucket: string, run?: string): Promise<string> {
     const jsm = await jetstreamManager(nc);
     const out: string[] = [];
     try {
       const it = await jsm.direct.getLastMessagesFor(`KV_${bucket}`, { multi_last: [`$KV.${bucket}.>`] }); // prettier-ignore
       for await (const m of it) {
         if (m.header.get("KV-Operation") !== "") continue; // DEL / PURGE markers carry no value
-        out.push(`${m.subject}=${new TextDecoder().decode(m.data)}`);
+        const text = new TextDecoder().decode(m.data);
+        if (ofRun(run, m.subject, text)) out.push(`${m.subject}=${text}`);
       }
     } catch (e) {
       if (!(e instanceof Error && /not found|no results/i.test(e.message))) throw e;
@@ -899,17 +916,17 @@ describe.skipIf(!natsUrl)("payload encryption — the completeness sweep", () =>
 
       const n = names(SWEEP);
       const places: Array<[string, string]> = [
-        ["DE_JOURNAL (every run, every generation, every child)", await allMessages(n.journalStream, n.journalSubjectAll)], // prettier-ignore
-        ["DE_TIMERS", await allMessages(n.timersStream, n.timerSubjectAll)],
-        ["DE_RUNS", await allKv(n.runsKv)],
-        ["DE_PARKED", await allKv(n.parkedKv)],
-        ["DE_LEASES", await allKv(n.leasesKv)],
+        ["DE_JOURNAL (every run, every generation, every child)", await allMessages(n.journalStream, n.journalSubjectAll, h.runId)], // prettier-ignore
+        ["DE_TIMERS", await allMessages(n.timersStream, n.timerSubjectAll, h.runId)],
+        ["DE_RUNS", await allKv(n.runsKv, h.runId)],
+        ["DE_PARKED", await allKv(n.parkedKv, h.runId)],
+        ["DE_LEASES", await allKv(n.leasesKv, h.runId)],
       ];
       for (const [where, text] of places) {
         expect(`${where}: ${text.includes(SECRET) ? "LEAKED" : "clean"}`).toBe(`${where}: clean`);
       }
       // The blob bucket, object by object.
-      const objects = await listObjects(nc, n.blobsBucket);
+      const objects = runBlobs(await listObjects(nc, n.blobsBucket), h.runId);
       expect(objects.length).toBeGreaterThanOrEqual(3); // big step, big signal, big child outcome
       for (const o of objects) {
         const bytes = await readBlob(nc, n.blobsBucket, o.name);
@@ -945,9 +962,9 @@ describe.skipIf(!natsUrl)("payload encryption — the completeness sweep", () =>
       expect(await h.result(60_000)).toBe(SECRET);
 
       const n = names(PLAINSWEEP);
-      expect(await allMessages(n.journalStream, n.journalSubjectAll)).toContain(SECRET);
-      expect(await allKv(n.runsKv)).toContain(SECRET);
-      const objects = await listObjects(nc, n.blobsBucket);
+      expect(await allMessages(n.journalStream, n.journalSubjectAll, h.runId)).toContain(SECRET);
+      expect(await allKv(n.runsKv, h.runId)).toContain(SECRET);
+      const objects = runBlobs(await listObjects(nc, n.blobsBucket), h.runId);
       expect(objects.length).toBeGreaterThan(0);
       const leaked = await Promise.all(
         objects.map(async (o) => new TextDecoder().decode((await readBlob(nc, n.blobsBucket, o.name)) ?? undefined)), // prettier-ignore

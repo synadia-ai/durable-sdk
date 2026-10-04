@@ -19,6 +19,7 @@ import { EngineNotAvailableError, enginePin, resolveEngineBinary } from "./engin
 import {
   connect,
   deletePrefixStreams,
+  sweepRun,
   existingFromEnv,
   measureRtt,
   prefixEphemeralConsumers,
@@ -186,11 +187,16 @@ async function setupExisting(ctx: SetupContext, ex: ExistingServer): Promise<() 
       const left = await prefixEphemeralConsumers(nc, ex.prefix, atStart.consumers);
       if (left.length > 0) throw new Error(leftoverMessage(left, "after the suite"));
     } finally {
-      await report(nc, ex, run);
+      const metrics = await engineMetrics(ex, run);
       await run.stop();
+      // The engine stopped, nothing re-creates a durable or writes a blob: what a test that failed
+      // or timed out left after its own cleanup goes now (docs/findings.md F33).
+      const swept = await sweepRun(nc, ex.prefix, run.runIds, atStart);
+      console.warn(`the run's end: ${String(swept.blobs)} blobs of its ${String(run.runIds.size)} runs and ${String(swept.durables)} durables deleted`); // prettier-ignore
+      await report(nc, ex, run, metrics);
       if (ex.deleteAtEnd) {
         const gone = await deletePrefixStreams(nc, ex.prefix);
-        console.warn(`DE_CLEANUP=delete: deleted ${gone.join(", ") || "nothing"}`);
+        console.warn(`DE_CLEANUP=${process.env.DE_CLEANUP || "delete (the default for a generated prefix)"}: deleted ${gone.join(", ") || "nothing"}`); // prettier-ignore
       }
       await nc.close();
       await proxy?.stop();
@@ -199,10 +205,26 @@ async function setupExisting(ctx: SetupContext, ex: ExistingServer): Promise<() 
 }
 
 /** What the run leaves for the reader: the prefix's leftovers and the engine's /metrics. */
+/** The engine's /metrics text (or why not), read while it still runs. */
+async function engineMetrics(
+  ex: ExistingServer,
+  run: RunEngine,
+): Promise<string | Error | undefined> {
+  // prettier-ignore
+  if (run.extras.metricsAddr === undefined && ex.engineUrl === undefined) return undefined;
+  const base = ex.engineUrl ?? `http://${run.extras.metricsAddr!}`;
+  try {
+    return await (await fetch(new URL("/metrics", base))).text();
+  } catch (e) {
+    return e instanceof Error ? e : new Error(String(e));
+  }
+}
+
 async function report(
   nc: Awaited<ReturnType<typeof connect>>,
   ex: ExistingServer,
   run: RunEngine,
+  metrics: string | Error | undefined,
 ): Promise<void> {
   const { jetstreamManager } = await import("@nats-io/jetstream");
   const jsm = await jetstreamManager(nc);
@@ -220,17 +242,8 @@ async function report(
   const dir = join(fileURLToPath(new URL("../..", import.meta.url)), ".de-run", ex.prefix);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "leftovers.txt"), lines.join("\n") + "\n");
-  if (run.extras.metricsAddr !== undefined || ex.engineUrl !== undefined) {
-    const base = ex.engineUrl ?? `http://${run.extras.metricsAddr!}`;
-    try {
-      writeFileSync(
-        join(dir, "metrics.txt"),
-        await (await fetch(new URL("/metrics", base))).text(),
-      );
-    } catch (e) {
-      lines.push(`/metrics: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
+  if (typeof metrics === "string") writeFileSync(join(dir, "metrics.txt"), metrics);
+  else if (metrics !== undefined) lines.push(`/metrics: ${metrics.message}`);
   if (!run.external) writeFileSync(join(dir, "engine.log"), run.log.join("\n") + "\n");
   console.warn(`\nprefix ${ex.prefix} after the run (also in ${dir}: leftovers.txt, metrics.txt, engine.log; the engine started ${String(run.starts)}×):\n  ${lines.join("\n  ")}\n`); // prettier-ignore
 }

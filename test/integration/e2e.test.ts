@@ -764,8 +764,9 @@ describe.skipIf(!natsUrl)("end-to-end (worker + client, real nats-server)", () =
       await waitUntil(async () => (await handle.status()).state === "suspended", 10_000);
       await client.signal(handle.runId, "go", "done");
       expect(await handle.result(15_000)).toBe("done");
-      // suspended → completed on resume. durable-sdk: `status` lags `result` by the worker's `done`
-      // (docs/findings.md F27): wait for it, bounded.
+      // suspended → completed on resume. durable-sdk: `status` lagged `result` by the worker's `done`
+      // (docs/findings.md F27): wait for it, bounded. Harmless now: the engine guarantees the state
+      // since ee81460 (its F29), so a failure here is the engine's again.
       await waitUntil(async () => (await handle.status()).state === "completed", 10_000);
     } finally {
       await worker.stop();
@@ -932,7 +933,8 @@ describe.skipIf(!natsUrl)("end-to-end (worker + client, real nats-server)", () =
       await waitUntil(async () => (await handle.status()).state === "suspended", 10_000);
       await client.cancel(handle.runId, { reason: "user bailed" });
       await expect(handle.result(15_000)).rejects.toThrow(CancelledError);
-      // durable-sdk: `status` lags `result` by the worker's `done` (docs/findings.md F27).
+      // durable-sdk: `status` lagged `result` by the worker's `done` (docs/findings.md F27). Harmless
+      // now: the engine guarantees the state since ee81460 (its F29); a failure is the engine's.
       await waitUntil(async () => (await handle.status()).state === "cancelled", 10_000);
     } finally {
       await worker.stop();

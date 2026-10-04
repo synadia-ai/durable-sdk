@@ -160,7 +160,7 @@ class Client:
         sizes = Sizes(self._request, lambda: nc.max_payload if nc.is_connected else 0)
         #: ``None`` under ``offload=False``: a value too large for a request fails loud.
         self._sizes: Sizes | None = sizes if offload else None
-        self._blobs = EngineBlobs(self._request.request, sizes, metrics=metrics)
+        self._blobs = EngineBlobs(self._request.request, sizes, metrics=metrics, rtt=nc.rtt)
 
     async def _result_request(
         self, run_id: str, wait_ms: int, deadline: float
