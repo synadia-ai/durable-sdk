@@ -14,7 +14,7 @@ __all__ = ["DEFAULT_PREFIX", "Op", "api_subject"]
 #: The default prefix: the engine's and the library's (``de``).
 DEFAULT_PREFIX = "de"
 
-#: The 13 ops of API v1.
+#: The 15 ops of API v1.
 Op = Literal[
     "start",
     "result",
@@ -29,6 +29,8 @@ Op = Literal[
     "done",
     "extend",
     "info",
+    "put",
+    "get",
 ]
 
 

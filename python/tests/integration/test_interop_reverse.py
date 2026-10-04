@@ -168,11 +168,8 @@ async def test_a_python_failure_surfaces_to_the_typescript_client(
     assert "refused it" in line
 
 
-# durable-sdk: BLOCKED by docs/findings.md F2 (the engine's offload of an appended entry is
-# unreachable: `serve` has no --offload-threshold, and `offload=OffloadOptions(threshold_bytes=1)` is
-# the engine's now, ignored by the worker). The TypeScript client does read the value; the
-# self-check that it crossed as a v:2 ref cannot hold.
-@pytest.mark.skip(reason="durable-sdk: BLOCKED by docs/findings.md F2 (no appended-entry offload)")
+# durable-sdk: docs/findings.md F1/F2, answered by the engine's F25 (put and get) and F22
+# (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 async def test_typescript_reads_a_payload_python_offloaded(
     python_worker: Any, nc: Any, nats_url: str, prefix: str
 ) -> None:
@@ -246,11 +243,8 @@ async def test_typescript_reads_a_payload_python_encrypted(nats_url: str) -> Non
         await nc.drain()
 
 
-# durable-sdk: BLOCKED by docs/findings.md F1 (API v1 has no chunked upload: a value over
-# max_payload − 16 KiB cannot reach the engine, where the library offloaded it).
-@pytest.mark.skip(
-    reason="durable-sdk: BLOCKED by docs/findings.md F1 (no chunked upload in API v1)"
-)
+# durable-sdk: docs/findings.md F1/F2, answered by the engine's F25 (put and get) and F22
+# (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 @pytest.mark.usefixtures("_node_available")
 async def test_a_python_worker_honours_the_payload_enc_flag_typescript_wrote(
     nats_url: str,

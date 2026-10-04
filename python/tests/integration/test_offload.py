@@ -72,11 +72,8 @@ async def _object_names(nc: Any, prefix: str) -> list[str]:
     return await list_object_names(nc, Names(prefix).blobs_bucket)
 
 
-@pytest.mark.skip(
-    reason="durable-sdk: BLOCKED by docs/findings.md F2 — the 1 KiB threshold (offload=TINY) is the "
-    "engine's now (info's offload_threshold, = request_max) and serve has no --offload-threshold, "
-    "so nothing below request_max is offloaded; a value above it cannot be sent (F1)"
-)
+# durable-sdk: docs/findings.md F1/F2, answered by the engine's F25 (put and get) and F22
+# (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 async def test_a_big_step_value_is_offloaded_and_replays_inline(
     nc: Any, prefix: str, running: Any
 ) -> None:
@@ -112,11 +109,8 @@ async def test_a_big_step_value_is_offloaded_and_replays_inline(
     assert blob["size"] > 0
 
 
-@pytest.mark.skip(
-    reason="durable-sdk: BLOCKED by docs/findings.md F2 — the 1 KiB threshold (offload=TINY) is the "
-    "engine's now (info's offload_threshold, = request_max) and serve has no --offload-threshold, "
-    "so nothing below request_max is offloaded; a value above it cannot be sent (F1)"
-)
+# durable-sdk: docs/findings.md F1/F2, answered by the engine's F25 (put and get) and F22
+# (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 async def test_an_oversized_start_input_and_signal_travel_as_refs(
     nc: Any, prefix: str, running: Any
 ) -> None:
@@ -145,11 +139,8 @@ async def test_an_oversized_start_input_and_signal_travel_as_refs(
     assert "data" not in signal
 
 
-@pytest.mark.skip(
-    reason="durable-sdk: BLOCKED by docs/findings.md F2 — the 1 KiB threshold (offload=TINY) is the "
-    "engine's now (info's offload_threshold, = request_max) and serve has no --offload-threshold, "
-    "so nothing below request_max is offloaded; a value above it cannot be sent (F1)"
-)
+# durable-sdk: docs/findings.md F1/F2, answered by the engine's F25 (put and get) and F22
+# (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 async def test_a_big_child_result_reaches_its_parent_as_a_ref(
     nc: Any, prefix: str, running: Any
 ) -> None:
@@ -175,11 +166,8 @@ async def test_a_big_child_result_reaches_its_parent_as_a_ref(
     assert "value" not in resolve
 
 
-@pytest.mark.skip(
-    reason="durable-sdk: BLOCKED by docs/findings.md F2 — the 1 KiB threshold (offload=TINY) is the "
-    "engine's now (info's offload_threshold, = request_max) and serve has no --offload-threshold, "
-    "so nothing below request_max is offloaded; a value above it cannot be sent (F1)"
-)
+# durable-sdk: docs/findings.md F1/F2, answered by the engine's F25 (put and get) and F22
+# (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 async def test_a_big_result_does_not_wedge_the_status_hint(
     nc: Any, prefix: str, running: Any
 ) -> None:
@@ -241,11 +229,8 @@ async def test_offload_disabled_still_fails_loud_on_an_oversized_payload(
         await worker.stop()
 
 
-@pytest.mark.skip(
-    reason="durable-sdk: BLOCKED by docs/findings.md F2 — the 1 KiB threshold (offload=TINY) is the "
-    "engine's now (info's offload_threshold, = request_max) and serve has no --offload-threshold, "
-    "so nothing below request_max is offloaded; a value above it cannot be sent (F1)"
-)
+# durable-sdk: docs/findings.md F1/F2, answered by the engine's F25 (put and get) and F22
+# (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 async def test_the_same_value_in_two_runs_is_stored_per_run(
     nc: Any, prefix: str, running: Any
 ) -> None:

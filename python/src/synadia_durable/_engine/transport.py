@@ -61,8 +61,9 @@ class Transport:
         payload = json.dumps(body, allow_nan=False, separators=(",", ":"), ensure_ascii=False)
         data = payload.encode("utf-8")
         # A request past the server's max_payload can never be sent, so it is deterministic for this
-        # value: fail it here, as the engine fails one past its request_max (`too_large`). v1 has no
-        # chunked upload (API.md "Sizes"), so the engine's offload starts below this size.
+        # value: fail it here, as the engine fails one past its request_max (`too_large`). A value
+        # that would make it so has gone up in `put` parts already (blobs.py); what is left over is
+        # metadata no upload can shrink, or a value under `offload=False`.
         max_payload = self._nc.max_payload if self._nc.is_connected else 0
         if max_payload and len(data) > max_payload:
             run_id = _run_of(body)
@@ -70,7 +71,7 @@ class Transport:
             raise PayloadTooLargeError(
                 run_id,
                 f"{op}{where}: the request is {len(data)} bytes, over the server max_payload of "
-                f"{max_payload} — the engine's API v1 has no chunked upload",
+                f"{max_payload}",
             )
         try:
             msg = await self._or_closed(

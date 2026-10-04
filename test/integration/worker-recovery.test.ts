@@ -540,11 +540,9 @@ describe.skipIf(!natsUrl)("worker recovery — kills, chains and oversized failu
     }
   }, 90_000);
 
-  // durable-sdk: BLOCKED by docs/findings.md F1 (API v1 has no chunked upload: a value over max_payload − 16 KiB cannot
-  // reach the engine, where the library offloaded it to the blob store).
-  // Without offload the child's `fail` terminal cannot be journaled at all, and the pure core then
-  // reports `fenced` for ever (F12).
-  it.skip("a child failing with an OVERSIZED message resolves the parent through a blob ref", async () => {
+  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // chunked transport (src/engine/blobs.ts).
+  it("a child failing with an OVERSIZED message resolves the parent through a blob ref", async () => {
     // The child-done shrink path's error arm. A big failure message is not exotic — an exception
     // that embeds its input is the usual way one appears — and it cannot ride the work queue
     // inline. The parent's `resolve` entry therefore carries an errorRef, and `result()` has to

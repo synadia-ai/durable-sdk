@@ -4,9 +4,10 @@
 // and replayed by the library's `executeRun` with its three seams as requests under the item's
 // lease (Journal → load/append, Scheduler → wake, Children → child), with `extend` on a third of the
 // ack wait meanwhile; the `ExecOutcome` goes back as `done`. On `expired` from any request the item
-// is dropped and the slot polls on. Every poll names this worker, and stop() withdraws its waiting
-// polls (`poll {cancelPoll}`), so a stop takes as long as the items in flight, not a poll's wait.
-// The worker holds no state across items: the consumers, the inbound event, the run lease, the ack
+// is dropped and the slot polls on. A value too large for a request or a reply goes up and comes
+// down in parts (blobs.ts). Every poll names this worker, and stop() withdraws its waiting polls
+// (`poll {cancelPoll}`), so a stop takes as long as the items in flight, not a poll's wait. The
+// worker holds no state across items: the consumers, the inbound event, the run lease, the ack
 // matrix, the obligations after a terminal, the cascade, the forward, the parked index and the
 // lost-wake repair are the engine's.
 
@@ -15,7 +16,12 @@ import { type ChildStart, type Children } from "../core/children.js";
 import { type ExecOutcome, executeRun } from "../core/execute.js";
 import { buildRegistry } from "../core/registry.js";
 import { type Scheduler } from "../core/scheduler.js";
-import { ConnectionClosedError, PayloadCodecError } from "../errors.js";
+import {
+  BlobIntegrityError,
+  BlobMissingError,
+  ConnectionClosedError,
+  PayloadCodecError,
+} from "../errors.js";
 import { type Logger, SILENT_LOGGER } from "../internal/logger.js";
 import {
   type DurableEventFields,
@@ -24,14 +30,15 @@ import {
   SILENT_METRICS,
   emitSafe,
 } from "../internal/metrics.js";
-import { type OffloadOptions } from "../journal/blobs.js";
+import { BlobBytesCache, DEFAULT_BLOB_CACHE_BYTES, type OffloadOptions } from "../journal/blobs.js";
 import { type LoadedEntry } from "../journal/entry.js";
 import { type PayloadCodec } from "../journal/payload-codec.js";
 import { type AppendResult, type Journal, type JournalAppend } from "../journal/store.js";
 import { type AnyWorkflow } from "../types.js";
+import { EngineBlobs, sizesOf } from "./blobs.js";
 import { EngineError, InvalidRequestError, LeaseExpiredError } from "./errors.js";
 import { DEFAULT_PREFIX, type Op } from "./names.js";
-import { reverseJournal, slot, type WireJournal, wireEntry } from "./payload.js";
+import { fitEntry, fitSlot, reverseJournal, type WireJournal, wireEntry } from "./payload.js";
 import { createTransport } from "./transport.js";
 
 /** How long one `poll` asks the engine to wait (API.md's loop: 30 s; the engine caps it). */
@@ -55,7 +62,10 @@ export interface WorkerOptions {
   /** How long one `poll` waits for an item (default 30 000 ms; the engine caps it at `max_poll_wait_ms`). */
   pollWaitMs?: number;
   logger?: Logger;
-  /** Optional metrics sink (default: silent): `journal.append`, `journal.load`, `work.dispatch`, `work.done`. */
+  /**
+   * Optional metrics sink (default: silent): `journal.append`, `journal.load`, `work.dispatch`,
+   * `work.done`, and `blob.put` / `blob.get` for a value too large for a request or a reply.
+   */
   metrics?: Metrics;
   /** Payload encryption at rest: the same codec on every worker and client of a prefix. */
   payloadCodec?: PayloadCodec;
@@ -80,7 +90,11 @@ export interface WorkerOptions {
   reconcileTimers?: boolean;
   /** The engine's: `serve --reconcile-grace`. Ignored. */
   reconcileGraceMs?: number;
-  /** The engine's (offload is `info`'s `offload_threshold`). Ignored. */
+  /**
+   * Its tuning is the engine's (`info`'s `offload_threshold`, `serve --offload-threshold`) and
+   * ignored; `false` keeps the library's meaning: no value goes up in `put` parts, so one too
+   * large for a request fails the run loud (`PayloadTooLargeError`).
+   */
   offload?: OffloadOptions;
 }
 
@@ -145,6 +159,11 @@ export function createWorker(opts: WorkerOptions): Worker {
     emitSafe(metrics, name, fields);
   const request = createTransport(opts.nc, prefix, logger);
   const codec = opts.payloadCodec;
+  const sizes = sizesOf(request, () => opts.nc.info?.max_payload);
+  /** `offload: false` keeps the library's meaning: nothing goes up in parts, a value too large fails loud. */
+  const fit = opts.offload === false ? undefined : sizes;
+  /** Resolved blobs, by name (content-addressed, so never stale), as the library's worker kept. */
+  const blobCache = new BlobBytesCache(DEFAULT_BLOB_CACHE_BYTES);
   // name → version → workflow. Throws on a duplicate (name, version): fail loud at construction.
   const registry = buildRegistry(opts.workflows);
   const workflows = registry.names().map((name) => ({
@@ -210,6 +229,15 @@ export function createWorker(opts: WorkerOptions): Worker {
       }
     };
 
+    // A part of this run's blob carries the lease; another run's (a child's input) does not.
+    const blobs = new EngineBlobs({
+      request: (op, body, o) => ("lease" in body ? leased(op, body as Record<string, unknown>) : request(op, body, o)), // prettier-ignore
+      sizes,
+      lease: { runId, lease },
+      emit,
+    });
+
+    /** The run's journal: `first` (the poll's), then `load` pages while `more`, refs fetched. */
     async function loadAll(first: WireJournal, more: boolean): Promise<LoadedEntry[]> {
       const wire = [...first];
       while (more) {
@@ -218,7 +246,7 @@ export function createWorker(opts: WorkerOptions): Worker {
         wire.push(...r.journal);
         more = r.more === true && r.journal.length > 0;
       }
-      return reverseJournal(runId, wire, codec);
+      return reverseJournal(runId, wire, codec, blobs, blobCache);
     }
 
     const journal: Journal = {
@@ -233,7 +261,8 @@ export function createWorker(opts: WorkerOptions): Worker {
         const done = (outcome: string): void =>
           emit("journal.append", { runId: id, kind: a.entry.kind, seq: a.entry.seq, bytes: 0, ms: Date.now() - t0, outcome }); // prettier-ignore
         try {
-          const entry = await wireEntry(id, a.entry, codec);
+          const envelope = { runId: id, msgID: a.msgID, expectLastSeq: a.expectLastSeq, lease };
+          const entry = await fitEntry(id, await wireEntry(id, a.entry, codec), envelope, fit, blobs); // prettier-ignore
           const r = await leased<AppendResult>("append", { runId: id, entry, msgID: a.msgID, expectLastSeq: a.expectLastSeq }); // prettier-ignore
           done(r.duplicate ? "duplicate" : "ok");
           return { streamSeq: r.streamSeq, duplicate: r.duplicate === true };
@@ -250,11 +279,13 @@ export function createWorker(opts: WorkerOptions): Worker {
     };
     const children: Children = {
       async start(c: ChildStart): Promise<void> {
+        const head = { childRunId: c.childRunId, workflow: c.workflow, version: c.version, parent: c.parent, lease }; // prettier-ignore
         await leased("child", {
           childRunId: c.childRunId,
           workflow: c.workflow,
           version: c.version,
-          ...(await slot("input", c.input, codec, c.childRunId)),
+          // A child's input too large for the request is `put` under the CHILD's run.
+          ...(await fitSlot("input", c.input, codec, c.childRunId, head, fit, blobs)),
           parent: c.parent,
         });
       },
@@ -296,7 +327,13 @@ export function createWorker(opts: WorkerOptions): Worker {
         });
       }
     } catch (e) {
-      if (e instanceof PayloadCodecError) {
+      if (e instanceof BlobMissingError || e instanceof BlobIntegrityError) {
+        label = "blob-unresolvable";
+        // An offloaded payload that cannot be resolved (gone, or its digest wrong) makes the
+        // journal unreadable: operational, so hand the item back (the engine naks with backoff),
+        // loud, and never a terminal. It heals when the blob is restored, or the run is cancelled.
+        logger.error("durable: offloaded payload unresolvable; parking run — restore the blob or cancel the run", { runId, blob: e.blobName, error: String(e) }); // prettier-ignore
+      } else if (e instanceof PayloadCodecError) {
         label = "payload-codec";
         // The journal is readable but its payloads are not, and every cause (no codec, the wrong
         // key, altered bytes) is operational: hand it back (the engine naks with backoff), loud.

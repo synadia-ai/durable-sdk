@@ -14,7 +14,7 @@ import { defineWorkflow } from "../../src/core/workflow.js";
 import { BlobMissingError } from "../../src/errors.js";
 import { type DurableEventFields, type DurableEventName } from "../../src/internal/metrics.js";
 import { jsonCodec } from "../../src/journal/codec.js";
-import { createClient } from "../harness/engine.js";
+import { createClient, engineLog } from "../harness/engine.js";
 import { NatsJournal } from "../harness/shell/journal-store.js";
 import { names } from "../harness/shell/names.js";
 import { createWorker } from "../harness/engine.js";
@@ -51,9 +51,9 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
     await nc.drain();
   });
 
-  // durable-sdk: BLOCKED by docs/findings.md F1 (API v1 has no chunked upload: a value over max_payload − 16 KiB cannot
-  // reach the engine, where the library offloaded it to the blob store).
-  it.skip("multi-MiB input and step values round-trip; the stream carries refs, the bucket the bytes", async () => {
+  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // chunked transport (src/engine/blobs.ts).
+  it("multi-MiB input and step values round-trip; the stream carries refs, the bucket the bytes", async () => {
     const prefix = "off1";
     const events: Array<{ name: DurableEventName; fields: DurableEventFields }> = [];
     const sink = { onEvent: (name: DurableEventName, fields: DurableEventFields): void => void events.push({ name, fields }) }; // prettier-ignore
@@ -101,9 +101,9 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
     }
   });
 
-  // durable-sdk: BLOCKED by docs/findings.md F1 (API v1 has no chunked upload: a value over max_payload − 16 KiB cannot
-  // reach the engine, where the library offloaded it to the blob store).
-  it.skip("crash mid-run: a FRESH worker resolves blobs from the store and replays without re-executing", async () => {
+  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // chunked transport (src/engine/blobs.ts).
+  it("crash mid-run: a FRESH worker resolves blobs from the store and replays without re-executing", async () => {
     const prefix = "off2";
     let executions = 0;
     const wf = defineWorkflow("resume_big", async (ctx) => {
@@ -133,9 +133,9 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
     }
   });
 
-  // durable-sdk: BLOCKED by docs/findings.md F1 (API v1 has no chunked upload: a value over max_payload − 16 KiB cannot
-  // reach the engine, where the library offloaded it to the blob store).
-  it.skip("a missing blob PARKS the run (loud, never a terminal) and a restored blob heals it", async () => {
+  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // chunked transport (src/engine/blobs.ts).
+  it("a missing blob PARKS the run (loud, never a terminal) and a restored blob heals it", async () => {
     const prefix = "off3";
     const outcomes: string[] = [];
     const sink = {
@@ -168,7 +168,13 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
       // The signal cannot be processed — the journal is unreadable — so the run PARKS: work items
       // NAK with the distinct outcome, and the run's status never becomes a terminal.
       await client.signal(handle.runId, "go", null);
-      await waitUntil(() => Promise.resolve(outcomes.includes("blob-unresolvable")), 10_000);
+      // durable-sdk: the engine reads the journal before it hands an item over, so the parking is
+      // the engine's decision (docs/findings.md F10): its log, or the worker's outcome when a ref
+      // too large for a reply reaches it and its `get` finds the blob gone.
+      const parked = async (): Promise<boolean> =>
+        outcomes.includes("blob-unresolvable") ||
+        (await engineLog(prefix)).some((l) => l.includes("run's journal unreadable; parking it"));
+      await waitUntil(parked, 10_000);
       expect((await handle.status()).state).toBe("suspended");
 
       // Heal: restore the object (same name, same bytes — content-addressed) → the next
@@ -180,9 +186,9 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
     }
   });
 
-  // durable-sdk: BLOCKED by docs/findings.md F1 (API v1 has no chunked upload: a value over max_payload − 16 KiB cannot
-  // reach the engine, where the library offloaded it to the blob store).
-  it.skip("a multi-MiB SIGNAL rides the work queue as a ref and the journal entry carries it verbatim", async () => {
+  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // chunked transport (src/engine/blobs.ts).
+  it("a multi-MiB SIGNAL rides the work queue as a ref and the journal entry carries it verbatim", async () => {
     const prefix = "off5";
     const wf = defineWorkflow("sigblob", async (ctx) => {
       const data = await ctx.await<string>("blob");
@@ -212,9 +218,9 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
     }
   });
 
-  // durable-sdk: BLOCKED by docs/findings.md F1 (API v1 has no chunked upload: a value over max_payload − 16 KiB cannot
-  // reach the engine, where the library offloaded it to the blob store).
-  it.skip(
+  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // chunked transport (src/engine/blobs.ts).
+  it(
     "a big child INPUT and big child RESULT flow as refs through call/start/result/child-done/resolve",
     async () => {
       const prefix = "off6";
@@ -248,9 +254,9 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
     30_000 + BIG_CHILD_PER_RTT_MS * rtt,
   );
 
-  // durable-sdk: BLOCKED by docs/findings.md F1 (API v1 has no chunked upload: a value over max_payload − 16 KiB cannot
-  // reach the engine, where the library offloaded it to the blob store).
-  it.skip("a big continue-as-new INPUT crosses generations as refs", async () => {
+  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // chunked transport (src/engine/blobs.ts).
+  it("a big continue-as-new INPUT crosses generations as refs", async () => {
     const prefix = "off7";
     const wf = defineWorkflow("canblob", async (ctx, input: { n: number; payload: string }) => {
       if (input.n === 0) {
@@ -269,9 +275,9 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
     }
   });
 
-  // durable-sdk: BLOCKED by docs/findings.md F1 (API v1 has no chunked upload: a value over max_payload − 16 KiB cannot
-  // reach the engine, where the library offloaded it to the blob store).
-  it.skip("a multi-MiB failure MESSAGE offloads (fail entry + KV hint) and result() rejects with it", async () => {
+  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // chunked transport (src/engine/blobs.ts).
+  it("a multi-MiB failure MESSAGE offloads (fail entry + KV hint) and result() rejects with it", async () => {
     const prefix = "off8";
     const boom = "m".repeat(P15);
     const wf = defineWorkflow("failblob", async (ctx) => {
@@ -293,9 +299,9 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
     }
   });
 
-  // durable-sdk: BLOCKED by docs/findings.md F1 (API v1 has no chunked upload: a value over max_payload − 16 KiB cannot
-  // reach the engine, where the library offloaded it to the blob store).
-  it.skip("a multi-MiB RESULT round-trips and the KV hint stores a ref, not the value", async () => {
+  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // chunked transport (src/engine/blobs.ts).
+  it("a multi-MiB RESULT round-trips and the KV hint stores a ref, not the value", async () => {
     const prefix = "off9";
     const wf = defineWorkflow("resblob", async (ctx) => {
       const big = await ctx.run("make", () => "r".repeat(2 * P));
@@ -325,9 +331,9 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
     }
   });
 
-  // durable-sdk: BLOCKED by docs/findings.md F1 (API v1 has no chunked upload: a value over max_payload − 16 KiB cannot
-  // reach the engine, where the library offloaded it to the blob store).
-  it.skip("cancelling a run with offloaded entries stays clean (cancelled terminal, no value fetches needed)", async () => {
+  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // chunked transport (src/engine/blobs.ts).
+  it("cancelling a run with offloaded entries stays clean (cancelled terminal, no value fetches needed)", async () => {
     const prefix = "off10";
     const wf = defineWorkflow("cancelblob", async (ctx) => {
       await ctx.run("big", () => "k".repeat(P15));

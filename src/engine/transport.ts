@@ -51,12 +51,13 @@ export function createTransport(
     const timeout = (opts?.waitMs ?? 0) + REQUEST_MARGIN_MS;
     const payload = enc.encode(JSON.stringify(body));
     // A request past the server's max_payload can never be sent, so it is deterministic for this
-    // value: fail it here, as the engine fails one past its request_max (`too_large`). v1 has no
-    // chunked upload (API.md "Sizes"), so the engine's offload starts below this size.
+    // value: fail it here, as the engine fails one past its request_max (`too_large`). A value
+    // that would make it so has gone up in `put` parts already (blobs.ts); what is left over is
+    // metadata no upload can shrink.
     const max = nc.info?.max_payload;
     if (max !== undefined && payload.byteLength > max) {
       const runId = runOf(body);
-      throw new PayloadTooLargeError(runId, `${op}${runId ? ` (run ${runId})` : ""}: the request is ${payload.byteLength} bytes, over the server max_payload of ${max} — the engine's API v1 has no chunked upload`); // prettier-ignore
+      throw new PayloadTooLargeError(runId, `${op}${runId ? ` (run ${runId})` : ""}: the request is ${payload.byteLength} bytes, over the server max_payload of ${max}`); // prettier-ignore
     }
     let data: string;
     try {
