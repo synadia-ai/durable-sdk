@@ -28,7 +28,7 @@ import {
   restartEngine,
 } from "../harness/engine.js";
 import { NatsJournal } from "../harness/shell/journal-store.js";
-import { names } from "../harness/shell/names.js";
+import { names, skipAsTenant } from "../harness/shell/names.js";
 import { type WorkItem } from "../../src/core/work-item.js";
 import { createWorker } from "../harness/engine.js";
 import { over } from "../harness/payload.js";
@@ -480,6 +480,7 @@ describe.skipIf(!natsUrl)("worker recovery — kills, chains and oversized failu
         "the cancel to reach generation 1",
       );
 
+      skipAsTenant(); // the test reads the journal itself (shell/names.ts)
       const jsm = await jetstreamManager(nc);
       const entries = await new NatsJournal(jetstream(nc), jsm, names(REC), jsonCodec).loadRaw(
         gen1,
@@ -540,6 +541,7 @@ describe.skipIf(!natsUrl)("worker recovery — kills, chains and oversized failu
         "the blocked child to be tombstoned",
       );
       expect(await h.result(25_000)).toBe("WorkflowFailure/cancelled");
+      skipAsTenant(); // the test reads the journal itself (shell/names.ts)
       const jsm = await jetstreamManager(nc);
       const entries = await new NatsJournal(jetstream(nc), jsm, names(REC), jsonCodec).loadRaw(
         childId,
@@ -580,6 +582,7 @@ describe.skipIf(!natsUrl)("worker recovery — kills, chains and oversized failu
       const h = await client.start(parent, {});
       expect(await h.result(30_000)).toBeGreaterThan(over(nc));
 
+      skipAsTenant(); // the test reads the journal itself (shell/names.ts)
       const jsm = await jetstreamManager(nc);
       const entries = await new NatsJournal(jetstream(nc), jsm, names(REC), jsonCodec).loadRaw(
         h.runId,
@@ -630,6 +633,7 @@ describe.skipIf(!natsUrl)("worker recovery — kills, chains and oversized failu
       );
 
       expect(await h.result(5_000)).toBe("got:value"); // unchanged
+      skipAsTenant(); // the test reads the journal itself (shell/names.ts)
       const jsm = await jetstreamManager(nc);
       const entries = await new NatsJournal(jetstream(nc), jsm, names(REC), jsonCodec).loadRaw(
         h.runId,

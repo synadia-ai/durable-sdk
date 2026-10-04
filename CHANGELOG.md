@@ -4,6 +4,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.7.0-alpha] — unreleased
 
+### Follow-up 4 (2026-10-04): the tenancy pin, bandwidth in the budgets, the harness as a tenant
+
+`engine.pin` moves from `ee81460` to `d3e741d` (the engine's PR #7, tenancy). Both languages unless said; nothing in `src/` or `python/src/` changed.
+
+- **The large-value budgets learn bandwidth** (`docs/findings.md` F37): in the existing-server mode the harness probes the throughput once (a 4 MiB `put` and `get` through the run's engine on the tests' link) and prints it next to the round trip; every test that moves values over the inline limit adds n × `max_payload` over it, × 2, to its waits (`moving(n)`, `budget(ms, n)`; Python `existing.moving(n)`), n from a per-test tally of `put` / `get` bytes (`.de-run/<prefix>/blob-bytes.tsv`). The whole `offload` suite, the large `payload-codec` cases, Python's two large-signal cases. At the dev NGS's 51 ms and ≈ 1.19 MiB/s the continue-as-new test's budget is 208 s (was 45 s).
+- **The harness as a tenant** (F38): `DE_TENANT`, `DE_ADMIN_URL`, `DE_ADMIN_CREDS`. The streams are read through the admin connection, and every check and cleanup counts the tenant's subjects, objects and durables alone, never another tenant's or a stream. A test that reads the engine's stores itself is skipped as a tenant, saying so (TypeScript 46, Python 17). Proven on a local three-account server (the engine's `TenancyConfig`) with tenant B's state left untouched: TypeScript 61 passed, 80 skipped; Python 34 passed, 59 skipped.
+- **Fixes the tenant runs found:** a test vitest skips part-way gets its cleanup at the next test's start (vitest runs no `afterEach` after a skip), and `interop-py` stops a worker such a test left. Under `DE_ENGINE_URL` the end's sweep repeats until quiet, and a test that reads the engine's log is skipped (it read an empty one). A server URL's `user:password@` is the connection's for nats.js (the harness, the interop scripts).
+- The README's time table gains the dev NGS `offload` rerun and the engine's position; F32 is handed on to the engine (F39). New findings F36 to F39.
+
 ### Follow-up 3 (2026-10-04): `blob_gone`, the new pin, and the cleanup default
 
 `engine.pin` moves from `57ae3c9` to `ee81460` (the engine's PR #5: `status` never lags `result`, `blob_gone`, a cluster harness). Both languages unless said.

@@ -13,14 +13,14 @@ import { fileURLToPath } from "node:url";
 import { jetstream, jetstreamManager } from "@nats-io/jetstream";
 import { type NatsConnection } from "@nats-io/transport-node";
 import { connect } from "../harness/existing.js";
-import { afterAll, afterEach, beforeAll, describe, expect, inject, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, inject, it } from "vitest";
 import { defineWorkflow } from "../../src/core/workflow.js";
 import { CancelledError, WorkflowFailure } from "../../src/errors.js";
 import { jsonCodec } from "../../src/journal/codec.js";
 import { aesGcmPayloadCodec } from "../../src/journal/payload-codec.js";
 import { createClient, ensureEngine, mapPrefix } from "../harness/engine.js";
 import { NatsJournal } from "../harness/shell/journal-store.js";
-import { names } from "../harness/shell/names.js";
+import { names, skipAsTenant } from "../harness/shell/names.js";
 import { WAN } from "../harness/mode.js";
 
 const natsUrl = inject("natsUrl");
@@ -102,6 +102,7 @@ async function rawEntries(
   prefix: string,
   runId: string,
 ): Promise<Array<Record<string, unknown>>> {
+  skipAsTenant(); // the test reads the journal itself (shell/names.ts)
   const jsm = await jetstreamManager(nc);
   const journal = new NatsJournal(jetstream(nc), jsm, names(prefix), jsonCodec);
   return (await journal.loadRaw(runId)).map((l) => l.entry as unknown as Record<string, unknown>);
@@ -128,7 +129,14 @@ describe.skipIf(!natsUrl || !uv)("interop: a TypeScript client drives a Python w
     nc = await connect({ servers: natsUrl! });
   });
   afterAll(async () => {
+    await stopPythonWorker(worker); // durable-sdk: a test skipped part-way never reached afterEach
     await nc.drain();
+  });
+  // durable-sdk: a test skipped part-way (as a tenant, at its journal read) never reaches
+  // afterEach, so the next test stops the worker it left (vitest skips the hooks of a skip).
+  beforeEach(async () => {
+    await stopPythonWorker(worker);
+    worker = undefined;
   });
   afterEach(async () => {
     await stopPythonWorker(worker);

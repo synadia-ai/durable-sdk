@@ -16,18 +16,25 @@ import net from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { EngineNotAvailableError, enginePin, resolveEngineBinary } from "./engine-bin.js";
+import { randomBytes } from "node:crypto";
 import {
   connect,
+  connectAdmin,
+  deleteRunBlobs,
   deletePrefixStreams,
+  durableOf,
+  measureThroughput,
   sweepRun,
   existingFromEnv,
   measureRtt,
   prefixEphemeralConsumers,
   prefixStreams,
   rttFactor,
+  scopeOf,
   snapshot,
   type ExistingServer,
 } from "./existing.js";
+import { HEADROOM as HEADROOM_NOTE } from "./budget.js";
 import { RunEngine } from "./run-engine.js";
 import { assertNoEphemeralConsumers, leftoverMessage } from "./leftovers.js";
 import { NatsProxy } from "./proxy.js";
@@ -46,6 +53,9 @@ export default async function setup(ctx: SetupContext): Promise<() => Promise<vo
   ctx.provide("runPrefix", null);
   ctx.provide("rttFactor", 1);
   ctx.provide("engineControl", null);
+  ctx.provide("throughputBps", 0);
+  ctx.provide("natsMaxPayload", 0);
+  ctx.provide("runTenant", null);
   const existing = existingFromEnv();
   if (existing) return setupExisting(ctx, existing);
   const profile = profileFromEnv();
@@ -129,11 +139,15 @@ const freePort = (): Promise<number> =>
  */
 async function setupExisting(ctx: SetupContext, ex: ExistingServer): Promise<() => Promise<void>> {
   const engineBin = ex.engineUrl === undefined ? resolveEngineBinary() : null;
-  const nc = await connect({ servers: ex.url, name: "test-harness-run" });
+  const scope = scopeOf(ex.prefix);
+  // The tests' identity, for the round trip, the probe and the engine's API; the admin connection
+  // (DE_ADMIN_URL, the tests' own by default) for the streams: as a tenant the tests see none.
+  const tnc = await connect({ servers: ex.url, name: "test-harness-run" });
+  const nc = ex.adminUrl === ex.url && ex.adminCreds === ex.creds ? tnc : await connectAdmin({ name: "test-harness-admin" }); // prettier-ignore
   // JetStream first: a server or an account without it fails here, by name, not in every test.
   const { jetstreamManager } = await import("@nats-io/jetstream");
   await (await jetstreamManager(nc)).getAccountInfo();
-  const serverRtt = await measureRtt(nc);
+  const serverRtt = await measureRtt(tnc);
   const proxyRtt = rttFromEnv();
   const proxy = proxyRtt > 0 ? new NatsProxy(ex.url, { rttMs: proxyRtt }) : undefined;
   await proxy?.start();
@@ -150,7 +164,7 @@ async function setupExisting(ctx: SetupContext, ex: ExistingServer): Promise<() 
     startTimeoutMs: Math.round(30_000 * factor),
   });
   console.warn(
-    `\nexisting server ${ex.url}${ex.creds !== undefined ? " (creds)" : ""}, prefix ${ex.prefix}, ` +
+    `\nexisting server ${ex.url}${ex.creds !== undefined ? " (creds)" : ""}, prefix ${ex.prefix}${ex.tenant !== undefined ? `, as tenant ${ex.tenant} (the streams through ${ex.adminUrl}${ex.adminCreds !== undefined ? ", creds" : ""})` : ""}, ` +
       `round trip ${rttMs.toFixed(1)} ms${proxy ? ` (the server ${serverRtt.toFixed(1)} ms, the proxy ${String(proxyRtt)} ms)` : ""} → every wait × ${String(factor)}\n` + // prettier-ignore
       (engineBin !== null
         ? `engine: ${engineBin} (engine.pin ${enginePin()}), one for the run, metrics on http://${run.extras.metricsAddr!}\n`
@@ -162,6 +176,7 @@ async function setupExisting(ctx: SetupContext, ex: ExistingServer): Promise<() 
       await run.ensure({});
     } catch (e) {
       await nc.close();
+      if (tnc !== nc) await tnc.close();
       await proxy?.stop();
       throw e;
     }
@@ -170,9 +185,22 @@ async function setupExisting(ctx: SetupContext, ex: ExistingServer): Promise<() 
     if (!r.ok) throw new Error(`DE_ENGINE_URL ${ex.engineUrl!}: /healthz answered ${String(r.status)}`); // prettier-ignore
   }
   await run.listen();
+  // The throughput the large values meet, through the engine on the tests' link (the proxy's
+  // under DE_TEST_RTT_MS), once: the large-value tests' budgets carry its term (harness/mode.ts).
+  const probeRun = `probe-${randomBytes(4).toString("hex")}`;
+  run.runIds.add(probeRun);
+  const pnc = proxy ? await connect({ servers: proxy.url, name: "test-harness-probe" }) : tnc;
+  const tp = await measureThroughput(pnc, ex.prefix, probeRun);
+  const maxPayload = pnc.info?.max_payload ?? 0;
+  if (pnc !== tnc) await pnc.close();
+  await deleteRunBlobs(nc, scope, [probeRun]);
+  const mib = (b: number): string => (b / (1024 * 1024)).toFixed(2);
+  console.warn(
+    `round trip ${rttMs.toFixed(1)} ms, throughput ${mib(tp.bps)} MiB/s (a ${mib(tp.bytes)} MiB put ${tp.putMs.toFixed(0)} ms and get ${tp.getMs.toFixed(0)} ms through the engine), max_payload ${mib(maxPayload)} MiB → a large value's budget adds its bytes over the throughput × ${String(HEADROOM_NOTE)}\n`, // prettier-ignore
+  );
   // What the prefix held before the run: another client's consumers on a shared prefix are not
   // this run's leftovers.
-  const atStart = await snapshot(nc, ex.prefix);
+  const atStart = await snapshot(nc, scope);
   ctx.provide("engineBin", engineBin ?? "external");
   ctx.provide("natsUrl", proxy?.url ?? ex.url);
   ctx.provide("natsDirectUrl", ex.url);
@@ -181,17 +209,30 @@ async function setupExisting(ctx: SetupContext, ex: ExistingServer): Promise<() 
   ctx.provide("runPrefix", ex.prefix);
   ctx.provide("rttFactor", factor);
   ctx.provide("engineControl", run.controlUrl);
+  ctx.provide("throughputBps", Math.round(tp.bps));
+  ctx.provide("natsMaxPayload", maxPayload);
+  ctx.provide("runTenant", ex.tenant ?? null);
   return async () => {
     try {
       // The footprint check, on the prefix's streams only.
-      const left = await prefixEphemeralConsumers(nc, ex.prefix, atStart.consumers);
+      const left = await prefixEphemeralConsumers(nc, scope, atStart.consumers);
       if (left.length > 0) throw new Error(leftoverMessage(left, "after the suite"));
     } finally {
       const metrics = await engineMetrics(ex, run);
       await run.stop();
       // The engine stopped, nothing re-creates a durable or writes a blob: what a test that failed
       // or timed out left after its own cleanup goes now (docs/findings.md F33).
-      const swept = await sweepRun(nc, ex.prefix, run.runIds, atStart);
+      const swept = await sweepRun(nc, scope, run.runIds, atStart);
+      // Under DE_ENGINE_URL the engine still runs: a poll a late-stopped worker had in flight can
+      // bind a durable after the sweep (a tenant run left four so). Again after a pause, until a
+      // round finds nothing (docs/findings.md F38).
+      for (let round = 0; run.external && round < 3; round++) {
+        await new Promise((r) => setTimeout(r, 2_000 * factor));
+        const again = await sweepRun(nc, scope, run.runIds, atStart);
+        swept.blobs += again.blobs;
+        swept.durables += again.durables;
+        if (again.blobs + again.durables === 0) break;
+      }
       console.warn(`the run's end: ${String(swept.blobs)} blobs of its ${String(run.runIds.size)} runs and ${String(swept.durables)} durables deleted`); // prettier-ignore
       await report(nc, ex, run, metrics);
       if (ex.deleteAtEnd) {
@@ -199,6 +240,7 @@ async function setupExisting(ctx: SetupContext, ex: ExistingServer): Promise<() 
         console.warn(`DE_CLEANUP=${process.env.DE_CLEANUP || "delete (the default for a generated prefix)"}: deleted ${gone.join(", ") || "nothing"}`); // prettier-ignore
       }
       await nc.close();
+      if (tnc !== nc) await tnc.close();
       await proxy?.stop();
     }
   };
@@ -233,7 +275,7 @@ async function report(
     try {
       const si = await jsm.streams.info(s);
       const durables: string[] = [];
-      for await (const c of jsm.consumers.list(s)) durables.push(c.name);
+      for await (const c of jsm.consumers.list(s)) if (durableOf(scopeOf(ex.prefix), c.name)) durables.push(c.name); // prettier-ignore
       lines.push(`${s}: ${String(si.state.messages)} messages, ${String(si.state.bytes)} bytes, consumers [${durables.join(", ")}]`); // prettier-ignore
     } catch {
       lines.push(`${s}: absent`);
@@ -257,5 +299,11 @@ declare module "vitest" {
     natsDirectUrl: string | null;
     natsProfile: ServerProfile;
     natsRttMs: number;
+    /** Against an existing server: the probe's bytes per second (0 elsewhere: not measured). */
+    throughputBps: number;
+    /** Against an existing server: the tests' connection's max_payload (0 elsewhere). */
+    natsMaxPayload: number;
+    /** DE_TENANT, or null. */
+    runTenant: string | null;
   }
 }

@@ -11,12 +11,22 @@ server the run does not own, instead of the ``nats-server`` the harness spawns. 
     DE_CLEANUP      ``delete`` or ``keep`` the prefix's seven at the run's end; by default a
                     generated prefix is deleted (only this run can have made it) and a DE_PREFIX
                     one kept
+    DE_TENANT       the tests run as this tenant of an engine in tenancy mode (``serve --tenancy``,
+                    the engine's PR #7): the token the tenant's import places
+    DE_ADMIN_URL    where the harness reads the engine's streams and consumers (default
+    DE_ADMIN_CREDS  DE_NATS_URL, DE_NATS_CREDS): as a tenant the tests' own connection sees none
 
 No spawn, no account profile (the server's own limits apply), one prefix and one engine for the
 run, a cleanup that purges what each test wrote under the prefix and never deletes a stream during
 the run, the leftovers check on the prefix's streams only, and every wait scaled by the measured
 round trip. A test that failed or timed out is cleaned like any other, and its runs' blobs are
 deleted by name, after it and again at the run's end (docs/findings.md F33).
+
+As a tenant (``DE_TENANT``) the seven are the engine account's, shared by every tenant: everything
+above is read through the admin connection and counts the tenant's subjects
+(``{prefix}.{tenant}.…``, ``$KV.<bucket>.{tenant}.…``), objects (``{tenant}/…``) and durables
+(``{prefix}~{tenant}~…``) alone; another tenant's are never purged or deleted, and the seven never
+are.
 """
 
 from __future__ import annotations
@@ -41,6 +51,11 @@ class ExistingServer:
     #: The prefix is the run's own (no DE_PREFIX): generated here, so nobody else's.
     generated: bool
     delete_at_end: bool
+    #: DE_TENANT: the tests run as this tenant of an engine in tenancy mode.
+    tenant: str | None = None
+    #: DE_ADMIN_URL / DE_ADMIN_CREDS: the harness's view of the engine's streams.
+    admin_url: str = ""
+    admin_creds: str | None = None
 
 
 def _from_env() -> ExistingServer | None:
@@ -54,6 +69,22 @@ def _from_env() -> ExistingServer | None:
     prefix = given or f"de-{secrets.token_hex(4)}"
     if not re.fullmatch(r"[A-Za-z0-9_-]+", prefix):
         raise ValueError(f'DE_PREFIX="{prefix}": one subject token, no dots')
+    tenant = os.environ.get("DE_TENANT") or None
+    if tenant is not None:
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", tenant):
+            raise ValueError(f'DE_TENANT="{tenant}": one subject token, no dots')
+        # The tenant's import names the prefix and the engine in the other account serves it: the
+        # run cannot make it up, and the seven are every tenant's, never the run's to delete.
+        if not given:
+            raise ValueError("DE_TENANT needs DE_PREFIX: the prefix the tenant's import uses")
+        if not os.environ.get("DE_ENGINE_URL"):
+            raise ValueError("DE_TENANT needs DE_ENGINE_URL: the engine runs in its own account")
+        if cleanup == "delete":
+            raise ValueError("DE_CLEANUP=delete with DE_TENANT: the seven are every tenant's")
+    admin_url = os.environ.get("DE_ADMIN_URL") or url
+    admin_creds = os.environ.get("DE_ADMIN_CREDS") or (
+        None if os.environ.get("DE_ADMIN_URL") else os.environ.get("DE_NATS_CREDS") or None
+    )
     return ExistingServer(
         url=url,
         creds=os.environ.get("DE_NATS_CREDS") or None,
@@ -62,6 +93,9 @@ def _from_env() -> ExistingServer | None:
         generated=not given,
         # A generated prefix is deleted unless DE_CLEANUP=keep; a given one kept unless =delete.
         delete_at_end=cleanup == "delete" or (cleanup == "" and not given),
+        tenant=tenant,
+        admin_url=admin_url,
+        admin_creds=admin_creds,
     )
 
 
@@ -75,6 +109,12 @@ if EXISTING is not None and EXISTING.creds is not None:
 FACTOR = 1.0
 #: The consumers on the prefix's streams when the run began (integration/conftest.py).
 AT_START: frozenset[str] = frozenset()
+#: The throughput the probe measured at the start, bytes per second up and down together (0: not
+#: measured, the spawned server), and the tests' max_payload (integration/conftest.py).
+THROUGHPUT = 0.0
+MAX_PAYLOAD = 0
+#: How many times the probe's time a large value's bytes are given (test/harness/budget.ts).
+HEADROOM = 2
 #: Every run id the run's tests touched: each test's cleanup deletes all their blobs by name, and
 #: so does the run's end (``sweep_run``), so a blob a timed-out test's run wrote late goes too.
 RUN_IDS: set[str] = set()
@@ -106,6 +146,89 @@ async def connect(url: str, **kwargs: Any) -> Any:
     import nats
 
     return await nats.connect(url, **connect_kwargs(), **kwargs)
+
+
+AS_TENANT = (
+    "as a tenant (DE_TENANT): reads the engine's streams, buckets or objects itself, and the "
+    "tests' connection has none, the engine's account holds them"
+)
+
+
+def tenant() -> str | None:
+    """DE_TENANT in the mode, else None."""
+    return EXISTING.tenant if EXISTING is not None else None
+
+
+async def connect_admin(**kwargs: Any) -> Any:
+    """The harness's connection for the engine's streams (DE_ADMIN_URL, DE_ADMIN_CREDS; the
+    tests' own by default)."""
+    import nats
+
+    assert EXISTING is not None
+    creds = {"user_credentials": EXISTING.admin_creds} if EXISTING.admin_creds else {}
+    return await nats.connect(EXISTING.admin_url, **creds, **kwargs)
+
+
+def moving(payloads: float) -> int:
+    """The bandwidth term, in ms, for a test whose large values move ``payloads`` x max_payload
+    through ``put`` and ``get`` in all: those bytes over the throughput measured at the start, x
+    HEADROOM (0 where none was measured). For a ``result()`` wait, which the harness scales by the
+    round-trip factor itself: ``handle.result(30_000 + existing.moving(6))``."""
+    if THROUGHPUT <= 0 or payloads <= 0:
+        return 0
+    return int(payloads * MAX_PAYLOAD * 1000 / THROUGHPUT * HEADROOM) + 1
+
+
+async def measure_throughput(
+    nc: Any, prefix: str, run_id: str, size: int = 4 << 20
+) -> tuple[float, float, float]:
+    """The probe: ``size`` random bytes up through the engine's ``put`` and back through its
+    ``get`` on the tests' link. Returns (bytes per second up and down together, put s, get s)."""
+    import time
+
+    from synadia_durable._engine.blobs import EngineBlobs, Sizes
+    from synadia_durable._engine.transport import Transport
+
+    t = Transport(nc, prefix)
+    blobs = EngineBlobs(t.request, Sizes(t, lambda: int(nc.max_payload)), rtt=nc.rtt)
+    data = os.urandom(size)
+    t0 = time.perf_counter()
+    ref = await blobs.upload(run_id, data)
+    t1 = time.perf_counter()
+    back = await blobs.get(ref["name"])
+    t2 = time.perf_counter()
+    if len(back) != size:
+        raise RuntimeError(f"the throughput probe: {ref['name']} came back {len(back)} bytes")
+    return 2 * size / (t2 - t0), t1 - t0, t2 - t1
+
+
+def _filter_of(prefix: str, stream: str) -> str:
+    """The scope's subjects of ``stream``: all standalone; as a tenant its token (the three
+    streams), its keys (the buckets), or all of the object store's (``_tenant_objects`` sorts them)."""
+    t = tenant()
+    if t is None or stream.startswith("OBJ_"):
+        return ">"
+    if stream.startswith("KV_"):
+        return f"$KV.{stream[3:]}.{t}.>"
+    return f"{prefix}.{t}.>"
+
+
+def durable_of(prefix: str, name: str) -> bool:
+    """A durable is the scope's: any standalone; as a tenant one named ``{prefix}~{tenant}~…``."""
+    t = tenant()
+    return t is None or name.startswith(f"{prefix}~{t}~")
+
+
+def _ephemeral_of(prefix: str, config: Any) -> bool:
+    t = tenant()
+    if t is None:
+        return True
+    filters = [config.filter_subject or "", *(getattr(config, "filter_subjects", None) or [])]
+    return any(
+        f.startswith(f"{prefix}.{t}.") or re.match(rf"^\$KV\.[^.]+\.{re.escape(t)}\.", f)
+        for f in filters
+        if f
+    )
 
 
 def rtt_factor(rtt_ms: float) -> float:
@@ -179,7 +302,11 @@ async def prefix_ephemeral_consumers(
     left: list[str] = []
     for stream in prefix_streams(prefix):
         for c in await _consumers(jsm, stream):
-            if not c.config.durable_name and f"{stream}/{c.name}" not in known:
+            if (
+                not c.config.durable_name
+                and f"{stream}/{c.name}" not in known
+                and _ephemeral_of(prefix, c.config)
+            ):
                 left.append(f"{stream}/{c.name}")
     return left
 
@@ -192,11 +319,11 @@ class Snapshot:
     consumers: set[str]
 
 
-async def _subjects(jsm: Any, stream: str) -> dict[str, int]:
+async def _subjects(jsm: Any, stream: str, subjects_filter: str = ">") -> dict[str, int]:
     from nats.js.errors import NotFoundError
 
     try:
-        si = await jsm.stream_info(stream, subjects_filter=">")
+        si = await jsm.stream_info(stream, subjects_filter=subjects_filter)
     except NotFoundError:
         return {}
     return dict(si.state.subjects or {})
@@ -208,7 +335,7 @@ async def snapshot(nc: Any, prefix: str) -> Snapshot:
 
     jsm = nc.jsm()
     streams = prefix_streams(prefix)
-    subjects = await asyncio.gather(*(_subjects(jsm, s) for s in streams))
+    subjects = await asyncio.gather(*(_subjects(jsm, s, _filter_of(prefix, s)) for s in streams))
     consumers = await asyncio.gather(*(_consumers(jsm, s) for s in streams[:3]))
     return Snapshot(
         subjects=dict(zip(streams, subjects, strict=True)),
@@ -232,15 +359,22 @@ async def purge_since(nc: Any, prefix: str, before: Snapshot) -> int:
     purged = 0
     for stream in prefix_streams(prefix):
         was = before.subjects.get(stream, {})
-        now = await _subjects(jsm, stream)
+        now = await _subjects(jsm, stream, _filter_of(prefix, stream))
         touched = [s for s, n in now.items() if was.get(s) != n]
+        if tenant() is not None and stream.startswith("OBJ_"):
+            # The object store's subjects carry no tenant: only the tenant's objects' metas and
+            # chunks. A staged upload left half-way is the engine's to drop (--upload-ttl).
+            mine = {
+                x for _, meta, chunks in await _scope_objects(nc, prefix) for x in (meta, chunks)
+            }
+            touched = [s for s in touched if s in mine]
         await asyncio.gather(*(jsm.purge_stream(stream, subject=s) for s in touched))
         purged += len(touched)
     for stream in prefix_streams(prefix)[:3]:
         fresh = [
             c.name
             for c in await _consumers(jsm, stream)
-            if f"{stream}/{c.name}" not in before.consumers
+            if f"{stream}/{c.name}" not in before.consumers and durable_of(prefix, c.name)
         ]
 
         async def drop(stream: str, name: str) -> None:
@@ -255,8 +389,9 @@ async def run_ids_since(nc: Any, prefix: str, before: Snapshot) -> list[str]:
     """The run ids whose journals a test touched: ``{prefix}.journal.<runId>`` new or grown."""
     stream = prefix_streams(prefix)[0]
     was = before.subjects.get(stream, {})
-    head = f"{prefix}.journal."
-    now = await _subjects(nc.jsm(), stream)
+    t = tenant()
+    head = f"{prefix}.journal." if t is None else f"{prefix}.{t}.journal."
+    now = await _subjects(nc.jsm(), stream, _filter_of(prefix, stream))
     return [s[len(head) :] for s, n in now.items() if was.get(s) != n and s.startswith(head)]
 
 
@@ -271,21 +406,16 @@ def _of_runs(name: str, run_ids: set[str]) -> bool:
     return any(run[:i] in run_ids for i, ch in enumerate(run) if ch == "_" and i > 0)
 
 
-async def delete_run_blobs(nc: Any, prefix: str, run_ids: set[str] | frozenset[str]) -> int:
-    """Delete the blobs of ``run_ids`` from the prefix's blob store by name: each object's meta
-    record and its chunks, purged. By name, not by the snapshot's diff: a test that timed out
-    leaves its worker and the engine writing after its cleanup (the dev NGS run left 17 blobs so),
-    and those land in the next test's snapshot, out of every diff's reach (docs/findings.md F33).
-    Returns how many objects were deleted."""
-    import asyncio
-
-    if not run_ids:
-        return 0
+async def _scope_objects(nc: Any, prefix: str) -> list[tuple[str, str, str]]:
+    """The scope's objects in the prefix's blob store, from their meta records' last messages:
+    (the name as the ref says it, the meta subject, the chunks' subject); every one standalone, as
+    a tenant those named ``{tenant}/…`` (the tenant's token taken off the name)."""
     stream = prefix_streams(prefix)[6]
     bucket = stream[len("OBJ_") :]
+    head = f"{tenant()}/" if tenant() is not None else ""
     inbox = nc.new_inbox()
     sub = await nc.subscribe(inbox)
-    doomed: list[tuple[str, str]] = []
+    out: list[tuple[str, str, str]] = []
     try:
         await nc.publish(
             f"$JS.API.DIRECT.GET.{stream}",
@@ -299,19 +429,35 @@ async def delete_run_blobs(nc: Any, prefix: str, run_ids: set[str] | frozenset[s
                 break  # 204 end of batch, 404 no objects or no stream
             info = json.loads(msg.data)
             name = info.get("name")
-            if isinstance(name, str) and _of_runs(name, set(run_ids)):
-                subject = headers.get("Nats-Subject") or ""
-                doomed.append((subject, f"$O.{bucket}.C.{info.get('nuid') or ''}"))
+            if isinstance(name, str) and name.startswith(head):
+                nuid = info.get("nuid") or ""
+                chunks = f"$O.{bucket}.C.{nuid}" if nuid else ""
+                out.append((name[len(head) :], headers.get("Nats-Subject") or "", chunks))
     finally:
         with contextlib.suppress(Exception):
             await sub.unsubscribe()
+    return out
+
+
+async def delete_run_blobs(nc: Any, prefix: str, run_ids: set[str] | frozenset[str]) -> int:
+    """Delete the blobs of ``run_ids`` from the prefix's blob store by name: each object's meta
+    record and its chunks, purged. By name, not by the snapshot's diff: a test that timed out
+    leaves its worker and the engine writing after its cleanup (the dev NGS run left 17 blobs so),
+    and those land in the next test's snapshot, out of every diff's reach (docs/findings.md F33).
+    Returns how many objects were deleted."""
+    import asyncio
+
+    if not run_ids:
+        return 0
+    stream = prefix_streams(prefix)[6]
+    doomed = [o for o in await _scope_objects(nc, prefix) if _of_runs(o[0], set(run_ids))]
     jsm = nc.jsm()
     await asyncio.gather(
         *(
             jsm.purge_stream(stream, subject=subject)
-            for meta, chunks in doomed
+            for _, meta, chunks in doomed
             for subject in (meta, chunks)
-            if subject and not subject.endswith(".")
+            if subject
         )
     )
     return len(doomed)
@@ -329,7 +475,7 @@ async def sweep_run(nc: Any, prefix: str, at_start: frozenset[str]) -> tuple[int
     durables = 0
     for stream in prefix_streams(prefix)[1:3]:
         for c in await _consumers(jsm, stream):
-            if f"{stream}/{c.name}" in at_start:
+            if f"{stream}/{c.name}" in at_start or not durable_of(prefix, c.name):
                 continue
             with contextlib.suppress(NotFoundError):
                 await jsm.delete_consumer(stream, c.name)

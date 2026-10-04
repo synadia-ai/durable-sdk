@@ -35,6 +35,15 @@ class Names:
         # durable-sdk: against an existing server every prefix is the run's one (tests/existing.py).
         import existing
 
+        if existing.tenant() is not None:
+            # As a tenant (DE_TENANT) the tests' connection has no stream: a test that names the
+            # engine's resources to read them is skipped, saying so (tests/existing.py).
+            import pytest
+
+            import os
+
+            test = os.environ.get("PYTEST_CURRENT_TEST", "?").rsplit(" ", 1)[0]
+            pytest.skip(f"{test} {existing.AS_TENANT}")
         prefix = existing.map_prefix(prefix)
         assert_token("prefix", prefix)
         up = prefix.upper()

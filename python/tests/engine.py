@@ -363,6 +363,12 @@ async def restart_engine(prefix: str, *, kill: bool = False) -> None:
 
 async def engine_log(prefix: str) -> list[str]:
     """The log lines of the engine serving ``prefix`` (its stderr, as ``serve`` writes it)."""
+    if existing.in_mode() and _run is not None and _run.external:
+        # Under DE_ENGINE_URL the engine's log is its operator's, not the harness's (it was an empty
+        # log, and the assertion's failure, before).
+        pytest.skip(
+            "existing-server mode: the engine is DE_ENGINE_URL's, its log not the harness's"
+        )
     if existing.in_mode():
         # The run's one engine: the lines since the test began, as a test's own engine gave them.
         return _run.log_since(_test_log_from) if _run is not None else []

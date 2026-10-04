@@ -31,6 +31,7 @@ import {
   type WorkerOptions,
 } from "../../src/engine/worker.js";
 import { type Handle } from "../../src/types.js";
+import { type DurableEventFields, type DurableEventName, type Metrics } from "../../src/internal/metrics.js"; // prettier-ignore
 
 import { EngineNotAvailableError } from "./engine-bin.js";
 import { EngineProcess, type EngineFlags } from "./engine-process.js";
@@ -83,6 +84,7 @@ export async function beginTest(nc: {
   // prettier-ignore
   testFlagsFixed = false;
   testCounts = undefined;
+  blobBytes = { put: 0, get: 0 };
   testLogFrom = (await control<{ next: number }>(`/log?since=${String(Number.MAX_SAFE_INTEGER)}`)).next; // prettier-ignore
   try {
     const r = await nc.request(`${inject("runPrefix")!}.api.v1.info`, new TextEncoder().encode("{}"), { timeout: 5_000 * inject("rttFactor") }); // prettier-ignore
@@ -166,6 +168,33 @@ function flagsOf(o: EngineFlags): EngineFlags {
   return f;
 }
 
+/** The bytes the current test's clients and workers moved through `put` and `get` (setup-each.ts
+ * writes them down after each test in the mode: what a large-value budget counts). */
+let blobBytes = { put: 0, get: 0 };
+
+export function testBlobBytes(): { put: number; get: number } {
+  const b = blobBytes;
+  blobBytes = { put: 0, get: 0 };
+  return b;
+}
+
+/** The test's metrics sink, if any, with the blob tally in front of it. */
+function tallied<O extends { metrics?: Metrics }>(opts: O): O {
+  const inner = opts.metrics;
+  return {
+    ...opts,
+    metrics: {
+      onEvent(name: DurableEventName, fields: DurableEventFields): void {
+        if ((name === "blob.put" || name === "blob.get") && typeof fields.bytes === "number") {
+          if (name === "blob.put") blobBytes.put += fields.bytes;
+          else blobBytes.get += fields.bytes;
+        }
+        inner?.onEvent(name, fields);
+      },
+    },
+  };
+}
+
 /** The workers the current test started and did not stop, with their workflows' names. */
 const testWorkers = new Set<{ stop(): Promise<void>; names: string[] }>();
 /** The workflow-name sets of every worker the current test started, stopped or not. */
@@ -174,7 +203,7 @@ let testWorkflowSets: string[][] = [];
 /** The SDK's createWorker, with the prefix's engine started before the worker's first poll. */
 export function createWorker(opts: WorkerOptions & EngineFlags): Worker {
   if (opts.prefix !== undefined || existingMode()) opts = { ...opts, prefix: mapPrefix(opts.prefix ?? "de") }; // prettier-ignore
-  const w = sdkCreateWorker(process.env.DE_SDK_LOG === "1" && opts.logger === undefined ? { ...opts, logger: consoleLogger } : opts); // prettier-ignore
+  const w = sdkCreateWorker(tallied(process.env.DE_SDK_LOG === "1" && opts.logger === undefined ? { ...opts, logger: consoleLogger } : opts)); // prettier-ignore
   const live = { stop: () => w.stop(), names: [...new Set(opts.workflows.map((wf) => wf.name))].sort() }; // prettier-ignore
   return {
     async start(): Promise<void> {
@@ -220,7 +249,7 @@ export async function endTestWorkers(nc: {
 /** The SDK's createClient, with the prefix's engine started before the client's first request. */
 export function createClient(opts: ClientOptions & EngineFlags): Client {
   if (opts.prefix !== undefined || existingMode()) opts = { ...opts, prefix: mapPrefix(opts.prefix ?? "de") }; // prettier-ignore
-  const c = sdkCreateClient(opts);
+  const c = sdkCreateClient(tallied(opts));
   // Against an existing server every wait is scaled by the measured round trip (existing.ts).
   const scale = (ms: number | undefined): number | undefined => (ms === undefined ? ms : ms * inject("rttFactor")); // prettier-ignore
   const ready = (): Promise<unknown> => ensureEngine(opts.prefix ?? "de", flagsOf(opts));
@@ -307,6 +336,9 @@ export function countOf(
 
 /** The log lines of the engine serving `prefix` (its stderr, as `durable-engine serve` writes it). */
 export async function engineLog(prefix: string): Promise<string[]> {
+  // Under DE_ENGINE_URL the engine's log is its operator's, not the harness's: a test that reads
+  // it is skipped, saying so (it was an empty log, and the assertion's failure, before).
+  if (existingMode() && inject("engineBin") === "external") skipInMode("the engine is DE_ENGINE_URL's: its log is not the harness's to read"); // prettier-ignore
   // The run's one engine: the lines since the test began, as a test's own engine gave them.
   if (existingMode()) return (await control<{ lines: string[] }>(`/log?since=${String(testLogFrom)}`)).lines; // prettier-ignore
   const e = await engineFor(prefix);

@@ -15,13 +15,19 @@
 
 import { type NatsConnection } from "@nats-io/transport-node";
 import { afterAll, afterEach, beforeEach, expect, inject, vi } from "vitest";
-import { beginTest, endTestWorkers, reportRunIds, setEngineServer, stopEngines } from "./engine.js"; // prettier-ignore
+import { appendFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { beginTest, endTestWorkers, reportRunIds, setEngineServer, stopEngines, testBlobBytes } from "./engine.js"; // prettier-ignore
 import {
+  adminFromEnv,
   connect,
+  connectAdmin,
   deleteRunBlobs,
   prefixEphemeralConsumers,
   purgeSince,
   runIdsSince,
+  scopeOf,
   snapshot,
   type Snapshot,
 } from "./existing.js";
@@ -46,17 +52,33 @@ if (runPrefix != null && process.env.DE_NATS_CREDS) process.env.NATS_CREDS = pro
 // traffic, and listing every consumer of every stream at WAN latency would dominate the run.
 const url = inject("natsDirectUrl");
 let nc: NatsConnection | undefined;
+let anc: NatsConnection | undefined;
 
+/** The tests' identity on the server: the engine's API (`info`, a `cancelPoll`). */
 async function conn(): Promise<NatsConnection> {
   nc ??= await connect({ servers: url!, name: "test-harness-hygiene" });
   return nc;
 }
 
+/** The streams: in the mode the admin connection (DE_ADMIN_URL, the tests' own by default; as a
+ * tenant the engine's account), elsewhere the spawned server. */
+async function admin(): Promise<NatsConnection> {
+  if (runPrefix == null) return conn();
+  const a = adminFromEnv();
+  if (a.adminUrl === url && a.adminCreds === (process.env.DE_NATS_CREDS || undefined))
+    return conn();
+  anc ??= await connectAdmin({ name: "test-harness-admin" });
+  return anc;
+}
+
 beforeEach(async () => {
   if (runPrefix == null || !url) return;
-  const c = await conn();
-  before = await snapshot(c, runPrefix);
-  await beginTest(c);
+  // A test skipped part-way (`context.skip()`: as a tenant, a test that reads the engine's streams;
+  // under DE_ENGINE_URL, one that needs other flags or a restart) never reaches afterEach, so what
+  // it wrote before the skip is cleaned here, before the next snapshot would take it as given.
+  if (before !== undefined) await afterEachExisting(runPrefix, { skipped: true });
+  before = await snapshot(await admin(), scopeOf(runPrefix));
+  await beginTest(await conn());
 });
 
 afterEach(async () => {
@@ -87,16 +109,21 @@ afterEach(async () => {
 // this hook after both, and everything below the leftover check is in its `finally`. Its workers
 // are stopped (bounded) and its polls withdrawn first, so neither a worker it left running nor a
 // fetch the engine still holds re-creates what the cleanup deletes.
-async function afterEachExisting(prefix: string): Promise<void> {
+async function afterEachExisting(prefix: string, o: { skipped?: boolean } = {}): Promise<void> {
   setEngineServer(undefined);
   if (!url) return;
   const c = await conn();
+  const a = await admin();
+  const scope = scopeOf(prefix);
+  if (o.skipped !== true) tallyBlobBytes(prefix);
   try {
     await endTestWorkers(c);
-    let left = await prefixEphemeralConsumers(c, prefix, before?.consumers);
+    // A skipped test's leftovers are not checked: the next test's name would be on them.
+    if (o.skipped === true) return;
+    let left = await prefixEphemeralConsumers(a, scope, before?.consumers);
     if (left.length > 0) {
       await new Promise((r) => setTimeout(r, 500 * factor));
-      left = await prefixEphemeralConsumers(c, prefix, before?.consumers);
+      left = await prefixEphemeralConsumers(a, scope, before?.consumers);
     }
     if (left.length > 0) {
       const who = expect.getState().currentTestName ?? "(unknown test)";
@@ -104,17 +131,32 @@ async function afterEachExisting(prefix: string): Promise<void> {
     }
   } finally {
     if (before !== undefined) {
-      const runIds = await runIdsSince(c, prefix, before);
+      const runIds = await runIdsSince(a, scope, before);
       runIds.forEach((r) => fileRunIds.add(r));
-      await purgeSince(c, prefix, before);
-      await deleteRunBlobs(c, prefix, fileRunIds);
+      await purgeSince(a, scope, before);
+      await deleteRunBlobs(a, scope, fileRunIds);
       await reportRunIds(runIds);
     }
     before = undefined;
   }
 }
 
+/** The bytes the test's clients and workers moved through `put` and `get`, a line of
+ * `.de-run/<prefix>/blob-bytes.tsv` (test, bytes up, bytes down, max_payload): what a large-value
+ * test's bandwidth term counts (mode.ts `moving`). */
+function tallyBlobBytes(prefix: string): void {
+  const { put, get } = testBlobBytes();
+  if (put + get === 0) return;
+  const dir = join(fileURLToPath(new URL("../..", import.meta.url)), ".de-run", prefix);
+  mkdirSync(dir, { recursive: true });
+  const who = expect.getState().currentTestName ?? "(unknown test)";
+  appendFileSync(join(dir, "blob-bytes.tsv"), `${who}\t${String(put)}\t${String(get)}\t${String(inject("natsMaxPayload"))}\n`); // prettier-ignore
+}
+
 afterAll(async () => {
+  if (runPrefix != null && before !== undefined) await afterEachExisting(runPrefix, { skipped: true }); // prettier-ignore
+  if (anc) await anc.drain();
+  anc = undefined;
   if (nc) await nc.drain();
   nc = undefined;
 });

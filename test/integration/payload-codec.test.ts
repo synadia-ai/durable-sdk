@@ -18,10 +18,10 @@ import { jsonCodec } from "../../src/journal/codec.js";
 import { aesGcmPayloadCodec } from "../../src/journal/payload-codec.js";
 import { createClient } from "../harness/engine.js";
 import { NatsJournal } from "../harness/shell/journal-store.js";
-import { names } from "../harness/shell/names.js";
+import { names, skipAsTenant } from "../harness/shell/names.js";
 import { createWorker } from "../harness/engine.js";
 import { WIRE_VERSION_BLOBS, WIRE_VERSION_ENCODED } from "../../src/version.js";
-import { EXISTING, WAN } from "../harness/mode.js";
+import { budget, EXISTING, moving, WAN } from "../harness/mode.js";
 
 const natsUrl = inject("natsUrl");
 const KEY = new Uint8Array(32).fill(42);
@@ -61,6 +61,7 @@ async function rawEntry(
   runId: string,
   kind: string,
 ): Promise<Record<string, unknown>> {
+  skipAsTenant(); // the test reads the journal itself (shell/names.ts)
   const jsm = await jetstreamManager(nc);
   const journal = new NatsJournal(jetstream(nc), jsm, names(prefix), jsonCodec);
   const found = (await journal.loadRaw(runId)).find((l) => l.entry.kind === kind);
@@ -349,7 +350,7 @@ describe.skipIf(!natsUrl)("payload encryption — the work-item boundary", () =>
       await waitUntil(async () => (await h.status()).state === "suspended", 15_000);
       await client.signal(h.runId, "card", bigSecret);
       // The workflow still sees plaintext: this is encryption at rest, not in the model.
-      expect(await h.result(20_000)).toBe(bigSecret.length);
+      expect(await h.result(20_000 + moving(6))).toBe(bigSecret.length);
 
       const blobs = await rawBlobs(nc, ENC, h.runId);
       expect(blobs).toHaveLength(1);
@@ -366,7 +367,7 @@ describe.skipIf(!natsUrl)("payload encryption — the work-item boundary", () =>
     } finally {
       await worker.stop();
     }
-  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
+  }, budget(60_000, 6)); // durable-sdk: × the round-trip factor and the bytes over the throughput (harness/mode.ts)
 
   // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
@@ -384,7 +385,7 @@ describe.skipIf(!natsUrl)("payload encryption — the work-item boundary", () =>
       const h = await client.start(wf, {});
       await waitUntil(async () => (await h.status()).state === "suspended", 15_000);
       await client.signal(h.runId, "card", bigSecret);
-      expect(await h.result(20_000)).toBe(bigSecret.length);
+      expect(await h.result(20_000 + moving(6))).toBe(bigSecret.length);
 
       const blobs = await rawBlobs(nc, PLAIN, h.runId);
       expect(blobs).toHaveLength(1);
@@ -393,7 +394,7 @@ describe.skipIf(!natsUrl)("payload encryption — the work-item boundary", () =>
     } finally {
       await worker.stop();
     }
-  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
+  }, budget(60_000, 6)); // durable-sdk: × the round-trip factor and the bytes over the throughput (harness/mode.ts)
 
   // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
@@ -413,7 +414,7 @@ describe.skipIf(!natsUrl)("payload encryption — the work-item boundary", () =>
     try {
       const client = createClient({ nc, prefix: ENC, payloadCodec });
       const h = await client.start(parent, {});
-      expect(await h.result(30_000)).toBe(SECRET.length + 1 + 2 * maxPayload(nc));
+      expect(await h.result(30_000 + moving(8))).toBe(SECRET.length + 1 + 2 * maxPayload(nc));
 
       // Both copies — the child's own, and the one the parent's journal references.
       for (const runId of [h.runId, `${h.runId}_0`]) {
@@ -427,7 +428,7 @@ describe.skipIf(!natsUrl)("payload encryption — the work-item boundary", () =>
     } finally {
       await worker.stop();
     }
-  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
+  }, budget(60_000, 8)); // durable-sdk: × the round-trip factor and the bytes over the throughput (harness/mode.ts)
 
   // prettier-ignore
   it("work items on de.work.* stay PLAINTEXT — the documented boundary, asserted so it cannot drift", async () => {
@@ -912,7 +913,7 @@ describe.skipIf(!natsUrl)("payload encryption — the completeness sweep", () =>
       await client.signal(h.runId, "small-sig", SECRET);
       await client.signal(h.runId, "big-sig", BIG);
 
-      expect(await client.get(`${h.runId}_g1`).result(60_000)).toBe(`done:2222`);
+      expect(await client.get(`${h.runId}_g1`).result(60_000 + moving(24))).toBe(`done:2222`);
 
       const n = names(SWEEP);
       const places: Array<[string, string]> = [
@@ -940,7 +941,7 @@ describe.skipIf(!natsUrl)("payload encryption — the completeness sweep", () =>
     } finally {
       await worker.stop();
     }
-  }, 180_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
+  }, budget(180_000, 24)); // durable-sdk: × the round-trip factor and the bytes over the throughput (harness/mode.ts)
 
   // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
@@ -959,7 +960,7 @@ describe.skipIf(!natsUrl)("payload encryption — the completeness sweep", () =>
     try {
       const client = createClient({ nc, prefix: PLAINSWEEP, ...SIZED });
       const h = await client.start(wf, { card: SECRET, big: BIG });
-      expect(await h.result(60_000)).toBe(SECRET);
+      expect(await h.result(60_000 + moving(8))).toBe(SECRET);
 
       const n = names(PLAINSWEEP);
       expect(await allMessages(n.journalStream, n.journalSubjectAll, h.runId)).toContain(SECRET);
@@ -973,5 +974,5 @@ describe.skipIf(!natsUrl)("payload encryption — the completeness sweep", () =>
     } finally {
       await worker.stop();
     }
-  }, 180_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
+  }, budget(180_000, 8)); // durable-sdk: × the round-trip factor and the bytes over the throughput (harness/mode.ts)
 });

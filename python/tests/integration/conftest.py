@@ -89,6 +89,7 @@ def run_engine(
             f"http://{run.metrics_addr}"
         )
     engine.configure_run(run)
+    asyncio.run(_probe(ex, nats_url))
     existing.AT_START = frozenset(asyncio.run(_snapshot(ex)).consumers)
     try:
         yield
@@ -100,6 +101,17 @@ def run_engine(
             # The engine stopped, nothing re-creates a durable or writes a blob: what a test that
             # failed or timed out left after its own cleanup goes now (docs/findings.md F33).
             blobs, durables = asyncio.run(_sweep(ex))
+            # Under DE_ENGINE_URL the engine still runs: a poll a late-stopped worker had in
+            # flight can bind a durable after the sweep. Again after a pause, until a round finds
+            # nothing (docs/findings.md F38).
+            for _ in range(3 if run.external else 0):
+                import time
+
+                time.sleep(existing.scaled(2.0))
+                more_blobs, more_durables = asyncio.run(_sweep(ex))
+                blobs, durables = blobs + more_blobs, durables + more_durables
+                if more_blobs + more_durables == 0:
+                    break
             existing.say(
                 f"the run's end: {blobs} blobs of its {len(existing.RUN_IDS)} runs and "
                 f"{durables} durables deleted"
@@ -112,6 +124,33 @@ def run_engine(
                 existing.say(f"DE_CLEANUP={how}: deleted {', '.join(gone) or 'nothing'}")
 
 
+async def _probe(ex: existing.ExistingServer, url: str) -> None:
+    """The throughput the large values meet, through the engine on the tests' link (the proxy's
+    under DE_TEST_RTT_MS), once: the large-value tests' waits carry its term (existing.moving)."""
+    import secrets
+
+    run_id = f"probe-{secrets.token_hex(4)}"
+    existing.RUN_IDS.add(run_id)
+    nc = await existing.connect(url, name="test-harness-probe")
+    try:
+        bps, put_s, get_s = await existing.measure_throughput(nc, ex.prefix, run_id)
+        existing.MAX_PAYLOAD = int(nc.max_payload)
+    finally:
+        await nc.close()
+    existing.THROUGHPUT = bps
+    admin = await existing.connect_admin()
+    try:
+        await existing.delete_run_blobs(admin, ex.prefix, {run_id})
+    finally:
+        await admin.close()
+    mib = 1 << 20
+    existing.say(
+        f"throughput {bps / mib:.2f} MiB/s (a 4.00 MiB put {put_s * 1000:.0f} ms and get "
+        f"{get_s * 1000:.0f} ms through the engine), max_payload {existing.MAX_PAYLOAD / mib:.2f} "
+        f"MiB -> a large value's wait adds its bytes over the throughput x {existing.HEADROOM}"
+    )
+
+
 def _free_port() -> int:
     import socket
 
@@ -121,7 +160,7 @@ def _free_port() -> int:
 
 
 async def _snapshot(ex: existing.ExistingServer) -> existing.Snapshot:
-    nc = await existing.connect(ex.url)
+    nc = await existing.connect_admin()
     try:
         return await existing.snapshot(nc, ex.prefix)
     finally:
@@ -129,7 +168,7 @@ async def _snapshot(ex: existing.ExistingServer) -> existing.Snapshot:
 
 
 async def _sweep(ex: existing.ExistingServer) -> tuple[int, int]:
-    nc = await existing.connect(ex.url)
+    nc = await existing.connect_admin()
     try:
         return await existing.sweep_run(nc, ex.prefix, existing.AT_START)
     finally:
@@ -151,7 +190,7 @@ def _engine_metrics(ex: existing.ExistingServer, run: engine.RunEngine) -> bytes
 
 
 async def _delete(ex: existing.ExistingServer) -> list[str]:
-    nc = await existing.connect(ex.url)
+    nc = await existing.connect_admin()
     try:
         return await existing.delete_prefix_streams(nc, ex.prefix)
     finally:
@@ -164,14 +203,18 @@ async def _report(
     """What the run leaves for the reader: the prefix's leftovers and the engine's /metrics."""
     from pathlib import Path
 
-    nc = await existing.connect(ex.url)
+    nc = await existing.connect_admin()
     lines: list[str] = []
     try:
         jsm = nc.jsm()
         for s in existing.prefix_streams(ex.prefix):
             try:
                 si = await jsm.stream_info(s)
-                cs = [c.name for c in await jsm.consumers_info(s)]
+                cs = [
+                    c.name
+                    for c in await jsm.consumers_info(s)
+                    if existing.durable_of(ex.prefix, c.name)
+                ]
                 lines.append(
                     f"{s}: {si.state.messages} messages, {si.state.bytes} bytes, "
                     f"consumers [{', '.join(cs)}]"
@@ -239,9 +282,12 @@ async def _existing_hygiene(
     """Against an existing server (existing.py): the run's one engine stays up, the leftovers check
     looks at the prefix's streams only, and in place of deleting every stream the test's writes
     under the prefix are purged (what changed since the snapshot taken before it)."""
+    # The tests' identity for the engine's API (info, a cancelPoll); the admin connection for the
+    # streams (DE_ADMIN_URL, the tests' own by default; as a tenant the engine's account).
     nc = await existing.connect(url, name="test-harness-hygiene")
+    adm = await existing.connect_admin(name="test-harness-admin")
     try:
-        before = await existing.snapshot(nc, prefix)
+        before = await existing.snapshot(adm, prefix)
         await engine.begin_test(nc)
         yield
         engine.set_engine_server(None)
@@ -250,16 +296,17 @@ async def _existing_hygiene(
         # running nor a fetch the engine still holds re-creates what the cleanup deletes.
         try:
             await engine.end_test_workers(nc)
-            left = await existing.prefix_ephemeral_consumers(nc, prefix, before.consumers)
+            left = await existing.prefix_ephemeral_consumers(adm, prefix, before.consumers)
             if left:
                 await asyncio.sleep(existing.scaled(0.5))
-                left = await existing.prefix_ephemeral_consumers(nc, prefix, before.consumers)
+                left = await existing.prefix_ephemeral_consumers(adm, prefix, before.consumers)
             if left:
                 raise AssertionError(leftover_message(left, f'after "{request.node.name}"'))
         finally:
-            run_ids = await existing.run_ids_since(nc, prefix, before)
+            run_ids = await existing.run_ids_since(adm, prefix, before)
             existing.RUN_IDS.update(run_ids)
-            await existing.purge_since(nc, prefix, before)
-            await existing.delete_run_blobs(nc, prefix, existing.RUN_IDS)
+            await existing.purge_since(adm, prefix, before)
+            await existing.delete_run_blobs(adm, prefix, existing.RUN_IDS)
     finally:
+        await adm.drain()
         await nc.drain()
