@@ -1,6 +1,6 @@
 # Origin
 
-Which file came from where. The library is `@synadia-ai/durable`, `../synadia-durable-execution` (GitHub `synadia-ai/durable-ts`), **frozen at `7456c75`**: copied from, never edited, never imported at run time. Its `docs/PROTOCOL.md` (normative), `docs/IMPLEMENTATION-GUIDE.md` and `docs/DESIGN.md` stay there and are cited by path. The engine is `../durable-engine` at the commit `engine.pin` names (`ee81460` since the third 2026-10-04 follow-up, `blob_gone`; `57ae3c9` after the second, the existing-server mode; `1efd2ec` after the first; `d8c0d73` before); its `docs/API.md` is the contract `src/engine/` is built from.
+Which file came from where. The library is `@synadia-ai/durable`, `../synadia-durable-execution` (GitHub `synadia-ai/durable-ts`), **frozen at `7456c75`**: copied from, never edited, never imported at run time. Its `docs/PROTOCOL.md` (normative), `docs/IMPLEMENTATION-GUIDE.md` and `docs/DESIGN.md` stay there and are cited by path. The engine is `../durable-engine` at the commit `engine.pin` names (`d3e741d` since the fourth 2026-10-04 follow-up, the engine's PR #7, tenancy; `ee81460` after the third, `blob_gone`; `57ae3c9` after the second, the existing-server mode; `1efd2ec` after the first; `d8c0d73` before); its `docs/API.md` is the contract `src/engine/` is built from.
 
 Every path below is the same in this repo and in the library unless a second path is given, so a diff against `7456c75` stays readable:
 

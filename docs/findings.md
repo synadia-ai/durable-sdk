@@ -380,6 +380,8 @@ The counts are the spawned ones less the 17 named skips in each language (each l
 
 **What.** nats-py marks a deleted object with a meta record whose `mtime` is `""`. nats.go cannot parse that as a time and answers `nats: object-store meta information invalid`, which the engine classes as transient: a blob deleted with nats-py is read as `unavailable`, retried, never `blob_gone`; the run is not parked, and its work item redelivers with the engine's backoff. Found writing F31's Python park test: the engine answered `result` with `unavailable: … meta information invalid` for a blob the test had deleted. A blob deleted with nats.js or the `nats` CLI is read as gone. The Python tests delete an object by purging its meta and chunk subjects (`_delete_object` in `test_offload.py`). The engine's to judge (an unreadable meta might be `blob_gone` too); nats-py's to fix (an empty `mtime`); neither is this repo's.
 
+**Handed on** (2026-10-04, F39): to the engine as an ask from here, for its next brief (the coordinator carries it): read a meta whose `mtime` is empty as a deleted object, so a blob nats-py deleted is `blob_gone`, not `unavailable`.
+
 ### F33 — The dev NGS run of 2026-10-04, and what the harness and the transport take from it
 
 The coordinator ran the existing-server mode (F29) against `tenant-a-dev` at 51 ms, the engine `57ae3c9` on the laptop: TypeScript 109 passed, 10 failed, 18 skipped in 28.4 min; Python 66 passed, 5 failed, 18 skipped in 15.6 min. Large values over the WAN were the engine's (its brief `2026-10-04-durable-engine-wan-findings.md`), as was Python `test_six_runs_of_a_slow_step_finish_in_parallel` (5.4 s for 3 s; its threshold stays). The rest:
@@ -417,3 +419,108 @@ The engine will stop re-creating a durable it is pulling when it is deleted (its
 
 - **`status` after `result`** (the engine's F29; this repo's F27). The five waits F28 and F29 added (TypeScript `e2e` 2, `interop-py` 2; Python `test_interop`, `test_worker`) stay, harmless; each now says the engine guarantees the state since `ee81460`, so a failure there is the engine's again.
 - **A refusal is an `error` member with a string `code`** (the engine's F31: a failed run's `result` and `status` carry its `{name, message}` in `error`). Both transports already checked for the string `code` (`isRefusal`; `isinstance(refusal.get("code"), str)`), as the Go client now does. A test each: a failed run's `result` and `status` replies are answered, not raised, and an `error` with a code is the refusal (`test/unit/engine-transport.test.ts`, `python/tests/test_engine_transport.py`).
+
+### F36 — `engine.pin` is the tenancy merge, `d3e741d`
+
+`engine.pin` moves from `ee81460` to `d3e741d`, the engine's PR #7 (tenancy, P2-20). Standalone is unchanged on the wire, and nothing in `src/` or `python/src/` changed. On it, at this branch's head, against a local `nats-server` 2.14.6: spawned, TypeScript **137 passed, 4 skipped** (288 s) and Python **484 passed, 3 skipped, 2 xfailed** (233 s); in the existing-server mode (a hand-started server, a generated prefix, the harness's engine), TypeScript **120 passed, 21 skipped** (70 s) and Python **73 passed, 20 skipped** (56 s). These are the coordinator's counts for `main` on the tenancy binary. The binary was `.engine-bin/durable-engine-d3e741d57c99` (`go version -m`: `vcs.revision=d3e741d…`, `vcs.modified=false`), passed as `DE_ENGINE`: midway through this session someone else's uncommitted changes appeared in `../durable-engine` (`api/api.go`, `go.mod`, `store/direct.go`, from 22:14; the binary is from 22:09, clean). The harness refused that checkout as it should (F22), and it was left as found.
+
+### F37 — The large-value budgets learn bandwidth
+
+**Where.** `test/harness/existing.ts` `measureThroughput`, `test/harness/budget.ts`, `test/harness/mode.ts` `moving` / `budget`, `global-setup.ts`; `python/tests/existing.py` `measure_throughput`, `moving`; the tally in `test/harness/engine.ts` and `setup-each.ts`; `offload.test.ts`, `payload-codec.test.ts`, Python `test_payload_codec_e2e.py`.
+
+**What the NGS rerun showed.** The coordinator ran `offload` alone against the dev NGS on 2026-10-04 at 51 ms, with the engine's blob path fixed: 10 of 11 passed in 7 minutes. "a big continue-as-new INPUT crosses generations as refs" hit its 44.7 s budget, while "a big child INPUT and big child RESULT flow as refs" moved its bytes in 80.9 s inside its own (that test alone had a per-ms-of-RTT term). The budgets scaled with the round trip only, and the large-value tests' time there is their bytes.
+
+**The probe.** In the existing-server mode, once at the start, 4 MiB of random bytes go up through the run's engine's `put` and back down through its `get`, on the tests' own link (the proxy's under `DE_TEST_RTT_MS`), as a run `probe-<hex>` whose blob is deleted at once and again at the end. Throughput = 8 MiB over the two. It is printed next to the round trip: `round trip 0.0 ms, throughput 60.55 MiB/s (a 4.00 MiB put 99 ms and get 33 ms through the engine), max_payload 1.00 MiB → …`. Locally it read 59–72 MiB/s in TypeScript and 115–142 MiB/s in Python (8 MiB `max_payload` on the tenancy server, 1 MiB on the plain one).
+
+**The budget.** A test that moves values over the inline limit declares n, the `max_payload`s it moves through `put` and `get` in all, and adds `moving(n)` = n × `max_payload` / throughput × 2 to its `result()` waits. Its own timeout is `budget(ms, n)` = (ms + `moving(n)`) × the round-trip factor (vitest fixes a test's timeout at collection, past the harness's reach). n comes from a tally, not from reading the code: the harness's `createClient` / `createWorker` count every `blob.put` / `blob.get` byte of a test and write `test, up, down, max_payload` to `.de-run/<prefix>/blob-bytes.tsv` in the mode. The test's own bucket reads and writes are added by hand, where it has any. Measured, in `max_payload`s:
+
+| Test                                               | Up + down (tally)                             | n      |
+| -------------------------------------------------- | --------------------------------------------- | ------ |
+| `offload` multi-MiB input and step values          | 3.5 + 1.5                                     | 5      |
+| `offload` crash mid-run                            | 2 + 2                                         | 4      |
+| `offload` a missing blob parks the run             | 2 + 2, and the test's own read and write of 2 | 8      |
+| `offload` a multi-MiB SIGNAL                       | 2 + 2                                         | 4      |
+| `offload` a big child INPUT and RESULT             | 7 + 5                                         | 12     |
+| `offload` a big continue-as-new INPUT              | 3 + 4.5                                       | 8      |
+| `offload` a multi-MiB failure MESSAGE              | 1.5 + 1.5                                     | 3      |
+| `offload` a multi-MiB RESULT                       | 4 + 2                                         | 6      |
+| `offload` cancelling a run with offloaded entries  | 1.5 + 1.5                                     | 3      |
+| `payload-codec` a LARGE signal's BLOB, its CONTROL | 2 + 2, and the test's read                    | 6 each |
+| `payload-codec` a LARGE child outcome              | 4 + 2, and the test's read                    | 8      |
+| `payload-codec` the completeness sweep             | 9 + 9, and the test's reads                   | 24     |
+| `payload-codec` the sweep's CONTROL                | 3 + 1.5, and the test's reads                 | 8      |
+
+Python's `test_offload` values are a few KiB under a 1 KiB `--offload-threshold`, none over the inline limit. Its two large-signal `test_payload_codec_e2e` cases (2 × `max_payload`) take `existing.moving(6)`. Spawned, the throughput is not measured and the term is 0, so those budgets are as before.
+
+**At the dev NGS's numbers** (from the rerun, not run from here: that run predates the probe). The big child test moved 12 × 8 MiB = 96 MiB in 80.9 s, so ≈ 1.19 MiB/s is what a probe would see at most. The whole suite moved 48.5 × 8 MiB = 388 MiB in 7 min, ≈ 0.92 MiB/s with everything else in it. The continue-as-new test's 60 MiB needed ≈ 51 s at the first rate and had 44.7 s, which is why it failed. With the factor 1.51 at 51 ms:
+
+| Throughput | `moving(8)` | its test's budget, (30 s + `moving(8)`) × 1.51 | its `result()` wait | the big child test's budget       |
+| ---------- | ----------- | ---------------------------------------------- | ------------------- | --------------------------------- |
+| 1.19 MiB/s | 108 s       | **208 s** (was 45 s)                           | 201 s (was 38 s)    | 367 s (was 81 s, by its RTT term) |
+| 0.92 MiB/s | 139 s       | 255 s                                          | 247 s               | 436 s                             |
+
+So about four times what it needed at the observed rate. The headroom 2 is because the probe and the tests take the same path through the engine, but a test's values also cross the engine's own hops to the store more than once (it inflates what fits a reply). A budget only matters when a test is slow: a passing test takes its own time.
+
+**The engine's position.** On the laptop the engine's own hop to the store is the WAN as well: every 128 KiB chunk it writes or reads crosses it, a dependent round trip each, so the bytes cross the uplink about twice per upload and the round trips add up per chunk. An engine next to the broker has a short hop, and the same suite's bytes cross the WAN once. The probe measures whichever it is, since it goes through the run's engine. The README's table now has the rerun's row.
+
+### F38 — The harness as a tenant: an admin connection, and what a tenant cannot see
+
+**Where.** `test/harness/existing.ts` (`Scope`, `scopeOf`, `connectAdmin`, `userInfo`, the scoped `snapshot` / `purgeSince` / `runIdsSince` / `deleteRunBlobs` / `sweepRun` / `prefixEphemeralConsumers`), `setup-each.ts`, `global-setup.ts`, `shell/names.ts` `skipAsTenant`; `python/tests/existing.py`, `integration/conftest.py`, `shell/names.py`; `conformance/interop/ts-worker.ts`, `ts-client.ts`.
+
+**What.** In the engine's tenancy mode (its PR #7, `docs/API.md` "Tenancy") the seven live in the engine's account, `DE`, shared by every tenant, and a tenant's SDK reaches the engine through a service import (`de.api.>` → `de.A.api.>`). As tenant A the tests' connection has no JetStream at all (`10039 JetStream not enabled for account`), so the leftovers check, the purge between tests and the end's sweep cannot run on it. `DE_TENANT=<token>` turns the scope on, and `DE_ADMIN_URL` / `DE_ADMIN_CREDS` (default: the tests' own) is the connection those run on. The tests' identity keeps the engine's API, because the engine refuses a caller from its own account (`invalid`, "no caller identity", its F39), so `info` and `cancelPoll` stay on the tests' connection. The scope:
+
+- **subjects:** the three streams under `{prefix}.{tenant}.>`, the buckets under `$KV.<bucket>.{tenant}.>`, the run ids from `{prefix}.{tenant}.journal.<runId>`;
+- **objects:** the metas whose name begins `{tenant}/` and the chunks they name. An object store's subjects carry no tenant, so a staged upload the tenant left half-way is the engine's to drop (`--upload-ttl`);
+- **durables:** `{prefix}~{tenant}~…` only. An ephemeral consumer counts only if it is filtered on the tenant's subjects;
+- **never:** another tenant's subject, object or durable, or a stream. `DE_TENANT` needs `DE_PREFIX` (the import's) and `DE_ENGINE_URL` (the engine runs in the other account), and refuses `DE_CLEANUP=delete`.
+
+**A test that reads the stores itself** (a raw journal entry, a blob's bytes, a KV record, a work-subject publish) cannot as a tenant. The shell's `names()` / `Names()` is how every such read names a resource, so as a tenant it skips the test, saying so, with an explicit `skipAsTenant()` where a test opens its JetStream manager first. TypeScript skips 46 (by suite: `e2e` 11, `payload-codec` 14, `worker-recovery` 8, `offload` 6, `interop-py` 4, `cancel-running` 2, `matrix` 1), Python 17 (`test_payload_codec_e2e` 5, `test_worker_recovery` 3, `test_cancel_running` 2, `test_interop` 2, `test_interop_reverse` 2, `test_concurrency` 1, `test_matrix` 1, `test_worker` 1).
+
+**Three things the proof found.**
+
+- **A test skipped part-way never reaches vitest's `afterEach`** (`@vitest/runner` returns before the hooks when `context.skip()` throws). So what it wrote before the skip was never purged: the first tenant run left 193 journal messages and 482 MB of objects, and the four `interop-py` Python workers it had spawned kept polling. The same was true at `main` for the mode's own `DE_ENGINE_URL` skips that come after writes (`restartEngine`, a second worker's flags). Now the next test's `beforeEach` cleans a test whose cleanup never ran, before its snapshot, and the file's `afterAll` cleans the last one. `interop-py` stops a leftover worker in `beforeEach` and `afterAll` too. pytest runs fixture teardown after a skip, so Python needed neither.
+- **Under `DE_ENGINE_URL` the end's sweep is not after the engine stops.** A poll a late-stopped worker had in flight bound four of A's durables after the sweep. The sweep now runs again after a 2 s × factor pause, up to three times, until a round finds nothing. And a test that reads the engine's log (`engineLog`) is skipped under `DE_ENGINE_URL`, saying so: that log is the operator's, and it used to read an empty one and fail (TypeScript `worker-recovery` "a work item for a run with NO journal …", seen in the mode with `DE_ENGINE_URL`; Python's `engine_log` is the same, by construction, not seen failing).
+- **nats.js ignores `user:password@` in a server URL** (`Authorization Violation`), and the config-file server's users are names and passwords. The harness's `connect` / `connectAdmin` and the two interop scripts make a URL's user and password the connection's. The engine's Go client and nats-py read them anyway.
+
+**Proven locally** on a config-file `nats-server` 2.14.6 with the engine's `TestTenancy*` setup (`internal/testserver.TenancyConfig(port, dir, NGS, "de", "A", "B")` at `d3e741d`, port 14322; config below), `durable-engine serve --tenancy --nats nats://de:de@127.0.0.1:14322 --prefix de --metrics-addr 127.0.0.1:19391 --tenant-max-bytes 0` as `de`. Before the run, tenant B had a parked run of its own (`b-seed-1`, a 12 MiB input: 4 journal messages, a RUNS and a LEASES key, a 12 MiB object, `de~B~worker-bparked` and `de~B~timer-bparked`). Then, as tenant A (`DE_NATS_URL=nats://a-client:a-client@…`, `DE_ADMIN_URL=nats://de:de@…`, `DE_TENANT=A`, `DE_PREFIX=de`, `DE_ENGINE_URL=http://127.0.0.1:19391`):
+
+| Run                                                                        | TypeScript                        | Python                          |
+| -------------------------------------------------------------------------- | --------------------------------- | ------------------------------- |
+| as tenant A, the tenancy engine                                            | **61 passed, 80 skipped**, 52.5 s | **34 passed, 59 skipped**, 35 s |
+| the plain mode with `DE_ENGINE_URL` (a standalone engine, prefix `plainx`) | 106 passed, 35 skipped, 42 s      | 50 passed, 43 skipped, 37 s     |
+| the plain mode, the harness's engine                                       | 120 passed, 21 skipped, 70 s      | 73 passed, 20 skipped, 56 s     |
+
+The tenant's counts are the `DE_ENGINE_URL` ones less the named skips: 106 − 61 = 45 of TypeScript's 46 (the 46th, the engine-log test, is a `DE_ENGINE_URL` skip as well) and 50 − 34 = 16 of Python's 17 (likewise). Afterwards B's footprint read the same as before, byte for byte (`nats stream subjects`, `nats consumer ls`, `nats object ls`, as `de`). The DE account held exactly B's (`DE_JOURNAL` 4 messages, the two keys, `OBJ_DE_BLOBS` 4 messages and 12,584,562 bytes, no durable of A's), and no worker process was left. The engine counted `de_engine_tenant_bytes{tenant="A"}` 562,146,147 for the two runs and `de_engine_tenant_runs_in_flight{tenant="A"}` 11: a purge never lowers the counters (the engine's F40). So at the default `--tenant-max-bytes` (1 GiB) a tenant would be refused `tenant_limit` (`bytes`) by its second or third full run, which is why the byte limit is 0 here. **For the dev NGS tenancy run:** the tenant's limit record (`KV_DE_TENANTS`) needs `maxBytes` raised or 0, or the counters reset between runs.
+
+The config (the engine's, with its `NGS` limits, the port fixed):
+
+```
+host: 127.0.0.1
+port: 14322
+max_payload: 8388608
+jetstream { store_dir: "<dir>/js", max_file_store: 1099511627776, max_mem_store: 268435456 }
+accounts {
+  DE {
+    jetstream: { max_mem: 0, max_file: 53687091200, max_streams: 16, max_consumers: 250, max_bytes_required: true }
+    users: [ { user: de, password: de } ]
+    exports: [
+      { service: "de.A.api.>", accounts: [A] }
+      { service: "de.B.api.>", accounts: [B] }
+    ]
+  }
+  A {
+    users: [ { user: a-client, password: a-client }, { user: a-worker, password: a-worker } ]
+    imports: [ { service: { account: DE, subject: "de.A.api.>" }, to: "de.api.>", share: true } ]
+  }
+  B {
+    users: [ { user: b-client, password: b-client }, { user: b-worker, password: b-worker } ]
+    imports: [ { service: { account: DE, subject: "de.B.api.>" }, to: "de.api.>", share: true } ]
+  }
+}
+```
+
+**What this does not prove:** a tenant on NGS, where the import is token-gated and the users are creds (`DE_NATS_CREDS` the tenant's, `DE_ADMIN_CREDS` the engine account's), and the harness starting a tenancy engine of its own (not built: `DE_TENANT` takes `DE_ENGINE_URL`'s, so the 13 flag tests skip as they do under any `DE_ENGINE_URL`).
+
+### F39 — F32 handed on to the engine
+
+F32 (nats-py's object-store delete writes a meta with an empty `mtime`, which the engine's nats.go reader cannot parse, so a blob deleted from Python reads `unavailable`, not `blob_gone`) goes to the engine as an ask from here: read such a meta as a deleted object. The coordinator carries it into the engine's next brief. Nothing changed here: the Python tests still delete an object by purging its subjects.

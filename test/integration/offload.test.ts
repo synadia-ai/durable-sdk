@@ -26,10 +26,10 @@ import {
   restartEngine,
 } from "../harness/engine.js";
 import { NatsJournal } from "../harness/shell/journal-store.js";
-import { names } from "../harness/shell/names.js";
+import { names, skipAsTenant } from "../harness/shell/names.js";
 import { createWorker } from "../harness/engine.js";
 import { maxPayload } from "../harness/payload.js";
-import { EXISTING, WAN } from "../harness/mode.js";
+import { budget, EXISTING, moving, WAN } from "../harness/mode.js";
 
 const natsUrl = inject("natsUrl");
 
@@ -52,6 +52,11 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
   // those chunks twice over. (A cost, measured and recorded in OPERATIONS — not a failure.)
   const rtt = inject("natsRttMs");
   const BIG_CHILD_PER_RTT_MS = 1_000;
+  // durable-sdk: against an existing server each test below also waits for its values' BYTES:
+  // `moving(n)` / `budget(ms, n)` (harness/mode.ts) add n × max_payload over the throughput
+  // measured at the start. n is what the test moves through put and get in all, from the
+  // harness's tally (.de-run/<prefix>/blob-bytes.tsv), rounded up, plus what the test itself reads
+  // or writes in the bucket.
   let P = 0;
   let P15 = 0;
   beforeAll(async () => {
@@ -65,85 +70,96 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
 
   // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
-  it("multi-MiB input and step values round-trip; the stream carries refs, the bucket the bytes", async () => {
-    const prefix = "off1";
-    const events: Array<{ name: DurableEventName; fields: DurableEventFields }> = [];
-    const sink = { onEvent: (name: DurableEventName, fields: DurableEventFields): void => void events.push({ name, fields }) }; // prettier-ignore
-    const wf = defineWorkflow("blobby", async (ctx, input: { data: string }) => {
-      const derived = await ctx.run("derive", () => input.data.length + "b".repeat(2 * P));
-      return { inLen: input.data.length, derivedLen: derived.length };
-    });
-    const worker = createWorker({ nc, workflows: [wf], prefix });
-    await worker.start();
-    try {
-      const client = createClient({ nc, prefix, metrics: sink });
-      // 1.5 × max_payload of input — over this server's limit: without offload, start() itself
-      // would reject with PayloadTooLargeError.
-      const handle = await client.start(wf, { data: "a".repeat(P15) });
-      expect(await handle.result(20_000)).toEqual({
-        inLen: P15,
-        derivedLen: String(P15).length + 2 * P,
+  it(
+    "multi-MiB input and step values round-trip; the stream carries refs, the bucket the bytes",
+    async () => {
+      const prefix = "off1";
+      const events: Array<{ name: DurableEventName; fields: DurableEventFields }> = [];
+      const sink = { onEvent: (name: DurableEventName, fields: DurableEventFields): void => void events.push({ name, fields }) }; // prettier-ignore
+      const wf = defineWorkflow("blobby", async (ctx, input: { data: string }) => {
+        const derived = await ctx.run("derive", () => input.data.length + "b".repeat(2 * P));
+        return { inLen: input.data.length, derivedLen: derived.length };
       });
+      const worker = createWorker({ nc, workflows: [wf], prefix });
+      await worker.start();
+      try {
+        const client = createClient({ nc, prefix, metrics: sink });
+        // 1.5 × max_payload of input — over this server's limit: without offload, start() itself
+        // would reject with PayloadTooLargeError.
+        const handle = await client.start(wf, { data: "a".repeat(P15) });
+        expect(await handle.result(20_000 + moving(5))).toEqual({
+          inLen: P15,
+          derivedLen: String(P15).length + 2 * P,
+        });
 
-      // The client offloaded the start input (blob.put observed through the metrics seam).
-      expect(events.some((e) => e.name === "blob.put" && e.fields.outcome === "ok")).toBe(true);
+        // The client offloaded the start input (blob.put observed through the metrics seam).
+        expect(events.some((e) => e.name === "blob.put" && e.fields.outcome === "ok")).toBe(true);
 
-      // The bucket holds this run's content-addressed objects…
-      const mine = (await listObjects(nc, names(prefix).blobsBucket)).filter((o) => o.name.startsWith(`${handle.runId}/`)); // prettier-ignore
-      expect(mine.length).toBeGreaterThan(0);
-      expect(mine.every((o) => /\/sha256:[0-9a-f]{64}$/.test(o.name))).toBe(true);
+        // The bucket holds this run's content-addressed objects…
+        const mine = (await listObjects(nc, names(prefix).blobsBucket)).filter((o) => o.name.startsWith(`${handle.runId}/`)); // prettier-ignore
+        expect(mine.length).toBeGreaterThan(0);
+        expect(mine.every((o) => /\/sha256:[0-9a-f]{64}$/.test(o.name))).toBe(true);
 
-      // …and its backing stream is discard:new (a full bucket rejects loudly, never corrupts).
-      const jsm = await jetstreamManager(nc);
-      const cfg = (await jsm.streams.info(`OBJ_${names(prefix).blobsBucket}`)).config;
-      expect(cfg.discard).toBe("new");
+        // …and its backing stream is discard:new (a full bucket rejects loudly, never corrupts).
+        const jsm = await jetstreamManager(nc);
+        const cfg = (await jsm.streams.info(`OBJ_${names(prefix).blobsBucket}`)).config;
+        expect(cfg.discard).toBe("new");
 
-      // A pre-offload reader (no blob store) fails LOUD on this journal — the v:2/ref guard that
-      // turns a mixed-fleet mistake into a parked run instead of silent undefined-corruption.
-      const bare = new NatsJournal(
-        jetstream(nc),
-        jsm,
-        names(prefix),
-        jsonCodec,
-        nc.info?.max_payload,
-      );
-      await expect(bare.load(handle.runId)).rejects.toBeInstanceOf(BlobMissingError);
-    } finally {
-      await worker.stop();
-    }
-  });
+        // A pre-offload reader (no blob store) fails LOUD on this journal — the v:2/ref guard that
+        // turns a mixed-fleet mistake into a parked run instead of silent undefined-corruption.
+        const bare = new NatsJournal(
+          jetstream(nc),
+          jsm,
+          names(prefix),
+          jsonCodec,
+          nc.info?.max_payload,
+        );
+        await expect(bare.load(handle.runId)).rejects.toBeInstanceOf(BlobMissingError);
+      } finally {
+        await worker.stop();
+      }
+    },
+    budget(30_000, 5),
+  );
 
   // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
-  it("crash mid-run: a FRESH worker resolves blobs from the store and replays without re-executing", async () => {
-    const prefix = "off2";
-    let executions = 0;
-    const wf = defineWorkflow("resume_big", async (ctx) => {
-      const big = await ctx.run("expensive", () => {
-        executions += 1;
-        return "x".repeat(2 * P);
+  it(
+    "crash mid-run: a FRESH worker resolves blobs from the store and replays without re-executing",
+    async () => {
+      const prefix = "off2";
+      let executions = 0;
+      const wf = defineWorkflow("resume_big", async (ctx) => {
+        const big = await ctx.run("expensive", () => {
+          executions += 1;
+          return "x".repeat(2 * P);
+        });
+        const go = await ctx.await<string>("go");
+        return `${go}:${big.length}`;
       });
-      const go = await ctx.await<string>("go");
-      return `${go}:${big.length}`;
-    });
 
-    const w1 = createWorker({ nc, workflows: [wf], prefix });
-    await w1.start();
-    const client = createClient({ nc, prefix });
-    const handle = await client.start(wf, {});
-    await waitUntil(async () => (await handle.status()).state === "suspended", 15_000);
-    await w1.stop(); // the "crash": the only worker that ever saw the live value is gone
+      const w1 = createWorker({ nc, workflows: [wf], prefix });
+      await w1.start();
+      const client = createClient({ nc, prefix });
+      const handle = await client.start(wf, {});
+      await waitUntil(
+        async () => (await handle.status()).state === "suspended",
+        15_000 + moving(2),
+      );
+      await w1.stop(); // the "crash": the only worker that ever saw the live value is gone
 
-    const w2 = createWorker({ nc, workflows: [wf], prefix });
-    await w2.start();
-    try {
-      await client.signal(handle.runId, "go", "resumed");
-      expect(await handle.result(20_000)).toBe(`resumed:${String(2 * P)}`);
-      expect(executions).toBe(1); // replayed from the blob, never re-executed
-    } finally {
-      await w2.stop();
-    }
-  });
+      const w2 = createWorker({ nc, workflows: [wf], prefix });
+      await w2.start();
+      try {
+        await client.signal(handle.runId, "go", "resumed");
+        expect(await handle.result(20_000 + moving(4))).toBe(`resumed:${String(2 * P)}`);
+        expect(executions).toBe(1); // replayed from the blob, never re-executed
+      } finally {
+        await w2.stop();
+      }
+    },
+    budget(30_000, 4),
+  );
 
   // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
@@ -167,7 +183,7 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
       try {
         const client = createClient({ nc, prefix });
         const handle = await client.start(wf, {});
-        await waitUntil(async () => (await handle.status()).state === "suspended", 15_000);
+        await waitUntil(async () => (await handle.status()).state === "suspended", 15_000 + moving(2)); // prettier-ignore
 
         // Sabotage: delete the step's blob out-of-band (an early GC / lost bucket), keeping a copy.
         const bucket = names(prefix).blobsBucket;
@@ -195,14 +211,14 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
         // Heal: restore the object (same name, same bytes — content-addressed) → the next
         // redelivery resolves, the signal lands, the run completes.
         await os.putBlob({ name }, bytes);
-        expect(await handle.result(20_000 + BIG_CHILD_PER_RTT_MS * rtt)).toBe(2 * P);
+        expect(await handle.result(20_000 + BIG_CHILD_PER_RTT_MS * rtt + moving(8))).toBe(2 * P);
       } finally {
         await worker.stop();
       }
       // durable-sdk: the park backs off (the engine naks at 0.25 s doubling) and a 2 × max_payload
       // value crosses the proxy twice; under DE_TEST_RTT_MS that outlives the default 30 s.
     },
-    30_000 + BIG_CHILD_PER_RTT_MS * rtt,
+    budget(30_000 + BIG_CHILD_PER_RTT_MS * rtt, 8),
   );
 
   // durable-sdk: the engine's F30 (`blob_gone`, naming the blob), which the transport makes the
@@ -256,35 +272,40 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
 
   // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
-  it("a multi-MiB SIGNAL rides the work queue as a ref and the journal entry carries it verbatim", async () => {
-    const prefix = "off5";
-    const wf = defineWorkflow("sigblob", async (ctx) => {
-      const data = await ctx.await<string>("blob");
-      return data.length;
-    });
-    const worker = createWorker({ nc, workflows: [wf], prefix });
-    await worker.start();
-    try {
-      const client = createClient({ nc, prefix });
-      const handle = await client.start(wf, {});
-      await waitUntil(async () => (await handle.status()).state === "suspended", 15_000);
-      // 2 × max_payload of signal data: the WORK ITEM itself could never publish inline.
-      await client.signal(handle.runId, "blob", "s".repeat(2 * P));
-      expect(await handle.result(20_000)).toBe(2 * P);
+  it(
+    "a multi-MiB SIGNAL rides the work queue as a ref and the journal entry carries it verbatim",
+    async () => {
+      const prefix = "off5";
+      const wf = defineWorkflow("sigblob", async (ctx) => {
+        const data = await ctx.await<string>("blob");
+        return data.length;
+      });
+      const worker = createWorker({ nc, workflows: [wf], prefix });
+      await worker.start();
+      try {
+        const client = createClient({ nc, prefix });
+        const handle = await client.start(wf, {});
+        await waitUntil(async () => (await handle.status()).state === "suspended", 15_000);
+        // 2 × max_payload of signal data: the WORK ITEM itself could never publish inline.
+        await client.signal(handle.runId, "blob", "s".repeat(2 * P));
+        expect(await handle.result(20_000 + moving(4))).toBe(2 * P);
 
-      // The wire form: the journal's signal entry holds dataRef (no inline data) — created once
-      // by the client, passed through the work item and the worker append untouched.
-      const jsm = await jetstreamManager(nc);
-      const journal = new NatsJournal(jetstream(nc), jsm, names(prefix), jsonCodec);
-      const raw = await journal.loadRaw(handle.runId);
-      const sig = raw.find((l) => l.entry.kind === "signal")?.entry as
-        { data?: unknown; dataRef?: { name: string } } | undefined;
-      expect(sig?.dataRef?.name).toMatch(new RegExp(`^${handle.runId}/sha256:`));
-      expect(sig?.data).toBeUndefined();
-    } finally {
-      await worker.stop();
-    }
-  });
+        // The wire form: the journal's signal entry holds dataRef (no inline data) — created once
+        // by the client, passed through the work item and the worker append untouched.
+        skipAsTenant(); // the test reads the journal itself (shell/names.ts)
+        const jsm = await jetstreamManager(nc);
+        const journal = new NatsJournal(jetstream(nc), jsm, names(prefix), jsonCodec);
+        const raw = await journal.loadRaw(handle.runId);
+        const sig = raw.find((l) => l.entry.kind === "signal")?.entry as
+          { data?: unknown; dataRef?: { name: string } } | undefined;
+        expect(sig?.dataRef?.name).toMatch(new RegExp(`^${handle.runId}/sha256:`));
+        expect(sig?.data).toBeUndefined();
+      } finally {
+        await worker.stop();
+      }
+    },
+    budget(30_000, 4),
+  );
 
   // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
@@ -305,7 +326,7 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
       try {
         const client = createClient({ nc, prefix });
         const handle = await client.start(parent, {});
-        expect(await handle.result(25_000 + BIG_CHILD_PER_RTT_MS * rtt)).toEqual({
+        expect(await handle.result(25_000 + BIG_CHILD_PER_RTT_MS * rtt + moving(12))).toEqual({
           childLen: 2 * P,
         });
 
@@ -319,108 +340,129 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
         await worker.stop();
       }
     },
-    30_000 + BIG_CHILD_PER_RTT_MS * rtt,
+    budget(30_000 + BIG_CHILD_PER_RTT_MS * rtt, 12),
   );
 
   // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
-  it("a big continue-as-new INPUT crosses generations as refs", async () => {
-    const prefix = "off7";
-    const wf = defineWorkflow("canblob", async (ctx, input: { n: number; payload: string }) => {
-      if (input.n === 0) {
-        await ctx.continueAsNew({ n: 1, payload: input.payload });
-      }
-      return input.payload.length;
-    });
-    const worker = createWorker({ nc, workflows: [wf], prefix });
-    await worker.start();
-    try {
-      const client = createClient({ nc, prefix });
-      const handle = await client.start(wf, { n: 0, payload: "c".repeat(P15) });
-      expect(await handle.result(25_000)).toBe(P15);
-    } finally {
-      await worker.stop();
-    }
-  });
-
-  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
-  // chunked transport (src/engine/blobs.ts).
-  it("a multi-MiB failure MESSAGE offloads (fail entry + KV hint) and result() rejects with it", async () => {
-    const prefix = "off8";
-    const boom = "m".repeat(P15);
-    const wf = defineWorkflow("failblob", async (ctx) => {
-      await ctx.run("s", () => 1);
-      throw new Error(boom);
-    });
-    const worker = createWorker({ nc, workflows: [wf], prefix });
-    await worker.start();
-    try {
-      const client = createClient({ nc, prefix });
-      const handle = await client.start(wf, {});
-      await expect(handle.result(20_000)).rejects.toMatchObject({
-        name: "WorkflowFailure",
-        message: expect.stringContaining("mmmm") as unknown,
+  // durable-sdk: 1.5 × max_payload up, then down and up again per generation: 7.5 in the tally.
+  // The dev NGS run of 2026-10-04 timed it out at its 44.7 s of round-trip factor alone.
+  it(
+    "a big continue-as-new INPUT crosses generations as refs",
+    async () => {
+      const prefix = "off7";
+      const wf = defineWorkflow("canblob", async (ctx, input: { n: number; payload: string }) => {
+        if (input.n === 0) {
+          await ctx.continueAsNew({ n: 1, payload: input.payload });
+        }
+        return input.payload.length;
       });
-      expect((await handle.status()).state).toBe("failed");
-    } finally {
-      await worker.stop();
-    }
-  });
+      const worker = createWorker({ nc, workflows: [wf], prefix });
+      await worker.start();
+      try {
+        const client = createClient({ nc, prefix });
+        const handle = await client.start(wf, { n: 0, payload: "c".repeat(P15) });
+        expect(await handle.result(25_000 + moving(8))).toBe(P15);
+      } finally {
+        await worker.stop();
+      }
+    },
+    budget(30_000, 8),
+  );
 
   // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
-  it("a multi-MiB RESULT round-trips and the KV hint stores a ref, not the value", async () => {
-    const prefix = "off9";
-    const wf = defineWorkflow("resblob", async (ctx) => {
-      const big = await ctx.run("make", () => "r".repeat(2 * P));
-      return big;
-    });
-    const worker = createWorker({ nc, workflows: [wf], prefix });
-    await worker.start();
-    try {
-      const client = createClient({ nc, prefix });
-      const handle = await client.start(wf, {});
-      expect((await handle.result(20_000)).length).toBe(2 * P);
-
-      // Without the RunsStore shrink, finalizeCompleted would blow the KV max_payload and the
-      // terminal re-drive would NAK-loop. The record must carry resultRef, never the value.
-      const kv = await new Kvm(nc).create(names(prefix).runsKv);
-      const rec = await kv.get(handle.runId);
-      const parsed = JSON.parse(new TextDecoder().decode(rec!.value)) as {
-        status: string;
-        result?: unknown;
-        resultRef?: { name: string; size: number };
-      };
-      expect(parsed.status).toBe("completed");
-      expect(parsed.result).toBeUndefined();
-      expect(parsed.resultRef?.name).toMatch(new RegExp(`^${handle.runId}/sha256:`));
-    } finally {
-      await worker.stop();
-    }
-  });
+  it(
+    "a multi-MiB failure MESSAGE offloads (fail entry + KV hint) and result() rejects with it",
+    async () => {
+      const prefix = "off8";
+      const boom = "m".repeat(P15);
+      const wf = defineWorkflow("failblob", async (ctx) => {
+        await ctx.run("s", () => 1);
+        throw new Error(boom);
+      });
+      const worker = createWorker({ nc, workflows: [wf], prefix });
+      await worker.start();
+      try {
+        const client = createClient({ nc, prefix });
+        const handle = await client.start(wf, {});
+        await expect(handle.result(20_000 + moving(3))).rejects.toMatchObject({
+          name: "WorkflowFailure",
+          message: expect.stringContaining("mmmm") as unknown,
+        });
+        expect((await handle.status()).state).toBe("failed");
+      } finally {
+        await worker.stop();
+      }
+    },
+    budget(30_000, 3),
+  );
 
   // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
-  it("cancelling a run with offloaded entries stays clean (cancelled terminal, no value fetches needed)", async () => {
-    const prefix = "off10";
-    const wf = defineWorkflow("cancelblob", async (ctx) => {
-      await ctx.run("big", () => "k".repeat(P15));
-      await ctx.await("never");
-      return "unreachable";
-    });
-    const worker = createWorker({ nc, workflows: [wf], prefix });
-    await worker.start();
-    try {
-      const client = createClient({ nc, prefix });
-      const handle = await client.start(wf, {});
-      await waitUntil(async () => (await handle.status()).state === "suspended", 15_000);
-      await client.cancel(handle.runId, { reason: "test" });
-      await expect(handle.result(15_000)).rejects.toMatchObject({ name: "CancelledError" });
-      expect((await handle.status()).state).toBe("cancelled");
-    } finally {
-      await worker.stop();
-    }
-  });
+  it(
+    "a multi-MiB RESULT round-trips and the KV hint stores a ref, not the value",
+    async () => {
+      const prefix = "off9";
+      const wf = defineWorkflow("resblob", async (ctx) => {
+        const big = await ctx.run("make", () => "r".repeat(2 * P));
+        return big;
+      });
+      const worker = createWorker({ nc, workflows: [wf], prefix });
+      await worker.start();
+      try {
+        const client = createClient({ nc, prefix });
+        const handle = await client.start(wf, {});
+        expect((await handle.result(20_000 + moving(6))).length).toBe(2 * P);
+
+        // Without the RunsStore shrink, finalizeCompleted would blow the KV max_payload and the
+        // terminal re-drive would NAK-loop. The record must carry resultRef, never the value.
+        const kv = await new Kvm(nc).create(names(prefix).runsKv);
+        const rec = await kv.get(handle.runId);
+        const parsed = JSON.parse(new TextDecoder().decode(rec!.value)) as {
+          status: string;
+          result?: unknown;
+          resultRef?: { name: string; size: number };
+        };
+        expect(parsed.status).toBe("completed");
+        expect(parsed.result).toBeUndefined();
+        expect(parsed.resultRef?.name).toMatch(new RegExp(`^${handle.runId}/sha256:`));
+      } finally {
+        await worker.stop();
+      }
+    },
+    budget(30_000, 6),
+  );
+
+  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // chunked transport (src/engine/blobs.ts).
+  it(
+    "cancelling a run with offloaded entries stays clean (cancelled terminal, no value fetches needed)",
+    async () => {
+      const prefix = "off10";
+      const wf = defineWorkflow("cancelblob", async (ctx) => {
+        await ctx.run("big", () => "k".repeat(P15));
+        await ctx.await("never");
+        return "unreachable";
+      });
+      const worker = createWorker({ nc, workflows: [wf], prefix });
+      await worker.start();
+      try {
+        const client = createClient({ nc, prefix });
+        const handle = await client.start(wf, {});
+        await waitUntil(
+          async () => (await handle.status()).state === "suspended",
+          15_000 + moving(2),
+        );
+        await client.cancel(handle.runId, { reason: "test" });
+        await expect(handle.result(15_000 + moving(3))).rejects.toMatchObject({ name: "CancelledError" }); // prettier-ignore
+        expect((await handle.status()).state).toBe("cancelled");
+      } finally {
+        await worker.stop();
+      }
+    },
+    budget(30_000, 3),
+  );
 
   it("small runs never touch the blob store", async () => {
     const prefix = "off4";

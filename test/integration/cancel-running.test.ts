@@ -13,7 +13,7 @@ import { jsonCodec } from "../../src/journal/codec.js";
 import { type CancelledEntry, type LoadedEntry } from "../../src/journal/entry.js";
 import { createClient } from "../harness/engine.js";
 import { NatsJournal } from "../harness/shell/journal-store.js";
-import { names } from "../harness/shell/names.js";
+import { names, skipAsTenant } from "../harness/shell/names.js";
 import { createWorker } from "../harness/engine.js";
 import { type Worker } from "../../src/engine/worker.js";
 
@@ -66,6 +66,7 @@ describe.skipIf(!natsUrl)("cancel while a step is running (real nats-server)", (
       await client.cancel(handle.runId, { reason: "operator stop" });
       const ackedAt = Date.now();
 
+      skipAsTenant(); // the test reads the journal itself (shell/names.ts)
       const journal = new NatsJournal(
         jetstream(nc),
         await jetstreamManager(nc),

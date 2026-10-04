@@ -41,10 +41,18 @@ const boom = defineWorkflow("boom", (_ctx, _input: unknown): Promise<never> => {
   throw new Error("the carrier rejected the shipment");
 });
 
-// NATS_CREDS: a creds file, when the server needs one (the harness's existing-server mode).
+// NATS_CREDS: a creds file, when the server needs one (the harness's existing-server mode). A
+// `user:password@` in NATS_URL is the connection's user and password: nats.js ignores it in a URL,
+// and a config-file server's tenant users are names and passwords (docs/findings.md F38).
 const creds = process.env.NATS_CREDS;
+const url = new URL(process.env.NATS_URL ?? "nats://127.0.0.1:4222");
+const user = decodeURIComponent(url.username);
+const pass = decodeURIComponent(url.password);
+url.username = "";
+url.password = "";
 const nc = await connect({
-  servers: process.env.NATS_URL ?? "nats://127.0.0.1:4222",
+  servers: user === "" ? (process.env.NATS_URL ?? "nats://127.0.0.1:4222") : url.toString(),
+  ...(user !== "" ? { user, pass } : {}),
   ...(creds ? { authenticator: credsAuthenticator(readFileSync(creds)) } : {}),
 });
 // DE_PAYLOAD_KEY (hex) turns on encryption at rest, mirroring ts-client.ts — so the Python suite can

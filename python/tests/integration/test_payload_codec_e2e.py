@@ -244,7 +244,7 @@ async def test_a_large_signals_blob_holds_ciphertext_too(nats_url: str) -> None:
         big = _big_secret(nc)
         handle = await _park_then_signal(nc, ENC, pyenc_bigsig, codec, big)
         # The workflow still sees plaintext: this is encryption at rest, not in the model.
-        assert await handle.result(30_000) == len(big)
+        assert await handle.result(30_000 + existing.moving(6)) == len(big)
 
         blobs = await _run_blobs(nc, ENC, handle.run_id)
         assert len(blobs) == 1
@@ -273,7 +273,7 @@ async def test_control_without_a_codec_the_same_signal_lands_in_the_clear(nats_u
     try:
         big = _big_secret(nc)
         handle = await _park_then_signal(nc, PLAIN, pyplain_bigsig, None, big)
-        assert await handle.result(30_000) == len(big)
+        assert await handle.result(30_000 + existing.moving(6)) == len(big)
 
         blobs = await _run_blobs(nc, PLAIN, handle.run_id)
         assert len(blobs) == 1

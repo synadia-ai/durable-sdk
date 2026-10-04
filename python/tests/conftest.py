@@ -341,7 +341,9 @@ def _assert_no_ephemeral_consumers(url: str) -> None:
     import asyncio
 
     async def scan() -> list[str]:
-        nc = await existing.connect(url)
+        # In the mode the streams are read through the admin connection (as a tenant, the engine's
+        # account's), elsewhere on the spawned server.
+        nc = await (existing.connect_admin() if existing.EXISTING else existing.connect(url))
         try:
             if existing.EXISTING is not None:
                 return await existing.prefix_ephemeral_consumers(

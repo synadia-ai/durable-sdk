@@ -1,7 +1,22 @@
 // @synadia-ai/durable — resource + subject naming (prefix configurable, default "de").
 // See DESIGN.md §5. runIds and workflow names must be single NATS subject tokens (no "." " " "*" ">").
 
-import { inject } from "vitest";
+import { expect, inject } from "vitest";
+import { getCurrentTest } from "vitest/suite";
+
+/** durable-sdk: why a test that reads the engine's resources itself is skipped as a tenant. */
+export const AS_TENANT =
+  "reads the engine's streams, buckets or objects itself, and as a tenant (DE_TENANT) the tests' connection has none: the engine's account holds them";
+
+/** As a tenant (DE_TENANT, harness/existing.ts) the tests' connection sees no stream: a test that
+ * names the engine's resources to read them is skipped, saying so. */
+export function skipAsTenant(): void {
+  if (inject("runTenant") == null) return;
+  const t = getCurrentTest();
+  if (t === undefined) throw new Error(`names(): ${AS_TENANT}`);
+  console.warn(`skipped as tenant ${inject("runTenant")!}: ${expect.getState().currentTestName ?? "?"} — ${AS_TENANT}`); // prettier-ignore
+  t.context.skip();
+}
 
 export interface Names {
   prefix: string;
@@ -29,6 +44,7 @@ export interface Names {
 }
 
 export function names(given = "de"): Names {
+  skipAsTenant();
   // durable-sdk: against an existing server every prefix is the run's one (harness/existing.ts).
   const prefix = inject("runPrefix") ?? given;
   const up = prefix.toUpperCase();
