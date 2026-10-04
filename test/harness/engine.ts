@@ -9,10 +9,17 @@
 // The binary: `DE_ENGINE` (a path), or built with `go build -o` from the engine checkout
 // (`DE_ENGINE_REPO`, default ../durable-engine) at the commit `engine.pin` names. A checkout at
 // another commit, or with local changes, is refused unless `DE_ENGINE_ANY=1`. Without either the
-// integration suites skip, saying why (global-setup.ts). Nothing reaches beyond 127.0.0.1.
+// integration suites skip, saying why (global-setup.ts). Nothing reaches beyond 127.0.0.1 unless
+// DE_NATS_URL says so.
+//
+// Against an existing server (existing.ts, `DE_NATS_URL`) there is one prefix and one engine for
+// the run instead: every prefix a test names is the run's (`mapPrefix`), the engine is
+// run-engine.ts's in the main process, and a test's flags restart it only when they differ from
+// the ones it runs with. Its counters (`engineCounts`) are the test's own: the difference from
+// the test's start, as a fresh engine per prefix gave them.
 
-import { type ChildProcess, spawn } from "node:child_process";
-import { inject } from "vitest";
+import { expect, inject } from "vitest";
+import { getCurrentTest } from "vitest/suite";
 import {
   createClient as sdkCreateClient,
   type Client,
@@ -26,107 +33,65 @@ import {
 import { type Handle } from "../../src/types.js";
 
 import { EngineNotAvailableError } from "./engine-bin.js";
+import { EngineProcess, type EngineFlags } from "./engine-process.js";
 export { EngineNotAvailableError, enginePin, resolveEngineBinary } from "./engine-bin.js";
+export { EngineProcess, type EngineFlags } from "./engine-process.js";
 
-/** The library's worker/client options that are the engine's command line now. */
-export interface EngineFlags {
-  streamMaxBytes?: number;
-  ackWaitMs?: number;
-  maxWorkMs?: number;
-  lease?: boolean;
-  leaseTtlMs?: number;
-  maintenanceIntervalMs?: number;
-  reconcileGraceMs?: number;
+/** The run's prefix against an existing server; elsewhere the prefix the test named. */
+export function mapPrefix(prefix: string): string {
+  return inject("runPrefix") ?? prefix;
 }
 
-function flagArgs(f: EngineFlags): string[] {
-  const out: string[] = [];
-  if (f.streamMaxBytes !== undefined) out.push("--stream-max-bytes", String(f.streamMaxBytes));
-  if (f.ackWaitMs !== undefined) out.push("--ack-wait", `${f.ackWaitMs}ms`);
-  if (f.maxWorkMs !== undefined) out.push("--max-work", `${f.maxWorkMs}ms`);
-  if (f.lease === false) out.push("--no-lease");
-  if (f.leaseTtlMs !== undefined) out.push("--lease-ttl", `${f.leaseTtlMs}ms`);
-  if (f.maintenanceIntervalMs !== undefined) out.push("--maintenance-interval", `${f.maintenanceIntervalMs}ms`); // prettier-ignore
-  if (f.reconcileGraceMs !== undefined) out.push("--reconcile-grace", `${f.reconcileGraceMs}ms`);
-  return out;
+/** True against an existing server (existing.ts). */
+export const existingMode = (): boolean => inject("runPrefix") != null;
+
+/** Skip the running test, saying why: what the mode cannot do. */
+function skipInMode(why: string): never {
+  console.warn(`skipped in the existing-server mode: ${expect.getState().currentTestName ?? "?"} — ${why}`); // prettier-ignore
+  getCurrentTest()?.context.skip();
+  throw new Error(why); // unreachable: skip() throws
 }
 
-const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+async function control<T>(path: string, body?: unknown): Promise<T> {
+  const base = inject("engineControl")!;
+  const r = await fetch(new URL(path, base), body === undefined ? {} : { method: "POST", body: JSON.stringify(body) }); // prettier-ignore
+  const v = (await r.json()) as T & { error?: string };
+  if (r.status === 409 && v.error?.includes("DE_ENGINE_URL") === true) skipInMode(v.error);
+  if (!r.ok) throw new Error(`the run's engine: ${v.error ?? String(r.status)}`);
+  return v;
+}
 
-let instances = 0;
+// The current test against an existing server: its flags are fixed by its first call, as the
+// first worker or client on a prefix fixed a spawned engine's.
+let testFlagsFixed = false;
+let testCounts: { instance: string; counts: Record<string, number> } | undefined;
+let testLogFrom = 0;
 
-/** One `durable-engine serve` process. */
-export class EngineProcess {
-  #proc: ChildProcess | undefined;
-  readonly log: string[] = [];
-  readonly instance: string;
-
-  constructor(
-    readonly bin: string,
-    readonly url: string,
-    readonly prefix: string,
-    readonly flags: EngineFlags = {},
-  ) {
-    instances += 1;
-    this.instance = `t${instances}`;
+/** setup-each.ts, before each test in the mode: the counters the test's are measured from. */
+export async function beginTest(nc: {
+  request(
+    subject: string,
+    data?: Uint8Array,
+    opts?: { timeout: number },
+  ): Promise<{ json<T>(): T }>;
+}): Promise<void> {
+  // prettier-ignore
+  testFlagsFixed = false;
+  testCounts = undefined;
+  testLogFrom = (await control<{ next: number }>(`/log?since=${String(Number.MAX_SAFE_INTEGER)}`)).next; // prettier-ignore
+  try {
+    const r = await nc.request(`${inject("runPrefix")!}.api.v1.info`, new TextEncoder().encode("{}"), { timeout: 5_000 * inject("rttFactor") }); // prettier-ignore
+    const info = r.json<{ instance?: string; counts?: Record<string, number> }>();
+    testCounts = { instance: info.instance ?? "", counts: info.counts ?? {} };
+  } catch {
+    /* no engine running right now (a test before stopped it): the next one starts at zero */
   }
+}
 
-  get args(): string[] {
-    return ["serve", "--nats", this.url, "--prefix", this.prefix, "--instance", this.instance, ...flagArgs(this.flags)]; // prettier-ignore
-  }
-
-  /** Spawn and wait for the engine's `serving` line (it provisions the prefix first). */
-  async start(): Promise<void> {
-    const proc = spawn(this.bin, this.args, { stdio: ["ignore", "ignore", "pipe"] });
-    this.#proc = proc;
-    let buf = "";
-    await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error(`durable-engine serve did not come up in 30 s:\n${this.log.join("\n")}`)), 30_000); // prettier-ignore
-      proc.stderr.on("data", (d: Buffer) => {
-        buf += d.toString("utf8");
-        let i: number;
-        while ((i = buf.indexOf("\n")) >= 0) {
-          const line = buf.slice(0, i);
-          buf = buf.slice(i + 1);
-          this.log.push(line);
-          if (this.log.length > 2_000) this.log.shift();
-          if (process.env.DE_ENGINE_LOG === "1") console.error(`[engine ${this.prefix}] ${line}`);
-          if (line.includes("msg=serving")) {
-            clearTimeout(t);
-            resolve();
-          }
-        }
-      });
-      proc.once("exit", (code) => {
-        clearTimeout(t);
-        reject(new Error(`durable-engine serve exited (${String(code)}):\n${this.log.join("\n")}`));
-      });
-    });
-  }
-
-  get running(): boolean {
-    return this.#proc !== undefined && this.#proc.exitCode === null && this.#proc.signalCode === null; // prettier-ignore
-  }
-
-  async #signal(signal: "SIGTERM" | "SIGKILL"): Promise<void> {
-    const proc = this.#proc;
-    this.#proc = undefined;
-    if (!proc || proc.exitCode !== null || proc.signalCode !== null) return;
-    const exited = new Promise<void>((r) => proc.once("exit", () => r()));
-    proc.kill(signal);
-    await Promise.race([exited, delay(10_000)]);
-    if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
-  }
-
-  /** A graceful stop: the engine naks what it holds, so it redelivers at once. */
-  stop(): Promise<void> {
-    return this.#signal("SIGTERM");
-  }
-
-  /** A crash: its leases are lost, its items redeliver at the ack wait. */
-  kill(): Promise<void> {
-    return this.#signal("SIGKILL");
-  }
+async function ensureRunEngine(flags: EngineFlags): Promise<void> {
+  if (testFlagsFixed) return;
+  await control("/ensure", { flags });
+  testFlagsFixed = true;
 }
 
 const engines = new Map<string, Promise<EngineProcess>>();
@@ -147,7 +112,8 @@ function serverUrl(): string {
 }
 
 /** The engine serving `prefix` on the current server, started on first use with `flags`. */
-export function ensureEngine(prefix: string, flags: EngineFlags = {}): Promise<EngineProcess> {
+export function ensureEngine(prefix: string, flags: EngineFlags = {}): Promise<unknown> {
+  if (existingMode()) return ensureRunEngine(flags);
   const url = serverUrl();
   const key = `${url}|${prefix}`;
   let p = engines.get(key);
@@ -196,6 +162,7 @@ function flagsOf(o: EngineFlags): EngineFlags {
 
 /** The SDK's createWorker, with the prefix's engine started before the worker's first poll. */
 export function createWorker(opts: WorkerOptions): Worker {
+  if (opts.prefix !== undefined || existingMode()) opts = { ...opts, prefix: mapPrefix(opts.prefix ?? "de") }; // prettier-ignore
   const w = sdkCreateWorker(process.env.DE_SDK_LOG === "1" && opts.logger === undefined ? { ...opts, logger: consoleLogger } : opts); // prettier-ignore
   return {
     async start(): Promise<void> {
@@ -209,13 +176,16 @@ export function createWorker(opts: WorkerOptions): Worker {
 
 /** The SDK's createClient, with the prefix's engine started before the client's first request. */
 export function createClient(opts: ClientOptions): Client {
+  if (opts.prefix !== undefined || existingMode()) opts = { ...opts, prefix: mapPrefix(opts.prefix ?? "de") }; // prettier-ignore
   const c = sdkCreateClient(opts);
-  const ready = (): Promise<EngineProcess> => ensureEngine(opts.prefix ?? "de", flagsOf(opts));
+  // Against an existing server every wait is scaled by the measured round trip (existing.ts).
+  const scale = (ms: number | undefined): number | undefined => (ms === undefined ? ms : ms * inject("rttFactor")); // prettier-ignore
+  const ready = (): Promise<unknown> => ensureEngine(opts.prefix ?? "de", flagsOf(opts));
   const wrap = <O>(h: Handle<O>): Handle<O> => ({
     runId: h.runId,
     async result(timeoutMs?: number): Promise<O> {
       await ready();
-      return h.result(timeoutMs);
+      return h.result(scale(timeoutMs));
     },
     async status() {
       await ready();
@@ -267,8 +237,14 @@ export async function engineCounts(
   nc: { request(subject: string, data?: Uint8Array, opts?: { timeout: number }): Promise<{ json<T>(): T }> }, // prettier-ignore
   prefix: string,
 ): Promise<Record<string, number>> {
-  const r = await nc.request(`${prefix}.api.v1.info`, new TextEncoder().encode("{}"), { timeout: 5_000 }); // prettier-ignore
-  return r.json<{ counts?: Record<string, number> }>().counts ?? {};
+  const r = await nc.request(`${mapPrefix(prefix)}.api.v1.info`, new TextEncoder().encode("{}"), { timeout: 5_000 * inject("rttFactor") }); // prettier-ignore
+  const info = r.json<{ instance?: string; counts?: Record<string, number> }>();
+  const counts = info.counts ?? {};
+  // One engine for the run: the test's own counts are the difference from its start (beginTest),
+  // unless the engine was restarted since, when they start at zero as they did per prefix.
+  if (!existingMode() || testCounts === undefined || testCounts.instance !== info.instance) return counts; // prettier-ignore
+  const base = testCounts.counts;
+  return Object.fromEntries(Object.entries(counts).map(([k, v]) => [k, v - (base[k] ?? 0)]));
 }
 
 /** The sum of every series of `name` whose labels include all of `labels`. */
@@ -288,6 +264,8 @@ export function countOf(
 
 /** The log lines of the engine serving `prefix` (its stderr, as `durable-engine serve` writes it). */
 export async function engineLog(prefix: string): Promise<string[]> {
+  // The run's one engine: the lines since the test began, as a test's own engine gave them.
+  if (existingMode()) return (await control<{ lines: string[] }>(`/log?since=${String(testLogFrom)}`)).lines; // prettier-ignore
   const e = await engineFor(prefix);
   return e ? [...e.log] : [];
 }
@@ -298,6 +276,11 @@ export async function engineLog(prefix: string): Promise<string[]> {
  * restarted worker re-provisions", now the engine's.
  */
 export async function restartEngine(prefix: string, opts: { kill?: boolean } = {}): Promise<void> {
+  if (existingMode()) {
+    await control("/halt", { kill: opts.kill === true });
+    testFlagsFixed = false; // the next worker or client starts it again, with its flags
+    return;
+  }
   const key = `${serverUrl()}|${prefix}`;
   const p = engines.get(key);
   engines.delete(key);

@@ -68,7 +68,15 @@ uv run ruff format --check . && uv run ruff check . && uv run mypy
 uv run pytest                                  # the unit suites, then the integration suites
 ```
 
-The unit suites need nothing. The integration suites (`tests/integration/`) spawn a `nats-server` (≥ 2.14, from `PATH`) under the library's account-limits profile (`DE_TEST_PROFILE=ngs|tight|none`, default `ngs`) and one `durable-engine serve` per prefix a test uses, stopped after each test (`tests/engine.py`). The engine binary is `DE_ENGINE` (a path), or is built with `go build` into `../.engine-bin/` from `../../durable-engine` (`DE_ENGINE_REPO`) at the commit in `../engine.pin`; a checkout at another commit, or with local changes, is refused unless `DE_ENGINE_ANY=1`. Without the binary or Go the integration suites skip, saying why. `DE_ENGINE_LOG=1` echoes the engines' logs and `DE_SDK_LOG=1` gives a worker without a logger a console one. `DE_TEST_RTT_MS=<ms>` puts the delay proxy (`tests/netproxy.py`) between every test's connection and the server, the engines on the direct URL (`docs/findings.md` F28). The interop suites also need `npx` and the repo's `node_modules` (`bun install` at the root). Nothing reaches beyond 127.0.0.1.
+The unit suites need nothing. The integration suites (`tests/integration/`) spawn a `nats-server` (≥ 2.14, from `PATH`) under the library's account-limits profile (`DE_TEST_PROFILE=ngs|tight|none`, default `ngs`) and one `durable-engine serve` per prefix a test uses, stopped after each test (`tests/engine.py`). The engine binary is `DE_ENGINE` (a path), or is built with `go build` into `../.engine-bin/` from `../../durable-engine` (`DE_ENGINE_REPO`) at the commit in `../engine.pin`; a checkout at another commit, or with local changes, is refused unless `DE_ENGINE_ANY=1`. Without the binary or Go the integration suites skip, saying why. `DE_ENGINE_LOG=1` echoes the engines' logs and `DE_SDK_LOG=1` gives a worker without a logger a console one. `DE_TEST_RTT_MS=<ms>` puts the delay proxy (`tests/netproxy.py`) between every test's connection and the server, the engines on the direct URL (`docs/findings.md` F28). The interop suites also need `npx` and the repo's `node_modules` (`bun install` at the root). Nothing reaches beyond 127.0.0.1 but in the mode below.
+
+`DE_NATS_URL` runs the integration suites against a server the run does not own: one prefix (`DE_PREFIX`, default a generated `de-<8 hex>`) and one `serve` for the run, the creds of `DE_NATS_CREDS`, the test's writes purged after it rather than every stream deleted, waits scaled by the measured round trip, and 17 tests skipped by name (`tests/existing.py`; the root README's "Against an existing server" has the variables and the dev NGS command lines; `../docs/findings.md` F29):
+
+```sh
+DE_NATS_URL=nats://127.0.0.1:14222 uv run pytest tests/integration -rs   # 71 passed, 18 skipped
+```
+
+A creds file needs `nkeys` next to `nats-py` (`pip install 'nats-py[nkeys]'`); it is a dev dependency here (F30).
 
 The Python interop worker, the twin of `../conformance/interop/ts-worker.ts`, needs a `serve` on the same prefix and prints `READY`:
 

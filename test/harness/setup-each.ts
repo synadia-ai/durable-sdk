@@ -13,10 +13,23 @@
 // A test that leaves a worker RUNNING sees its pumps lose their streams here and retry with
 // backoff until its file's afterAll drains the connection — the test was already at fault.
 
-import { connect, type NatsConnection } from "@nats-io/transport-node";
-import { afterAll, afterEach, expect, inject } from "vitest";
-import { setEngineServer, stopEngines } from "./engine.js";
+import { type NatsConnection } from "@nats-io/transport-node";
+import { afterAll, afterEach, beforeEach, expect, inject, vi } from "vitest";
+import { beginTest, setEngineServer, stopEngines } from "./engine.js";
+import { connect, prefixEphemeralConsumers, purgeSince, snapshot, type Snapshot } from "./existing.js"; // prettier-ignore
 import { deleteAllStreams, leftoverMessage, listEphemeralConsumersOn } from "./leftovers.js";
+
+// Against an existing server (existing.ts): the run's one engine stays up, the leftovers check
+// looks at the prefix's streams only, and in place of deleting every stream the test's writes
+// under the prefix are purged (what changed since the snapshot taken before it). Every wait is
+// scaled by the round trip measured at the start: the test and hook timeouts here, a handle's
+// result() in engine.ts.
+const runPrefix = inject("runPrefix");
+const factor = inject("rttFactor");
+if (factor !== 1) vi.setConfig({ testTimeout: 30_000 * factor, hookTimeout: 30_000 * factor });
+let before: Snapshot | undefined;
+// The conformance workers and clients the interop suite spawns read NATS_CREDS.
+if (runPrefix != null && process.env.DE_NATS_CREDS) process.env.NATS_CREDS = process.env.DE_NATS_CREDS; // prettier-ignore
 
 // The server itself, never the delay proxy (`DE_TEST_RTT_MS`): hygiene is the harness's own
 // traffic, and listing every consumer of every stream at WAN latency would dominate the run.
@@ -28,7 +41,15 @@ async function conn(): Promise<NatsConnection> {
   return nc;
 }
 
+beforeEach(async () => {
+  if (runPrefix == null || !url) return;
+  const c = await conn();
+  before = await snapshot(c, runPrefix);
+  await beginTest(c);
+});
+
 afterEach(async () => {
+  if (runPrefix != null) return afterEachExisting(runPrefix);
   // The engines of the test first (a graceful stop naks what they hold), then the streams.
   await stopEngines();
   setEngineServer(undefined);
@@ -50,6 +71,26 @@ afterEach(async () => {
     await deleteAllStreams(c);
   }
 });
+
+async function afterEachExisting(prefix: string): Promise<void> {
+  setEngineServer(undefined);
+  if (!url) return;
+  const c = await conn();
+  try {
+    let left = await prefixEphemeralConsumers(c, prefix, before?.consumers);
+    if (left.length > 0) {
+      await new Promise((r) => setTimeout(r, 500 * factor));
+      left = await prefixEphemeralConsumers(c, prefix, before?.consumers);
+    }
+    if (left.length > 0) {
+      const who = expect.getState().currentTestName ?? "(unknown test)";
+      throw new Error(leftoverMessage(left, `after "${who}"`));
+    }
+  } finally {
+    if (before !== undefined) await purgeSince(c, prefix, before);
+    before = undefined;
+  }
+}
 
 afterAll(async () => {
   if (nc) await nc.drain();

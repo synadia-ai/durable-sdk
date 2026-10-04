@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 
+import existing
 from engine import count_of, create_client, create_worker, engine_counts, engine_log, restart_engine
 from shell.names import Names
 from synadia_durable import WorkflowFailure, define_workflow
@@ -256,6 +257,7 @@ async def test_a_terminal_redrive_repairs_a_stale_status_hint(nc: Any, prefix: s
 
 # durable-sdk: docs/findings.md F7, answered by the engine's F19 (the work durable is bound on its
 # own, so polls keep being served with DE_TIMERS gone).
+@existing.skip_in_mode(existing.DELETES_STREAMS)
 async def test_the_maintenance_pass_and_pumps_survive_a_deleted_timers_stream(
     nc: Any, prefix: str
 ) -> None:

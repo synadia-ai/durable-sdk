@@ -10,7 +10,8 @@ import { Kvm } from "@nats-io/kv";
 import { readSubject } from "../harness/shell/direct.js";
 import { listObjects, readBlob } from "../harness/blobs.js";
 import { maxPayload } from "../harness/payload.js";
-import { connect, type NatsConnection } from "@nats-io/transport-node";
+import { type NatsConnection } from "@nats-io/transport-node";
+import { connect } from "../harness/existing.js";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { defineWorkflow } from "../../src/core/workflow.js";
 import { jsonCodec } from "../../src/journal/codec.js";
@@ -20,6 +21,7 @@ import { NatsJournal } from "../harness/shell/journal-store.js";
 import { names } from "../harness/shell/names.js";
 import { createWorker } from "../harness/engine.js";
 import { WIRE_VERSION_BLOBS, WIRE_VERSION_ENCODED } from "../../src/version.js";
+import { WAN } from "../harness/mode.js";
 
 const natsUrl = inject("natsUrl");
 const KEY = new Uint8Array(32).fill(42);
@@ -28,6 +30,7 @@ const MIB = 1024 * 1024;
 // One resource set per CONFIGURATION, not per test: each prefix reserves max_bytes across six
 // streams, and the harness's JetStream store is a fixed budget shared by every e2e prefix.
 async function waitUntil(cond: () => Promise<boolean>, timeoutMs: number): Promise<void> {
+  timeoutMs *= WAN; // durable-sdk: × the round-trip factor (harness/mode.ts, F29)
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (await cond()) return;
@@ -89,6 +92,7 @@ describe.skipIf(!natsUrl)("payload encryption at rest (real nats-server)", () =>
 
   const SECRET = "pan-4242424242424242";
 
+  // prettier-ignore
   it("a run completes normally, and NOTHING on the journal stream contains the secret", async () => {
     const payloadCodec = aesGcmPayloadCodec(KEY);
     const wf = defineWorkflow("enc_e2e", async (ctx, input: { card: string }) => {
@@ -133,8 +137,9 @@ describe.skipIf(!natsUrl)("payload encryption at rest (real nats-server)", () =>
     } finally {
       await worker.stop();
     }
-  }, 60_000);
+  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
+  // prettier-ignore
   it("CONTROL: without the codec the very same run leaks the secret in plaintext", async () => {
     // Without this the test above proves nothing — a typo'd secret would also "not appear".
     const wf = defineWorkflow("enc_e2e_plain", async (ctx, input: { card: string }) => {
@@ -157,8 +162,9 @@ describe.skipIf(!natsUrl)("payload encryption at rest (real nats-server)", () =>
     } finally {
       await worker.stop();
     }
-  }, 60_000);
+  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
+  // prettier-ignore
   it("a client WITHOUT the codec cannot read the result — it fails loud, never returns base64", async () => {
     const payloadCodec = aesGcmPayloadCodec(KEY);
     const wf = defineWorkflow("enc_e2e_blind", async (ctx, input: { card: string }) =>
@@ -177,8 +183,9 @@ describe.skipIf(!natsUrl)("payload encryption at rest (real nats-server)", () =>
     } finally {
       await worker.stop();
     }
-  }, 60_000);
+  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
+  // prettier-ignore
   it("a WORKER without the codec PARKS the run — no terminal — and it heals when one arrives", async () => {
     // The feature's central claim, and a MUST in PROTOCOL §5.7. Parking rather than failing is the
     // whole point: a misconfigured worker must not destroy recoverable work, so this asserts both
@@ -228,8 +235,9 @@ describe.skipIf(!natsUrl)("payload encryption at rest (real nats-server)", () =>
     } finally {
       await good.stop();
     }
-  }, 60_000);
+  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
+  // prettier-ignore
   it("survives a crash: a fresh worker with the codec replays an encrypted journal", async () => {
     const payloadCodec = aesGcmPayloadCodec(KEY);
     let executions = 0;
@@ -266,7 +274,7 @@ describe.skipIf(!natsUrl)("payload encryption at rest (real nats-server)", () =>
     } finally {
       await w2.stop();
     }
-  }, 60_000);
+  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 });
 
 // The payload paths that do NOT go through a journal append.
@@ -298,6 +306,7 @@ describe.skipIf(!natsUrl)("payload encryption — the work-item boundary", () =>
 
   // durable-sdk: docs/findings.md F6, answered by the engine's F20 (an inline `signal.dataEnc` on
   // the work item, journaled verbatim).
+  // prettier-ignore
   it("a SMALL signal is encrypted inline — the baseline the large one has to match", async () => {
     const payloadCodec = aesGcmPayloadCodec(KEY);
     const wf = defineWorkflow("enc_sig_small", async (ctx) => {
@@ -321,10 +330,11 @@ describe.skipIf(!natsUrl)("payload encryption — the work-item boundary", () =>
     } finally {
       await worker.stop();
     }
-  }, 60_000);
+  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
   // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
+  // prettier-ignore
   it("a LARGE signal's BLOB holds ciphertext too — encryption cannot depend on payload size", async () => {
     const payloadCodec = aesGcmPayloadCodec(KEY);
     const wf = defineWorkflow("enc_sig_big", async (ctx) => {
@@ -356,10 +366,11 @@ describe.skipIf(!natsUrl)("payload encryption — the work-item boundary", () =>
     } finally {
       await worker.stop();
     }
-  }, 60_000);
+  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
   // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
+  // prettier-ignore
   it("CONTROL: without a codec the very same large signal lands in the bucket in the clear", async () => {
     // Proves the assertion above is load-bearing rather than a secret that never reached the blob.
     const wf = defineWorkflow("plain_sig_big", async (ctx) => {
@@ -382,10 +393,11 @@ describe.skipIf(!natsUrl)("payload encryption — the work-item boundary", () =>
     } finally {
       await worker.stop();
     }
-  }, 60_000);
+  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
   // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
+  // prettier-ignore
   it("a LARGE child outcome is encrypted in the PARENT's blob, not only in the child's journal", async () => {
     // The second shrink path, and the easier one to miss: the child's own `result` entry is
     // encrypted by its journal append, but `notifyParent` rebuilds the work item from the RESOLVED
@@ -415,8 +427,9 @@ describe.skipIf(!natsUrl)("payload encryption — the work-item boundary", () =>
     } finally {
       await worker.stop();
     }
-  }, 60_000);
+  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
+  // prettier-ignore
   it("work items on de.work.* stay PLAINTEXT — the documented boundary, asserted so it cannot drift", async () => {
     // Deliberate: `DE_WORK` is a workqueue stream, so an item exists only until it is consumed, and
     // the engine reads the item's own fields (kind, runId, signal name) to dispatch. Encrypting it
@@ -457,7 +470,7 @@ describe.skipIf(!natsUrl)("payload encryption — the work-item boundary", () =>
     } finally {
       await resumed.stop();
     }
-  }, 60_000);
+  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 });
 
 // Encryption crossed with the three features that had never been run against it. They all reuse the
@@ -484,6 +497,7 @@ describe.skipIf(!natsUrl)("payload encryption × fan-out, continue-as-new and ca
     return chunks.join("\n");
   }
 
+  // prettier-ignore
   it("FAN-OUT: three children, and no plaintext in the parent's journal or in any child's", async () => {
     const child = defineWorkflow("enc_fan_kid", async (ctx, input: { card: string; n: number }) =>
       ctx.run("mask", () => `${input.n}:${input.card.slice(-4)}`),
@@ -523,8 +537,9 @@ describe.skipIf(!natsUrl)("payload encryption × fan-out, continue-as-new and ca
     } finally {
       await worker.stop();
     }
-  }, 60_000);
+  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
+  // prettier-ignore
   it("CONTINUE-AS-NEW: the secret crosses generations encrypted, in every generation's journal", async () => {
     const wf = defineWorkflow("enc_can", async (ctx, input: { card: string; n: number }) => {
       const seen = await ctx.run(`gen${input.n}`, () => `gen${input.n}:${input.card.slice(-4)}`);
@@ -553,8 +568,9 @@ describe.skipIf(!natsUrl)("payload encryption × fan-out, continue-as-new and ca
     } finally {
       await worker.stop();
     }
-  }, 60_000);
+  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
+  // prettier-ignore
   it("CANCEL: compensation runs, the terminal is `cancelled`, and the reason stays legible", async () => {
     // The cancel path writes its terminal WITHOUT replaying a result, so it is the one terminal
     // append that never goes near a payload slot — and the `reason` is deliberately envelope, not
@@ -587,8 +603,9 @@ describe.skipIf(!natsUrl)("payload encryption × fan-out, continue-as-new and ca
     } finally {
       await worker.stop();
     }
-  }, 60_000);
+  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
+  // prettier-ignore
   it("a FAILURE's message is a payload — it is encrypted, and result() still rejects with it", async () => {
     // Easy to miss: `error` is in the payload slot map, so a failing workflow's message is
     // transformed too. If it were not, the most common place a secret leaks (an exception carrying
@@ -622,7 +639,7 @@ describe.skipIf(!natsUrl)("payload encryption × fan-out, continue-as-new and ca
     } finally {
       await worker.stop();
     }
-  }, 60_000);
+  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 });
 
 // Multi-worker chaos with a codec configured — the combination neither SDK had run.
@@ -669,6 +686,7 @@ describe.skipIf(!natsUrl)("payload encryption × multi-worker chaos", () => {
     };
   }
 
+  // prettier-ignore
   it("a signal storm across two workers: exactly-once journaling holds, and nothing leaks", async () => {
     const executions: string[] = [];
     const wf = defineWorkflow("enc_chaos", async (ctx, input: { card: string }) => {
@@ -721,8 +739,9 @@ describe.skipIf(!natsUrl)("payload encryption × multi-worker chaos", () => {
       await w1.stop();
       await w2.stop();
     }
-  }, 90_000);
+  }, 90_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
+  // prettier-ignore
   it("racing workers write DIFFERENT ciphertext for the same value — and the run is still exact", async () => {
     // The property the chaos test above depends on, isolated: encrypting the same value twice
     // yields different bytes, so a design that compared recorded bytes to fresh ones (rather than
@@ -759,7 +778,7 @@ describe.skipIf(!natsUrl)("payload encryption × multi-worker chaos", () => {
       await w1.stop();
       await w2.stop();
     }
-  }, 60_000);
+  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 });
 
 // The completeness sweep: every way a payload reaches durable storage, in ONE run, checked against
@@ -835,6 +854,7 @@ describe.skipIf(!natsUrl)("payload encryption — the completeness sweep", () =>
 
   // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
+  // prettier-ignore
   it("a run touching EVERY payload path leaves the secret in no durable store", async () => {
     const payloadCodec = aesGcmPayloadCodec(KEY);
     const kidSmall = defineWorkflow("sweep_kid_s", async (ctx, input: { card: string }) =>
@@ -903,10 +923,11 @@ describe.skipIf(!natsUrl)("payload encryption — the completeness sweep", () =>
     } finally {
       await worker.stop();
     }
-  }, 180_000);
+  }, 180_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
   // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
+  // prettier-ignore
   it("CONTROL: the same run without a codec leaves the secret in journal, blobs AND the hint", async () => {
     // Proves the sweep is looking in places the secret actually reaches. Without this, a typo in a
     // subject filter would make every assertion above pass by reading nothing at all.
@@ -935,5 +956,5 @@ describe.skipIf(!natsUrl)("payload encryption — the completeness sweep", () =>
     } finally {
       await worker.stop();
     }
-  }, 180_000);
+  }, 180_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 });

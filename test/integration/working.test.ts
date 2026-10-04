@@ -5,7 +5,8 @@
 // of holding the run hostage forever. Observed via the metrics seam: work.dispatch counts deliveries
 // into this worker; work.done carries deliveryCount.
 
-import { connect, type NatsConnection } from "@nats-io/transport-node";
+import { type NatsConnection } from "@nats-io/transport-node";
+import { connect } from "../harness/existing.js";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { defineWorkflow } from "../../src/core/workflow.js";
 import {
@@ -15,6 +16,7 @@ import {
 } from "../../src/internal/metrics.js";
 import { createClient } from "../harness/engine.js";
 import { createWorker } from "../harness/engine.js";
+import { WAN } from "../harness/mode.js";
 
 const natsUrl = inject("natsUrl");
 const MIB = 1024 * 1024;
@@ -34,6 +36,7 @@ function recorder(): { events: Recorded[]; sink: Metrics } {
 }
 
 async function waitUntil(cond: () => boolean, timeoutMs: number): Promise<void> {
+  timeoutMs *= WAN; // durable-sdk: × the round-trip factor (harness/mode.ts, F29)
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (cond()) return;
@@ -186,6 +189,7 @@ describe.skipIf(!natsUrl)("ack-progress heartbeats for long steps (real nats-ser
     }
   });
 
+  // prettier-ignore
   it("ESCAPE HATCH across WORKERS: past maxWorkMs the lease lapses too, so a peer takes the run over", async () => {
     // The bound has to release BOTH grips this worker holds on the run. Releasing only the ack
     // extension makes the item redeliverable and nothing more: the peer that receives it is refused
@@ -228,5 +232,5 @@ describe.skipIf(!natsUrl)("ack-progress heartbeats for long steps (real nats-ser
       await a.stop();
       await b.stop();
     }
-  }, 40_000);
+  }, 40_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 });

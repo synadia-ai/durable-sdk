@@ -11,15 +11,17 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { jetstream, jetstreamManager } from "@nats-io/jetstream";
-import { connect, type NatsConnection } from "@nats-io/transport-node";
+import { type NatsConnection } from "@nats-io/transport-node";
+import { connect } from "../harness/existing.js";
 import { afterAll, afterEach, beforeAll, describe, expect, inject, it } from "vitest";
 import { defineWorkflow } from "../../src/core/workflow.js";
 import { CancelledError, WorkflowFailure } from "../../src/errors.js";
 import { jsonCodec } from "../../src/journal/codec.js";
 import { aesGcmPayloadCodec } from "../../src/journal/payload-codec.js";
-import { createClient, ensureEngine } from "../harness/engine.js";
+import { createClient, ensureEngine, mapPrefix } from "../harness/engine.js";
 import { NatsJournal } from "../harness/shell/journal-store.js";
 import { names } from "../harness/shell/names.js";
+import { WAN } from "../harness/mode.js";
 
 const natsUrl = inject("natsUrl");
 const repo = fileURLToPath(new URL("../..", import.meta.url));
@@ -60,7 +62,7 @@ async function startPythonWorker(prefix: string, encrypted: boolean): Promise<Ch
       env: {
         ...process.env,
         NATS_URL: natsUrl!,
-        DE_PREFIX: prefix,
+        DE_PREFIX: mapPrefix(prefix),
         ...(encrypted ? { DE_PAYLOAD_KEY: Buffer.from(KEY).toString("hex") } : {}),
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -110,6 +112,7 @@ async function waitForState(
   state: string,
   timeoutMs = 20_000,
 ): Promise<void> {
+  timeoutMs *= WAN; // durable-sdk: × the round-trip factor (harness/mode.ts, F29)
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if ((await status()).state === state) return;
@@ -154,6 +157,8 @@ describe.skipIf(!natsUrl || !uv)("interop: a TypeScript client drives a Python w
       expect(r.greeting).toBe(`HELLO ${SECRET.toUpperCase()}`);
       expect(r.from).toBe("python");
       expect(typeof r.at).toBe("number");
+      // durable-sdk: F27, as below; it lost the race in the existing-server mode at 150 ms (F29).
+      await waitForState(() => h.status(), "completed", 10_000);
       const s = await h.status();
       expect(s.state).toBe("completed");
       expect(s.workflow).toBe("greet");

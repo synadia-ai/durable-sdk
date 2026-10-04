@@ -12,9 +12,9 @@ import asyncio
 import json
 from typing import Any
 
-import nats
 import pytest
 
+import existing
 from conftest import over_payload
 from engine import create_client, create_worker
 from shell.journal_store import NatsJournal
@@ -63,7 +63,7 @@ async def pyenc_charge(ctx: Ctx, cart: dict[str, Any]) -> dict[str, Any]:
 
 
 async def test_nothing_on_the_journal_contains_the_secret(nats_url: str) -> None:
-    nc = await nats.connect(nats_url)
+    nc = await existing.connect(nats_url)
     worker = create_worker(nc, [pyenc_charge], prefix=ENC, payload_codec=aes_gcm_payload_codec(KEY))
     await worker.start()
     try:
@@ -97,7 +97,7 @@ async def test_nothing_on_the_journal_contains_the_secret(nats_url: str) -> None
 
 async def test_control_without_the_codec_the_same_run_leaks(nats_url: str) -> None:
     """Without this, the test above proves nothing — a typo'd secret would also "not appear"."""
-    nc = await nats.connect(nats_url)
+    nc = await existing.connect(nats_url)
     worker = create_worker(nc, [pyenc_charge], prefix=PLAIN)
     await worker.start()
     try:
@@ -123,7 +123,7 @@ async def test_a_worker_without_the_codec_parks_and_the_run_heals(nats_url: str)
     Asserts both halves: nothing terminal is written while the misconfigured worker holds the item,
     and a correctly-configured worker then finishes the very same run.
     """
-    nc = await nats.connect(nats_url)
+    nc = await existing.connect(nats_url)
     rec = _Recorder()
 
     # A client WITH the codec writes a v:3 start entry…
@@ -166,7 +166,7 @@ async def test_a_worker_without_the_codec_parks_and_the_run_heals(nats_url: str)
 
 async def test_a_client_without_the_codec_fails_loud_instead_of_hanging(nats_url: str) -> None:
     """A client that cannot decode never heals by waiting; timing out would hide a config mistake."""
-    nc = await nats.connect(nats_url)
+    nc = await existing.connect(nats_url)
     worker = create_worker(nc, [pyenc_charge], prefix=ENC, payload_codec=aes_gcm_payload_codec(KEY))
     await worker.start()
     try:
@@ -236,7 +236,7 @@ async def _park_then_signal(nc: Any, prefix: str, wf: Any, codec: Any, data: str
 # (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 async def test_a_large_signals_blob_holds_ciphertext_too(nats_url: str) -> None:
     """Encryption cannot depend on payload SIZE — nothing in the model or the journal says it does."""
-    nc = await nats.connect(nats_url)
+    nc = await existing.connect(nats_url)
     codec = aes_gcm_payload_codec(KEY)
     worker = create_worker(nc, [pyenc_bigsig], prefix=ENC, payload_codec=codec)
     await worker.start()
@@ -267,7 +267,7 @@ async def test_a_large_signals_blob_holds_ciphertext_too(nats_url: str) -> None:
 # (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 async def test_control_without_a_codec_the_same_signal_lands_in_the_clear(nats_url: str) -> None:
     """Proves the assertion above is load-bearing, not a secret that never reached the bucket."""
-    nc = await nats.connect(nats_url)
+    nc = await existing.connect(nats_url)
     worker = create_worker(nc, [pyplain_bigsig], prefix=PLAIN)
     await worker.start()
     try:

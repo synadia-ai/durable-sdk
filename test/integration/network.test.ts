@@ -10,8 +10,8 @@
 import net from "node:net";
 import { jetstream, jetstreamManager } from "@nats-io/jetstream";
 import { type NatsConnection } from "@nats-io/nats-core";
-import { connect } from "@nats-io/transport-node";
-import { afterEach, describe, expect, inject, it } from "vitest";
+import { connect } from "../harness/existing.js";
+import { afterEach, expect, inject, it } from "vitest";
 import { defineWorkflow } from "../../src/core/workflow.js";
 import { ConnectionClosedError } from "../../src/errors.js";
 import { encodeJson } from "../../src/internal/json.js";
@@ -32,10 +32,15 @@ import { type Ctx } from "../../src/types.js";
 import { assertNoEphemeralConsumers } from "../harness/leftovers.js";
 import { NatsServerProcess } from "../harness/nats-server.js";
 import { NatsProxy } from "../harness/proxy.js";
+import { describeUnlessExisting, OWN_LINK, OWN_SERVER, WAN } from "../harness/mode.js";
 
 // The server itself. With DE_TEST_RTT_MS set, `natsUrl` is already a delay proxy, and a second
 // proxy stacked on it would make every number below mean something else.
 const serverUrl = inject("natsDirectUrl");
+// durable-sdk: every suite here owns the link or the server, which an existing server (DE_NATS_URL)
+// does not give it (harness/mode.ts).
+const ownLink = describeUnlessExisting(OWN_LINK, !!serverUrl);
+const ownServer = describeUnlessExisting(OWN_SERVER, !!serverUrl);
 const MIB = 1024 * 1024;
 const SIZED = { streamMaxBytes: 16 * MIB };
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -144,7 +149,7 @@ async function assertJournalSane(nc: NatsConnection, prefix: string, runId: stri
   ).toEqual([]);
 }
 
-describe.skipIf(!serverUrl)("the proxy itself (the instrument)", () => {
+ownLink("the proxy itself (the instrument)", () => {
   const scope = new Scope();
   afterEach(() => scope.close());
 
@@ -232,7 +237,7 @@ describe.skipIf(!serverUrl)("the proxy itself (the instrument)", () => {
   });
 });
 
-describe.skipIf(!serverUrl)("latency", () => {
+ownLink("latency", () => {
   const scope = new Scope();
   afterEach(() => scope.close());
 
@@ -472,7 +477,7 @@ describe.skipIf(!serverUrl)("latency", () => {
   });
 });
 
-describe.skipIf(!serverUrl)("disconnects", () => {
+ownLink("disconnects", () => {
   const scope = new Scope();
   afterEach(() => scope.close());
 
@@ -645,7 +650,7 @@ describe.skipIf(!serverUrl)("disconnects", () => {
   });
 });
 
-describe.skipIf(!serverUrl)("a connection that closes for good", () => {
+ownLink("a connection that closes for good", () => {
   const scope = new Scope();
   afterEach(() => scope.close());
 
@@ -688,10 +693,11 @@ describe.skipIf(!serverUrl)("a connection that closes for good", () => {
   });
 });
 
-describe.skipIf(!serverUrl)("a broker crash mid-storm", () => {
+ownServer("a broker crash mid-storm", () => {
   const scope = new Scope();
   afterEach(() => scope.close());
 
+  // prettier-ignore
   it("SIGKILL + restart under a two-worker signal storm: every run completes, every journal is sane", async () => {
     const prefix = "netboom";
     const server = new NatsServerProcess();
@@ -771,5 +777,5 @@ describe.skipIf(!serverUrl)("a broker crash mid-storm", () => {
       for (const step of ["s1", "s2", "s3"]) expect(ran.get(`r${String(i)}:${step}`) ?? 0).toBeGreaterThanOrEqual(1); // prettier-ignore
     }
     await assertNoEphemeralConsumers(server.url);
-  }, 120_000);
+  }, 120_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 });

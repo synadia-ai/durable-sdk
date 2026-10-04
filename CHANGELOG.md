@@ -4,6 +4,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.7.0-alpha] — unreleased
 
+### Follow-up 2 (2026-10-04): the harness's mode for an existing server
+
+`engine.pin` moves from `1efd2ec` to `57ae3c9` (the engine's PR #4, pull on demand). Both languages unless said; nothing in `src/` or `python/src/` changed.
+
+- **`DE_NATS_URL`** runs the integration suites against a server the run does not own (`docs/findings.md` F29; the README's "Against an existing server"): no spawn; `DE_NATS_CREDS`; one prefix (`DE_PREFIX`) and one `durable-engine serve` for the run (or `DE_ENGINE_URL`'s), restarted only for a test's flags; after each test a purge of what it changed under the prefix and of the durables made for its workflow names, never a stream; the leftovers check on the prefix's streams; every wait scaled by the measured round trip; `DE_CLEANUP=delete`; the prefix's leftovers, the engine's `/metrics` and its log in `.de-run/`. Under `DE_TEST_RTT_MS` the engine goes through the proxy too.
+- **Skipped in the mode, by name:** the 16 network tests that run (a proxy or a server of their own) and the deleted-`DE_TIMERS` test, in each language.
+- The interop worker and client read `NATS_CREDS`; Python's dev dependencies gain `nkeys` (F30).
+- Test fixes the 150 ms run found: the work durable is bound at the first poll on `57ae3c9` (TypeScript `e2e`), F27's race in `interop-py`, two Python sleeps that stood for "the step is executing".
+- New findings F29, F30.
+
 ### Follow-up (2026-10-04): the SDK halves of the engine's PR #3
 
 `engine.pin` moves from `d8c0d73` to `1efd2ec`. Both languages unless said.

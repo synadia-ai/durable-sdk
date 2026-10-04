@@ -2,17 +2,20 @@
 // versions of one workflow name; each run executes the EXACT version its `start` recorded, and
 // continueAsNew({version}) migrates a chain onto a new version. See docs/DESIGN-versioning.md.
 
-import { connect, type NatsConnection } from "@nats-io/transport-node";
+import { type NatsConnection } from "@nats-io/transport-node";
+import { connect } from "../harness/existing.js";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { defineWorkflow } from "../../src/core/workflow.js";
 import { CancelledError } from "../../src/errors.js";
 import { createClient } from "../harness/engine.js";
 import { createWorker } from "../harness/engine.js";
+import { WAN } from "../harness/mode.js";
 
 const natsUrl = inject("natsUrl");
 const SMALL = 64 * 1024 * 1024; // keep each prefix's reserved max_bytes frugal
 
 async function waitUntil(cond: () => Promise<boolean>, timeoutMs: number): Promise<void> {
+  timeoutMs *= WAN; // durable-sdk: × the round-trip factor (harness/mode.ts, F29)
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (await cond()) return;

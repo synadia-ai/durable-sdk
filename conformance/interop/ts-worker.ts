@@ -8,6 +8,8 @@
 //
 // Prints "READY" on stdout once its consumers are bound, so the test can stop guessing.
 
+import { readFileSync } from "node:fs";
+import { credsAuthenticator } from "@nats-io/nats-core";
 import { connect } from "@nats-io/transport-node";
 import { aesGcmPayloadCodec, createWorker, defineWorkflow } from "../../src/index.js";
 
@@ -39,7 +41,12 @@ const boom = defineWorkflow("boom", (_ctx, _input: unknown): Promise<never> => {
   throw new Error("the carrier rejected the shipment");
 });
 
-const nc = await connect({ servers: process.env.NATS_URL ?? "nats://127.0.0.1:4222" });
+// NATS_CREDS: a creds file, when the server needs one (the harness's existing-server mode).
+const creds = process.env.NATS_CREDS;
+const nc = await connect({
+  servers: process.env.NATS_URL ?? "nats://127.0.0.1:4222",
+  ...(creds ? { authenticator: credsAuthenticator(readFileSync(creds)) } : {}),
+});
 // DE_PAYLOAD_KEY (hex) turns on encryption at rest, mirroring ts-client.ts — so the Python suite can
 // drive a TypeScript worker that encrypts and check what actually landed on the streams.
 const keyHex = process.env.DE_PAYLOAD_KEY;

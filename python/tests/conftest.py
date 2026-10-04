@@ -35,12 +35,26 @@ from typing import Any
 
 import pytest
 
+import existing
 from netproxy import ProxyProcess
 from shell.blob_store import NatsBlobStore
 
 # Native message scheduling (ctx.sleep / wait timeouts) needs nats-server >= 2.14, and provisioning
 # fails loud without it — the same preflight the library performs.
 SERVER_START_TIMEOUT_S = 10.0
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """The mode's lines (existing.say) go to the terminal, past pytest's capture."""
+
+    def say(line: str) -> None:
+        reporter = config.pluginmanager.get_plugin("terminalreporter")
+        if reporter is None:
+            print(line)
+        else:
+            reporter.write_line(line)
+
+    existing.say = say
 
 
 def _free_port() -> int:
@@ -217,6 +231,12 @@ def nats_direct_url() -> Iterator[str]:
     Skips the test when the binary is not on PATH. This is the SERVER, whatever ``DE_TEST_RTT_MS``
     says: the harness's own hygiene uses it, and so does a test that brings its own proxy.
     """
+    if existing.EXISTING is not None:
+        # The mode for an existing server (existing.py): no spawn, no profile; the end-of-run
+        # footprint check looks at the run prefix's streams only.
+        yield existing.EXISTING.url
+        _assert_no_ephemeral_consumers(existing.EXISTING.url)
+        return
     server = spawn_server(limits_for(profile_from_env()))
     try:
         yield server.url
@@ -235,13 +255,45 @@ def nats_url(nats_direct_url: str) -> Iterator[str]:
     of it, so every existing test runs at a WAN round trip without knowing."""
     rtt = rtt_from_env()
     if rtt <= 0:
+        _measure_in_mode(nats_direct_url, nats_direct_url, rtt)
         yield nats_direct_url
         return
     proxy = ProxyProcess(nats_direct_url, rtt)
     try:
+        _measure_in_mode(nats_direct_url, proxy.url, rtt)
         yield proxy.url
     finally:
         proxy.stop()
+
+
+def _measure_in_mode(server_url: str, url: str, proxy_rtt: float) -> None:
+    """In the mode: the round trip to where the tests connect, measured once, and the factor every
+    wait is scaled by (existing.py), printed once."""
+    import asyncio
+
+    ex = existing.EXISTING
+    if ex is None:
+        return
+
+    async def measure(u: str) -> float:
+        nc = await existing.connect(u, name="test-harness-rtt")
+        try:
+            return await existing.measure_rtt(nc)
+        finally:
+            await nc.close()
+
+    server_rtt = asyncio.run(measure(server_url))
+    rtt_ms = asyncio.run(measure(url)) if url != server_url else server_rtt
+    existing.FACTOR = existing.rtt_factor(rtt_ms)
+    via = (
+        f" (the server {server_rtt:.1f} ms, the proxy {proxy_rtt:g} ms)"
+        if url != server_url
+        else ""
+    )
+    existing.say(
+        f"existing server {ex.url}{' (creds)' if ex.creds else ''}, prefix {ex.prefix}, round trip "
+        f"{rtt_ms:.1f} ms{via} -> every wait x {existing.FACTOR:g}"
+    )
 
 
 async def list_ephemeral_consumers(nc: Any) -> list[str]:
@@ -288,11 +340,13 @@ def _assert_no_ephemeral_consumers(url: str) -> None:
     """The end-of-run footprint check. Runs in its own event loop: the session fixture is sync."""
     import asyncio
 
-    import nats
-
     async def scan() -> list[str]:
-        nc = await nats.connect(url)
+        nc = await existing.connect(url)
         try:
+            if existing.EXISTING is not None:
+                return await existing.prefix_ephemeral_consumers(
+                    nc, existing.EXISTING.prefix, existing.AT_START
+                )
             return await list_ephemeral_consumers(nc)
         finally:
             await nc.drain()
@@ -312,16 +366,15 @@ def over_payload(nc: Any, factor: float = 1.5) -> int:
 
 @pytest.fixture
 def prefix() -> str:
-    """A unique resource prefix per test, so tests never share streams (or each other's state)."""
-    return f"t{uuid.uuid4().hex[:10]}"
+    """A unique resource prefix per test, so tests never share streams (or each other's state) —
+    or, against an existing server, the run's one prefix (existing.py)."""
+    return existing.map_prefix(f"t{uuid.uuid4().hex[:10]}")
 
 
 @pytest.fixture
 async def nc(nats_url: str) -> AsyncIterator[object]:
     """A connected NATS client, closed at teardown."""
-    import nats
-
-    conn = await nats.connect(nats_url)
+    conn = await existing.connect(nats_url)
     try:
         yield conn
     finally:
