@@ -5,7 +5,7 @@
 /** The default prefix: the engine's and the library's (`de`). */
 export const DEFAULT_PREFIX = "de";
 
-/** The 13 ops of API v1. */
+/** The 15 ops of API v1. */
 export type Op =
   | "start"
   | "result"
@@ -19,7 +19,9 @@ export type Op =
   | "child"
   | "done"
   | "extend"
-  | "info";
+  | "info"
+  | "put"
+  | "get";
 
 /** The subject a request for `op` is published to. */
 export function apiSubject(prefix: string, op: Op): string {

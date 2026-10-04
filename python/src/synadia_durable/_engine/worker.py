@@ -6,7 +6,10 @@ the journal is paged in with ``load`` while ``more``, reversed through the paylo
 replayed by the library's ``execute_run`` with its three seams as requests under the item's lease
 (Journal → load/append, Scheduler → wake, Children → child), with ``extend`` on a third of the ack
 wait meanwhile; the ``ExecOutcome`` goes back as ``done``. On ``expired`` from any request the item
-is dropped and the slot polls on. The worker holds no state across items: the consumers, the
+is dropped and the slot polls on. A value too large for a request or a reply goes up and comes
+down in parts (``blobs.py``). Every poll names this worker, and ``stop()`` withdraws its waiting
+polls (``poll {cancelPoll}``), so a stop takes as long as the items in flight, not a poll's wait.
+The worker holds no state across items: the consumers, the
 inbound event, the run lease, the ack matrix, the obligations after a terminal, the cascade, the
 forward, the parked index and the lost-wake repair are the engine's.
 """
@@ -16,18 +19,28 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+import uuid
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
+from synadia_durable._engine.blobs import EngineBlobs, Sizes
 from synadia_durable._engine.errors import EngineError, InvalidRequestError, LeaseExpiredError
 from synadia_durable._engine.names import DEFAULT_PREFIX, Op
-from synadia_durable._engine.payload import WireJournal, reverse_journal, slot, wire_entry
+from synadia_durable._engine.payload import (
+    WireJournal,
+    fit_entry,
+    fit_slot,
+    reverse_journal,
+    wire_entry,
+)
 from synadia_durable._engine.transport import Transport
 from synadia_durable._internal.logger import Logger, SilentLogger
 from synadia_durable._internal.metrics import Metrics, emit_safe
 from synadia_durable.core.execute import ExecOutcome, execute_run
 from synadia_durable.core.registry import build_registry
 from synadia_durable.errors import (
+    BlobIntegrityError,
+    BlobMissingError,
     ConnectionClosedError,
     FencedError,
     PayloadCodecError,
@@ -114,12 +127,16 @@ class Worker:
         poll_wait_ms: int = DEFAULT_POLL_WAIT_MS,
         logger: Logger | None = None,
         metrics: Metrics | None = None,
+        offload: bool = True,
     ) -> None:
         self._nc = nc
         self._prefix = prefix
         self._log: Logger = logger or SilentLogger()
         self._metrics = metrics
         self._request = Transport(nc, prefix, self._log)
+        self._sizes = Sizes(self._request, lambda: nc.max_payload if nc.is_connected else 0)
+        #: ``offload=False`` keeps the library's meaning: nothing goes up in parts.
+        self._offload = offload
         self._codec = payload_codec
         # name → version → workflow. Raises on a duplicate (name, version): fail loud at
         # construction.
@@ -134,6 +151,8 @@ class Worker:
 
         self._running = False
         self._closed_reported = False
+        #: This worker's name on its polls, so that stop() withdraws its polls and no one else's.
+        self._worker_id = str(uuid.uuid4())
         self._slots: list[PumpHealth] = []
         self._polls: list[asyncio.Task[None]] = []
         #: run_id of every item held right now, by item.
@@ -171,17 +190,26 @@ class Worker:
     async def stop(self, drain_timeout_s: float = DEFAULT_DRAIN_TIMEOUT_S) -> None:
         """Stop polling, and let the items in flight finish (bounded by ``drain_timeout_s``).
 
-        A poll still waiting in the engine is not abandoned: its loop stays subscribed until the
-        engine answers, and an item it is handed then goes straight back (``done retry``) instead
-        of waiting out its ack wait (docs/findings.md F5).
+        This worker's polls still waiting in the engine are withdrawn (``poll {cancelPoll}``,
+        API.md "Withdrawing polls"): every instance answers them ``none`` at once and never hands
+        them an item. An item handed in the instant before goes straight back (``done retry``).
+        Without an engine to answer, the polls end at their own wait, as before.
 
         Past the timeout the items still in flight are cancelled, as the library's ``stop()`` did: a
         shutdown must complete. They send no ``done``, so their leases lapse and the items
         redeliver at the ack wait, which is correct, just slower.
         """
+        was_running = self._running
         self._running = False
         for s in self._slots:
             s.alive = False
+        if was_running and not self._nc.is_closed:
+            try:
+                await self._request.request(
+                    "poll", {"workflows": [], "worker": self._worker_id, "cancelPoll": True}
+                )
+            except Exception as e:  # noqa: BLE001 — the polls then end at their own wait
+                self._log.debug("durable: withdrawing the polls failed; they end at their wait", error=str(e))  # fmt: skip
         if self._inflight:
             _done, pending = await asyncio.wait(set(self._inflight), timeout=drain_timeout_s)
             if pending:
@@ -242,7 +270,11 @@ class Worker:
             try:
                 r = await self._request.request(
                     "poll",
-                    {"workflows": self._workflows, "waitMs": self._poll_wait_ms},
+                    {
+                        "workflows": self._workflows,
+                        "waitMs": self._poll_wait_ms,
+                        "worker": self._worker_id,
+                    },
                     wait_ms=self._poll_wait_ms,
                 )
                 failures = 0
@@ -316,9 +348,17 @@ class Worker:
         )
         dropped = _Dropped()
         leased = _Leased(self._request, self._log, run_id, lease, dropped)
-        journal = _EngineJournal(leased, self._codec, self._metrics)
+        transport = self._request
+
+        async def blob_request(op: Op, body: dict[str, Any]) -> dict[str, Any]:
+            # A part of this run's blob carries the lease; another run's (a child's input) does not.
+            return await (leased(op, body) if "lease" in body else transport.request(op, body))
+
+        blobs = EngineBlobs(blob_request, self._sizes, lease=(run_id, lease), metrics=self._metrics)
+        sizes = self._sizes if self._offload else None
+        journal = _EngineJournal(leased, self._codec, self._metrics, blobs, sizes)
         scheduler = _EngineScheduler(leased)
-        children = _EngineChildren(leased, self._codec)
+        children = _EngineChildren(leased, self._codec, blobs, sizes)
 
         outcome = ExecOutcome(kind="retry")
         #: The library's `work.done` outcome when it is not the ExecOutcome's kind.
@@ -357,6 +397,19 @@ class Worker:
                 )
         except asyncio.CancelledError:
             raise
+        except (BlobMissingError, BlobIntegrityError) as e:
+            label = "blob-unresolvable"
+            # An offloaded payload that cannot be resolved (gone, or its digest wrong) makes the
+            # journal unreadable: operational, so hand the item back (the engine naks with backoff),
+            # loud, and never a terminal. It heals when the blob is restored, or the run cancelled.
+            self._log.error(
+                "durable: offloaded payload unresolvable; parking run — restore the blob or cancel "
+                "the run",
+                run_id=run_id,
+                blob=e.blob_name,
+                error=str(e),
+            )
+            outcome = ExecOutcome(kind="retry", cause=e)
         except PayloadCodecError as e:
             label = "payload-codec"
             # The journal is readable but its payloads are not, and every cause (no codec, the
@@ -464,15 +517,23 @@ class _EngineJournal:
     """The Journal seam: ``load`` pages the run's journal in, ``append`` is one ``append``."""
 
     def __init__(
-        self, leased: _Leased, codec: PayloadCodec | None, metrics: Metrics | None
+        self,
+        leased: _Leased,
+        codec: PayloadCodec | None,
+        metrics: Metrics | None,
+        blobs: EngineBlobs,
+        sizes: Sizes | None,
     ) -> None:
         self._leased = leased
         self._codec = codec
         self._metrics = metrics
+        self._blobs = blobs
+        self._sizes = sizes
 
     async def load_pages(self, first: WireJournal, more: bool) -> list[LoadedEntry]:
-        """The run's journal: ``first`` (the poll's), then ``load`` pages while ``more``. One
-        ``journal.load`` event per call: every replay starts with one, as the library's."""
+        """The run's journal: ``first`` (the poll's), then ``load`` pages while ``more``, every ref
+        fetched and every ``<slot>Enc`` reversed. One ``journal.load`` event per call: every replay
+        starts with one, as the library's, and ``bytes`` is the journal as the engine handed it."""
         run_id = self._leased.run_id
         started = time.monotonic()
         wire = list(first)
@@ -482,13 +543,15 @@ class _EngineJournal:
             page = r.get("journal") or []
             wire.extend(page)
             more = bool(r.get("more")) and len(page) > 0
-        out = await reverse_journal(run_id, wire, self._codec)
+        out = await reverse_journal(run_id, wire, self._codec, self._blobs)
         emit_safe(
             self._metrics,
             "journal.load",
             {
                 "run_id": run_id,
                 "entries": len(out),
+                # The journal as the engine handed it (refs and `<slot>Enc` as they came).
+                "bytes": sum(len(json_codec.encode(le["entry"])) for le in wire),
                 "ms": round((time.monotonic() - started) * 1000),
                 "outcome": "ok",
             },
@@ -518,7 +581,14 @@ class _EngineJournal:
             )
 
         try:
+            envelope = {
+                "runId": run_id,
+                "msgID": append.msg_id,
+                "expectLastSeq": append.expect_last_seq,
+                "lease": "x" * 64,
+            }
             entry = await wire_entry(run_id, append.entry, self._codec)
+            entry = await fit_entry(run_id, entry, envelope, self._sizes, self._blobs)
             size = len(json_codec.encode(entry))
             r = await self._leased(
                 "append",
@@ -550,9 +620,17 @@ class _EngineScheduler:
 class _EngineChildren:
     """The Children seam: ``child``, under the item's lease."""
 
-    def __init__(self, leased: _Leased, codec: PayloadCodec | None) -> None:
+    def __init__(
+        self,
+        leased: _Leased,
+        codec: PayloadCodec | None,
+        blobs: EngineBlobs,
+        sizes: Sizes | None,
+    ) -> None:
         self._leased = leased
         self._codec = codec
+        self._blobs = blobs
+        self._sizes = sizes
 
     async def start(self, child: ChildStart) -> None:
         body: dict[str, Any] = {
@@ -560,8 +638,18 @@ class _EngineChildren:
             "workflow": child.workflow,
             "version": child.version,
         }
-        body |= await slot("input", child.input, self._codec, child.child_run_id)
-        body["parent"] = {"runId": child.parent.run_id, "seq": child.parent.seq, "wf": child.parent.wf}  # fmt: skip
+        parent = {"runId": child.parent.run_id, "seq": child.parent.seq, "wf": child.parent.wf}
+        # A child's input too large for the request is `put` under the CHILD's run.
+        body |= await fit_slot(
+            "input",
+            child.input,
+            self._codec,
+            child.child_run_id,
+            {**body, "parent": parent, "lease": "x" * 64},
+            self._sizes,
+            self._blobs,
+        )
+        body["parent"] = parent
         await self._leased("child", body)
 
 
@@ -626,13 +714,14 @@ def create_worker(
     (``--lease-ttl``), ``stream_max_bytes`` (``--stream-max-bytes``), ``maintenance_interval_ms``
     (``--maintenance-interval``), ``reconcile_grace_ms`` (``--reconcile-grace``),
     ``reconcile_timers`` (always on), ``version_wait_ms`` (the engine parks an unpolled version) and
-    ``offload`` (``info``'s ``offload_threshold``).
+    ``offload``'s tuning (``info``'s ``offload_threshold``, ``serve --offload-threshold``).
+    ``offload=False`` keeps the library's meaning: nothing goes up in parts, and a value too large
+    for a request fails the run loud (``PayloadTooLargeError``).
     """
     _ = (
         ack_wait_ms,
         version_wait_ms,
         stream_max_bytes,
-        offload,
         maintenance_interval_ms,
         reconcile_timers,
         reconcile_grace_ms,
@@ -650,4 +739,5 @@ def create_worker(
         poll_wait_ms=poll_wait_ms,
         logger=logger,
         metrics=metrics,
+        offload=offload is not False,
     )

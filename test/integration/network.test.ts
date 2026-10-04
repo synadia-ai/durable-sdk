@@ -21,7 +21,7 @@ import {
   type Metrics,
 } from "../../src/internal/metrics.js";
 import { jsonCodec } from "../../src/journal/codec.js";
-import { createClient } from "../harness/engine.js";
+import { createClient, engineLog } from "../harness/engine.js";
 import { NatsJournal } from "../harness/shell/journal-store.js";
 import { names } from "../harness/shell/names.js";
 import { type WorkItem } from "../../src/core/work-item.js";
@@ -459,15 +459,15 @@ describe.skipIf(!serverUrl)("latency", () => {
     expect(r.executions()).toBe(1);
   });
 
-  // durable-sdk: BLOCKED by docs/findings.md F9 (past maxWorkMs the engine's lease is gone and
-  // refuses even the holder's late append, so a step longer than maxWorkMs never completes: the
-  // run livelocks instead of being taken over). Its `lease.gate` assertion is the engine's too.
-  it.skip("…and the control: the same run with renewal cut short IS taken over, and the step runs twice", async () => {
+  // durable-sdk: docs/findings.md F9, answered by the engine's F18 (past maxWorkMs the lease is
+  // lapsed, not gone). The takeover is the engine's to see now: its log, `run taken over past max
+  // work` (or `run lease taken over`, across instances), stands for the `lease.gate` event.
+  it("…and the control: the same run with renewal cut short IS taken over, and the step runs twice", async () => {
     // `maxWorkMs` is the public knob that stops a holder's renewal (the hung-step escape hatch):
     // at 300 ms the lease is written once and never again, so its 2 s deadline simply passes.
     const r = await leaseUnderLatency("netls2", 300);
     expect(r.result).toBe("done");
-    expect(r.gates.some((e) => e.fields.outcome === "takeover")).toBe(true);
+    expect((await engineLog("netls2")).some((l) => l.includes("taken over"))).toBe(true);
     expect(r.executions()).toBeGreaterThanOrEqual(2);
   });
 });

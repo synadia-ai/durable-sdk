@@ -1,7 +1,9 @@
 // @synadia-ai/durable — the client: start runs, observe them, signal and cancel them, through the
 // engine's five client ops (durable-engine docs/API.md: start, result, status, signal, cancel).
 // The library's Client and Handle, unchanged in shape; what was the shell's (the journal reads,
-// the status hint subscription, provisioning, offload) is the engine's now.
+// the status hint subscription, provisioning, offload) is the engine's now, but for a value too
+// large for one request or reply, which goes up in `put` parts and comes down in `get` parts
+// (blobs.ts).
 
 import { type NatsConnection } from "@nats-io/nats-core";
 import {
@@ -11,8 +13,9 @@ import {
   WorkflowFailure,
 } from "../errors.js";
 import { type Logger, SILENT_LOGGER } from "../internal/logger.js";
-import { type Metrics } from "../internal/metrics.js";
+import { emitSafe, type Metrics } from "../internal/metrics.js";
 import { assertToken } from "../internal/token.js";
+import { type BlobRef } from "../journal/entry.js";
 import { type OffloadOptions } from "../journal/blobs.js";
 import { type PayloadCodec } from "../journal/payload-codec.js";
 import {
@@ -22,9 +25,10 @@ import {
   type StartOptions,
   type Workflow,
 } from "../types.js";
+import { EngineBlobs, sizesOf } from "./blobs.js";
 import { EngineUnavailableError } from "./errors.js";
 import { DEFAULT_PREFIX } from "./names.js";
-import { slot, unslot } from "./payload.js";
+import { fitSlot, unref, unslot } from "./payload.js";
 import { createTransport } from "./transport.js";
 
 /** How long one `result` request asks the engine to wait (the engine caps it at its `max_poll_wait_ms`). */
@@ -64,11 +68,15 @@ export interface ClientOptions {
   payloadCodec?: PayloadCodec;
   /** Optional logger (default: silent). */
   logger?: Logger;
-  /** Accepted for the library's API; the client emits no events of its own (the engine counts). */
+  /** Optional metrics sink (default: silent): `blob.put` and `blob.get`, for a value too large for one request or reply. */
   metrics?: Metrics;
   /** The library's; provisioning is the engine's now (`durable-engine serve --stream-max-bytes`). Ignored. */
   streamMaxBytes?: number;
-  /** The library's; offload is the engine's now (`info`'s `offload_threshold`). Ignored. */
+  /**
+   * Its tuning is the engine's now (`info`'s `offload_threshold`, `serve --offload-threshold`) and
+   * ignored; `false` keeps the library's meaning: no value goes up in `put` parts, so one too large
+   * for a request fails loud (`PayloadTooLargeError`).
+   */
   offload?: OffloadOptions;
 }
 
@@ -80,6 +88,9 @@ interface ResultReply {
   valueEnc?: string;
   error?: { name: string; message: string };
   errorEnc?: string;
+  valueRef?: BlobRef;
+  errorRef?: BlobRef;
+  payloadEnc?: true;
   reason?: string;
 }
 
@@ -98,6 +109,14 @@ export function createClient(opts: ClientOptions): Client {
   const logger = opts.logger ?? SILENT_LOGGER;
   const request = createTransport(opts.nc, prefix, logger);
   const codec = opts.payloadCodec;
+  const sizes = sizesOf(request, () => opts.nc.info?.max_payload);
+  const fit = opts.offload === false ? undefined : sizes;
+  const metrics = opts.metrics;
+  const blobs = new EngineBlobs({
+    request,
+    sizes,
+    ...(metrics !== undefined ? { emit: (n, f) => emitSafe(metrics, n, f) } : {}),
+  });
 
   // A `result` request in flight across a disconnect loses its reply (the engine answers an inbox
   // nobody is subscribed to for that moment): the wait is cut short at the next reconnect and the
@@ -146,13 +165,16 @@ export function createClient(opts: ClientOptions): Client {
             const gen = r.runId ?? runId;
             if (r.kind === "cancelled") throw new CancelledError(gen);
             if (r.kind === "result") {
+              if (r.valueRef !== undefined) return (await unref(gen, "value", r.valueRef, r.payloadEnc === true, codec, blobs)) as O; // prettier-ignore
               if (r.valueEnc !== undefined) return (await unslot(gen, r.valueEnc, codec)) as O;
               return r.value as O;
             }
             const err =
-              r.errorEnc !== undefined
-                ? ((await unslot(gen, r.errorEnc, codec)) as { name: string; message: string })
-                : (r.error ?? { name: "Error", message: "" });
+              r.errorRef !== undefined
+                ? ((await unref(gen, "error", r.errorRef, r.payloadEnc === true, codec, blobs)) as { name: string; message: string }) // prettier-ignore
+                : r.errorEnc !== undefined
+                  ? ((await unslot(gen, r.errorEnc, codec)) as { name: string; message: string })
+                  : (r.error ?? { name: "Error", message: "" });
             throw new WorkflowFailure(gen, `${err.name}: ${err.message}`);
           }
           if (Date.now() >= deadline) {
@@ -182,14 +204,19 @@ export function createClient(opts: ClientOptions): Client {
   return {
     async start<I, O>(workflow: Workflow<I, O>, input: I, o?: StartOptions): Promise<Handle<O>> {
       // Identifiers are checked here, so a bad one fails before a round trip. Without a runId
-      // the engine mints one.
+      // the engine mints one, unless the input is too large for a request: it is then `put`
+      // under a runId minted here (the engine's form, a UUID), which the start names.
       if (o?.runId !== undefined) assertToken("runId", o.runId);
       assertToken("workflow name", workflow.name);
+      const runId = o?.runId ?? globalThis.crypto.randomUUID();
+      const head = { runId, wf: workflow.name, version: workflow.version };
+      const input_ = await fitSlot("input", input, codec, runId, head, fit, blobs);
+      const named = o?.runId !== undefined || input_.inputRef !== undefined;
       const r = await request<{ runId: string }>("start", {
-        ...(o?.runId !== undefined ? { runId: o.runId } : {}),
+        ...(named ? { runId } : {}),
         wf: workflow.name,
         version: workflow.version,
-        ...(await slot("input", input, codec, o?.runId ?? "")),
+        ...input_,
       });
       return makeHandle<O>(r.runId);
     },
@@ -200,7 +227,7 @@ export function createClient(opts: ClientOptions): Client {
 
     async signal<T>(runId: string, name: string, data: T): Promise<void> {
       assertToken("runId", runId);
-      await request("signal", { runId, name, ...(await slot("data", data, codec, runId)) });
+      await request("signal", { runId, name, ...(await fitSlot("data", data, codec, runId, { runId, name }, fit, blobs)) }); // prettier-ignore
     },
 
     async cancel(runId: string, o?: { reason?: string }): Promise<void> {

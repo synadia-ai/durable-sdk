@@ -232,10 +232,8 @@ async def _park_then_signal(nc: Any, prefix: str, wf: Any, codec: Any, data: str
     return handle
 
 
-@pytest.mark.skip(
-    reason="durable-sdk: BLOCKED by docs/findings.md F1 — API v1 has no chunked upload: a signal "
-    "of twice max_payload cannot reach the engine, where the library offloaded it"
-)
+# durable-sdk: docs/findings.md F1/F2, answered by the engine's F25 (put and get) and F22
+# (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 async def test_a_large_signals_blob_holds_ciphertext_too(nats_url: str) -> None:
     """Encryption cannot depend on payload SIZE — nothing in the model or the journal says it does."""
     nc = await nats.connect(nats_url)
@@ -265,10 +263,8 @@ async def test_a_large_signals_blob_holds_ciphertext_too(nats_url: str) -> None:
         await nc.drain()
 
 
-@pytest.mark.skip(
-    reason="durable-sdk: BLOCKED by docs/findings.md F1 — API v1 has no chunked upload: a signal "
-    "of twice max_payload cannot reach the engine, where the library offloaded it"
-)
+# durable-sdk: docs/findings.md F1/F2, answered by the engine's F25 (put and get) and F22
+# (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 async def test_control_without_a_codec_the_same_signal_lands_in_the_clear(nats_url: str) -> None:
     """Proves the assertion above is load-bearing, not a secret that never reached the bucket."""
     nc = await nats.connect(nats_url)

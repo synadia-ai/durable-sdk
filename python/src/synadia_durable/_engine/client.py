@@ -3,7 +3,9 @@ engine's five client ops (``durable-engine`` ``docs/API.md``: start, result, sta
 cancel). Mirrors ``src/engine/client.ts``.
 
 The library's ``Client`` and ``RunHandle``, unchanged in shape; what was the shell's (the journal
-reads, the status hint subscription, provisioning, offload) is the engine's now.
+reads, the status hint subscription, provisioning, offload) is the engine's now, but for a value too
+large for one request or reply, which goes up in ``put`` parts and comes down in ``get`` parts
+(``blobs.py``).
 """
 
 from __future__ import annotations
@@ -11,11 +13,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+import uuid
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
+from synadia_durable._engine.blobs import EngineBlobs, Sizes
 from synadia_durable._engine.errors import EngineUnavailableError
 from synadia_durable._engine.names import DEFAULT_PREFIX
-from synadia_durable._engine.payload import slot, unslot
+from synadia_durable._engine.payload import fit_slot, unref, unslot
 from synadia_durable._engine.transport import Transport
 from synadia_durable._internal.logger import Logger, SilentLogger
 from synadia_durable._internal.token import assert_token
@@ -111,15 +115,20 @@ class RunHandle(Generic[OutT]):
         kind = r["kind"]
         if kind == "cancelled":
             raise CancelledError(gen)
+        blobs = self._client._blobs
+        enc = r.get("payloadEnc") is True
         if kind == "result":
+            if "valueRef" in r:
+                return await unref(gen, "value", r["valueRef"], enc, codec, blobs)
             if "valueEnc" in r:
                 return await unslot(gen, r["valueEnc"], codec)
             return r.get("value")
-        err = (
-            await unslot(gen, r["errorEnc"], codec)
-            if "errorEnc" in r
-            else r.get("error") or {"name": "Error", "message": "run failed"}
-        )
+        if "errorRef" in r:
+            err = await unref(gen, "error", r["errorRef"], enc, codec, blobs)
+        elif "errorEnc" in r:
+            err = await unslot(gen, r["errorEnc"], codec)
+        else:
+            err = r.get("error") or {"name": "Error", "message": "run failed"}
         raise WorkflowFailure(gen, f"{err['name']}: {err['message']}")
 
     def _closed_error(self) -> ConnectionClosedError:
@@ -140,12 +149,18 @@ class Client:
         prefix: str = DEFAULT_PREFIX,
         payload_codec: PayloadCodec | None = None,
         logger: Logger | None = None,
+        metrics: Metrics | None = None,
+        offload: bool = True,
     ) -> None:
         self._nc = nc
         self._prefix = prefix
         self._payload_codec = payload_codec
         self._log: Logger = logger or SilentLogger()
         self._request = Transport(nc, prefix, self._log)
+        sizes = Sizes(self._request, lambda: nc.max_payload if nc.is_connected else 0)
+        #: ``None`` under ``offload=False``: a value too large for a request fails loud.
+        self._sizes: Sizes | None = sizes if offload else None
+        self._blobs = EngineBlobs(self._request.request, sizes, metrics=metrics)
 
     async def _result_request(
         self, run_id: str, wait_ms: int, deadline: float
@@ -181,15 +196,21 @@ class Client:
         opts: StartOptions | None = None,
     ) -> RunHandle[OutT]:
         """Start a run idempotently. The runId is the idempotency key (PROTOCOL §11.1); without
-        one the engine mints it."""
+        one the engine mints it, unless the input is too large for a request: it is then ``put``
+        under a runId minted here (the engine's form, a UUID), which the start names."""
         run_id = opts.run_id if opts is not None and opts.run_id else None
         # Identifiers are checked here, so a bad one fails before a round trip.
         if run_id is not None:
             assert_token("runId", run_id)
         assert_token("workflow name", workflow.name)
-        body: dict[str, Any] = {} if run_id is None else {"runId": run_id}
+        rid = run_id or str(uuid.uuid4())
+        head: dict[str, Any] = {"runId": rid, "wf": workflow.name, "version": workflow.version}
+        value = await fit_slot(
+            "input", input, self._payload_codec, rid, head, self._sizes, self._blobs
+        )
+        body: dict[str, Any] = {} if run_id is None and "inputRef" not in value else {"runId": rid}
         body |= {"wf": workflow.name, "version": workflow.version}
-        body |= await slot("input", input, self._payload_codec, run_id or "")
+        body |= value
         r = await self._request.request("start", body)
         return RunHandle(self, str(r["runId"]))
 
@@ -202,7 +223,9 @@ class Client:
         :class:`~synadia_durable._engine.errors.RunNotFoundError`, a :class:`LookupError`."""
         assert_token("runId", run_id)
         body: dict[str, Any] = {"runId": run_id, "name": name}
-        body |= await slot("data", data, self._payload_codec, run_id)
+        body |= await fit_slot(
+            "data", data, self._payload_codec, run_id, body, self._sizes, self._blobs
+        )
         await self._request.request("signal", body)
 
     async def cancel(self, run_id: str, reason: str | None = None) -> None:
@@ -249,10 +272,18 @@ def create_client(
     ``dataEnc``, results come back as ``valueEnc`` / ``errorEnc`` and are decoded here, and
     ``status()`` carries no payload (the engine cannot read one).
 
-    ``stream_max_bytes`` and ``offload`` are the library's and the engine's now
-    (``durable-engine serve --stream-max-bytes``; ``info``'s ``offload_threshold``): accepted and
-    ignored. ``metrics`` is accepted for the library's API; the client emits no events of its own
-    (the engine counts).
+    ``stream_max_bytes`` is the engine's now (``durable-engine serve --stream-max-bytes``): accepted
+    and ignored. So is ``offload``'s tuning (``info``'s ``offload_threshold``, ``serve
+    --offload-threshold``); ``offload=False`` keeps the library's meaning, nothing goes up in parts
+    and a value too large for a request fails loud. ``metrics`` sees ``blob.put`` and ``blob.get``,
+    for a value too large for one request or reply.
     """
-    _ = (stream_max_bytes, offload, metrics)
-    return Client(nc, prefix=prefix, payload_codec=payload_codec, logger=logger)
+    _ = stream_max_bytes
+    return Client(
+        nc,
+        prefix=prefix,
+        payload_codec=payload_codec,
+        logger=logger,
+        metrics=metrics,
+        offload=offload is not False,
+    )

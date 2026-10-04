@@ -29,7 +29,14 @@ from conftest import (
     profile_from_env,
     spawn_server,
 )
-from engine import EngineFlags, create_client, create_worker, provision, set_engine_server
+from engine import (
+    EngineFlags,
+    create_client,
+    create_worker,
+    engine_log,
+    provision,
+    set_engine_server,
+)
 from netproxy import ProxyProcess
 from shell.journal_store import NatsJournal
 from shell.names import Names
@@ -557,12 +564,9 @@ async def test_lease_at_rtt_500_ttl_2s_a_live_holder_is_never_taken_over(
     assert r["executions"]() == 1
 
 
-# durable-sdk: BLOCKED by docs/findings.md F9 (past max_work_ms the engine's lease is gone and
-# refuses even the holder's late append, so a step longer than max_work_ms never completes: the run
-# livelocks instead of being taken over). Its `lease.gate` assertion is the engine's too.
-@pytest.mark.skip(
-    reason="durable-sdk: BLOCKED by docs/findings.md F9 — past max_work_ms the holder's late append is refused"
-)
+# durable-sdk: docs/findings.md F9, answered by the engine's F18 (past max_work_ms the lease is
+# lapsed, not gone). The takeover is the engine's to see now: its log, `run taken over past max work`
+# (or `run lease taken over`, across instances), stands for the `lease.gate` event.
 async def test_control_the_same_run_with_renewal_cut_short_is_taken_over(
     scope: Scope, nats_direct_url: str, prefix: str
 ) -> None:
@@ -570,9 +574,7 @@ async def test_control_the_same_run_with_renewal_cut_short_is_taken_over(
     hatch): at 300 ms the lease is written once and never again, so its 2 s deadline passes."""
     r = await _lease_under_latency(scope, nats_direct_url, prefix, 300)
     assert r["result"] == "done"
-    assert any(g["outcome"] == "takeover" for g in r["gates"]), [
-        (g["who"], g["outcome"], round(g["at"] - r["gates"][0]["at"], 2)) for g in r["gates"]
-    ]
+    assert any("taken over" in line for line in await engine_log(prefix))
     assert r["executions"]() >= 2
 
 

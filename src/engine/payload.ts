@@ -8,19 +8,27 @@
 //     base64 of the codec's output over the value's JSON bytes, the same bytes `encodePayload`
 //     would put in the entry the engine builds from them;
 //   - every journal the engine hands out is reversed slot by slot (`resolveEntry`) before replay.
-// Offload is the engine's: no blob store is reachable from here, and a ref would fail loud.
+// Offload is the engine's for every value that fits a request. One that does not goes up in `put`
+// parts (blobs.ts) and its request carries the ref: `fitEntry` and `fitSlot` below. A ref the
+// engine hands back, for a value too large for a reply, is fetched with `get` by `resolveEntry`
+// with the engine as its blob store.
 
 import { PayloadCodecError, SerializationError } from "../errors.js";
-import { type BlobStore, encodePayload, resolveEntry } from "../journal/blobs.js";
+import {
+  type BlobBytesCache,
+  type BlobStore,
+  encodePayload,
+  offloadEntry,
+  resolveEntry,
+  storePayloadBlob,
+} from "../journal/blobs.js";
 import { jsonCodec } from "../journal/codec.js";
-import { type JournalEntry, type LoadedEntry } from "../journal/entry.js";
+import { type BlobRef, type JournalEntry, type LoadedEntry } from "../journal/entry.js";
 import { fromBase64, type PayloadCodec, toBase64 } from "../journal/payload-codec.js";
+import { bodyBytes, type Sizes } from "./blobs.js";
 
 /** A journal as the engine answers it: `[{streamSeq, entry}]`. */
 export type WireJournal = Array<{ streamSeq: number; entry: JournalEntry }>;
-
-/** No blob store, by construction: the engine inflates every ref before it answers. */
-const NO_BLOBS: BlobStore | undefined = undefined;
 
 /** The entry an `append` carries: the stamped entry, its slot transformed under a codec. */
 export async function wireEntry(
@@ -43,18 +51,88 @@ export async function wireEntry(
   return out;
 }
 
-/** Reverse every `<slot>Enc` of a journal the engine handed out, in order. */
+/**
+ * The entry an `append` carries, fitted to `request_max`: when the request (`envelope` with the
+ * entry) would pass it, the entry's slot goes up in parts first and the entry carries its ref in
+ * the library's stored form (`offloadEntry`: slot removed, `<slot>Ref`, `v:2`, or `v:3` over codec
+ * output). An entry whose metadata alone is too large is left as it is, for the engine to refuse.
+ * `sizes` undefined is `offload: false`: nothing goes up, and a value too large fails loud.
+ */
+export async function fitEntry(
+  runId: string,
+  entry: JournalEntry,
+  envelope: Record<string, unknown>,
+  sizes: (() => Promise<Sizes>) | undefined,
+  blobs: BlobStore,
+): Promise<JournalEntry> {
+  if (sizes === undefined) return entry;
+  const { requestMax } = await sizes();
+  if (bodyBytes({ ...envelope, entry }) <= requestMax) return entry;
+  const out = await offloadEntry(runId, entry, jsonCodec.encode(entry), jsonCodec, blobs, 0);
+  return out.entry;
+}
+
+/**
+ * A value for a request slot, fitted to `request_max`: `slot()`'s form when the request (`rest`
+ * with it) fits; else the value is `put` under `runId` and the slot is `{[name + "Ref"]: ref}`,
+ * with `payloadEnc: true` when the blob holds codec output.
+ */
+export async function fitSlot(
+  name: "input" | "data",
+  value: unknown,
+  payloadCodec: PayloadCodec | undefined,
+  runId: string,
+  rest: Record<string, unknown>,
+  sizes: (() => Promise<Sizes>) | undefined,
+  blobs: BlobStore,
+): Promise<Record<string, unknown>> {
+  const inline = await slot(name, value, payloadCodec, runId);
+  if (sizes === undefined) return inline;
+  const { requestMax } = await sizes();
+  if (bodyBytes({ ...rest, ...inline }) <= requestMax) return inline;
+  const { ref, transformed } = await storePayloadBlob(runId, `the ${name}`, value, jsonCodec, blobs, payloadCodec); // prettier-ignore
+  return { [`${name}Ref`]: ref, ...(transformed ? { payloadEnc: true } : {}) };
+}
+
+/**
+ * Reverse every `<slot>Enc` of a journal the engine handed out, in order, and fetch every ref it
+ * handed in its stored form (a value too large for a reply) from `blobs`.
+ */
 export async function reverseJournal(
   runId: string,
   journal: WireJournal,
   payloadCodec: PayloadCodec | undefined,
+  blobs?: BlobStore,
+  cache?: BlobBytesCache,
 ): Promise<LoadedEntry[]> {
   const out: LoadedEntry[] = [];
   for (const l of journal) {
-    const entry = await resolveEntry(runId, l.entry, jsonCodec, NO_BLOBS, undefined, payloadCodec);
+    const entry = await resolveEntry(runId, l.entry, jsonCodec, blobs, cache, payloadCodec);
     out.push({ entry, streamSeq: l.streamSeq });
   }
   return out;
+}
+
+/**
+ * A `result` reply's `valueRef` / `errorRef`: fetched, its digest checked, reversed through the
+ * codec when `payloadEnc`, as `resolveEntry` resolves the same ref on a terminal entry.
+ */
+export async function unref(
+  runId: string,
+  slotName: "value" | "error",
+  ref: BlobRef,
+  payloadEnc: boolean,
+  payloadCodec: PayloadCodec | undefined,
+  blobs: BlobStore,
+): Promise<unknown> {
+  const entry = {
+    kind: slotName === "value" ? "result" : "fail",
+    seq: -1,
+    v: payloadEnc ? 3 : 2,
+    [`${slotName}Ref`]: ref,
+  } as unknown as JournalEntry;
+  const r = await resolveEntry(runId, entry, jsonCodec, blobs, undefined, payloadCodec);
+  return (r as unknown as Record<string, unknown>)[slotName];
 }
 
 /**

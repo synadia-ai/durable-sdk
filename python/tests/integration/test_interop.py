@@ -271,12 +271,8 @@ async def test_a_python_client_without_the_key_fails_loud_against_a_typescript_w
         await blind.get(handle.run_id).result(5_000)
 
 
-# durable-sdk: BLOCKED by docs/findings.md F1 (API v1 has no chunked upload: a value over
-# max_payload − 16 KiB cannot reach the engine, where the library offloaded it). The signal here is
-# twice max_payload by construction.
-@pytest.mark.skip(
-    reason="durable-sdk: BLOCKED by docs/findings.md F1 (no chunked upload in API v1)"
-)
+# durable-sdk: docs/findings.md F1/F2, answered by the engine's F25 (put and get) and F22
+# (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 async def test_a_typescript_worker_honours_the_payload_enc_flag_python_wrote(
     nc: Any, prefix: str, ts_worker_encrypted: Any
 ) -> None:

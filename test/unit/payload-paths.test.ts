@@ -55,7 +55,11 @@ describe("one way in: the payload-blob choke point", () => {
       .map((f) => f.path)
       .sort();
     // durable-sdk: `nats/runs.ts` (the DE_RUNS status hint) is the engine's now and not in src/.
+    // durable-sdk: `engine/payload.ts` (`fitSlot`) is the fourth route, and it says what it is: a
+    // start's input, a signal's data or a child's input too large for one request, `put` in parts
+    // (docs/findings.md F1, F25 of the engine). The codec decision is still this function's.
     expect(callers).toEqual([
+      "engine/payload.ts", // a start's input, a signal's data, a child's input over request_max
       "nats/protocol.ts", // a work item's signal data / child outcome
     ]);
   });

@@ -283,9 +283,9 @@ describe.skipIf(!natsUrl)("feature × concurrency crossings", () => {
     }
   }, 120_000);
 
-  // durable-sdk: BLOCKED by docs/findings.md F1 (API v1 has no chunked upload: a value over max_payload − 16 KiB cannot
-  // reach the engine, where the library offloaded it to the blob store).
-  it.skip("OFFLOAD × multi-worker: a storm over blob-backed payloads journals each step once", async () => {
+  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // chunked transport (src/engine/blobs.ts).
+  it("OFFLOAD × multi-worker: a storm over blob-backed payloads journals each step once", async () => {
     // Offload is proven against crash, fence and redelivery, but never under contention. What is
     // specific here: two workers re-running the same step both WRITE a blob, and the names are
     // content-addressed — so identical values converge on one object and the loser's write is

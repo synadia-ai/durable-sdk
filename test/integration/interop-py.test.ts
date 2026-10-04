@@ -185,7 +185,9 @@ describe.skipIf(!natsUrl || !uv)("interop: a TypeScript client drives a Python w
       const e = await h.result(20_000).catch((x: unknown) => x);
       expect(e).toBeInstanceOf(WorkflowFailure);
       expect(String((e as Error).message)).toContain("carrier rejected");
-      expect((await h.status()).state).toBe("failed");
+      // durable-sdk: `status` reads the engine's hint, written at the worker's `done`, one round
+      // trip after the terminal `result` answers from (docs/findings.md F27): wait for it.
+      await waitForState(() => h.status(), "failed", 10_000);
     });
 
     it("a TypeScript cancel hard-stops a parked Python run", async () => {
@@ -194,7 +196,7 @@ describe.skipIf(!natsUrl || !uv)("interop: a TypeScript client drives a Python w
       await waitForState(() => h.status(), "suspended");
       await client.cancel(h.runId, { reason: "customer withdrew" });
       await expect(h.result(20_000)).rejects.toBeInstanceOf(CancelledError);
-      expect((await h.status()).state).toBe("cancelled");
+      await waitForState(() => h.status(), "cancelled", 10_000); // durable-sdk: F27, as above
     });
 
     it("a small signal's data crosses to the Python workflow", async () => {

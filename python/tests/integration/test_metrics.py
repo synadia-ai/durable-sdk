@@ -113,6 +113,11 @@ async def test_one_ordinary_run_reports_the_whole_path(running: Any) -> None:
     # Journal reads: every replay starts with one.
     assert sink.named("journal.load"), "no journal.load events"
     assert set(sink.outcomes("journal.load")) == {"ok"}
+    # durable-sdk: one per item, with the journal's size (the twin of the TypeScript worker's,
+    # docs/findings.md F21; test/integration/metrics.test.ts asserts the same).
+    loads = sink.named("journal.load")
+    assert len(loads) >= len(sink.named("work.dispatch"))
+    assert all(ld["entries"] > 0 and ld["bytes"] > 0 for ld in loads)
 
     # Work items in and out, with the ack reason that says WHY.
     assert {d["kind"] for d in sink.named("work.dispatch")} >= {"start", "timer"}

@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any
 from synadia_durable import Client, RunHandle, Worker, WorkerHealth
 from synadia_durable import create_client as sdk_create_client
 from synadia_durable import create_worker as sdk_create_worker
+from synadia_durable.journal.blobs import MIN_OFFLOAD_THRESHOLD_BYTES
 
 if TYPE_CHECKING:
     from synadia_durable.types import RunStatus, StartOptions, Workflow
@@ -107,6 +108,7 @@ class EngineFlags:
     lease_ttl_ms: int | None = None
     maintenance_interval_ms: int | None = None
     reconcile_grace_ms: int | None = None
+    offload_threshold: int | None = None
 
     def args(self) -> list[str]:
         out: list[str] = []
@@ -124,6 +126,8 @@ class EngineFlags:
             out += ["--maintenance-interval", f"{self.maintenance_interval_ms}ms"]
         if self.reconcile_grace_ms is not None:
             out += ["--reconcile-grace", f"{self.reconcile_grace_ms}ms"]
+        if self.offload_threshold is not None:
+            out += ["--offload-threshold", str(self.offload_threshold)]
         return out
 
 
@@ -139,7 +143,13 @@ _FLAG_NAMES = (
 
 
 def flags_of(opts: dict[str, Any]) -> EngineFlags:
-    return EngineFlags(**{k: opts[k] for k in _FLAG_NAMES if opts.get(k) is not None})
+    flags = {k: opts[k] for k in _FLAG_NAMES if opts.get(k) is not None}
+    # `offload=OffloadOptions(threshold_bytes=…)` is `serve --offload-threshold` now (the engine's
+    # F22), clamped as the library clamped it, to its 1 KiB floor.
+    threshold = getattr(opts.get("offload"), "threshold_bytes", None)
+    if threshold is not None:
+        flags["offload_threshold"] = max(MIN_OFFLOAD_THRESHOLD_BYTES, int(threshold))
+    return EngineFlags(**flags)
 
 
 _instances = 0

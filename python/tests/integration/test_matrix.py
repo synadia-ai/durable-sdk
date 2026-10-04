@@ -297,10 +297,8 @@ async def _state_is_not(client: Any, run_id: str, state: str) -> bool:
     return str((await client.get(run_id).status()).state) != state
 
 
-@pytest.mark.skip(
-    reason="durable-sdk: BLOCKED by docs/findings.md F1 — API v1 has no chunked upload: a value "
-    "over max_payload - 16 KiB cannot reach the engine, where the library offloaded it"
-)
+# durable-sdk: docs/findings.md F1/F2, answered by the engine's F25 (put and get) and F22
+# (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 async def test_offload_x_multi_worker_a_storm_over_blob_backed_payloads(
     nc: Any, prefix: str
 ) -> None:

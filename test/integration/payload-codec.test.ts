@@ -296,10 +296,9 @@ describe.skipIf(!natsUrl)("payload encryption — the work-item boundary", () =>
     bigSecret = `${SECRET}-${"s".repeat(2 * maxPayload(nc))}`;
   });
 
-  // durable-sdk: BLOCKED by docs/findings.md F6 — the engine journals a signal sent as `dataEnc`
-  // as a blob ref (`dataRef`), whatever its size, so `typeof sig.dataEnc` is "undefined" (v:3 and
-  // no plaintext both hold). The library's work item has no inline encrypted form to carry it in.
-  it.skip("a SMALL signal is encrypted inline — the baseline the large one has to match", async () => {
+  // durable-sdk: docs/findings.md F6, answered by the engine's F20 (an inline `signal.dataEnc` on
+  // the work item, journaled verbatim).
+  it("a SMALL signal is encrypted inline — the baseline the large one has to match", async () => {
     const payloadCodec = aesGcmPayloadCodec(KEY);
     const wf = defineWorkflow("enc_sig_small", async (ctx) => {
       const data = await ctx.await<string>("card");
@@ -324,9 +323,9 @@ describe.skipIf(!natsUrl)("payload encryption — the work-item boundary", () =>
     }
   }, 60_000);
 
-  // durable-sdk: BLOCKED by docs/findings.md F1 (API v1 has no chunked upload: a value over max_payload − 16 KiB cannot
-  // reach the engine, where the library offloaded it to the blob store).
-  it.skip("a LARGE signal's BLOB holds ciphertext too — encryption cannot depend on payload size", async () => {
+  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // chunked transport (src/engine/blobs.ts).
+  it("a LARGE signal's BLOB holds ciphertext too — encryption cannot depend on payload size", async () => {
     const payloadCodec = aesGcmPayloadCodec(KEY);
     const wf = defineWorkflow("enc_sig_big", async (ctx) => {
       const data = await ctx.await<string>("card");
@@ -359,9 +358,9 @@ describe.skipIf(!natsUrl)("payload encryption — the work-item boundary", () =>
     }
   }, 60_000);
 
-  // durable-sdk: BLOCKED by docs/findings.md F1 (API v1 has no chunked upload: a value over max_payload − 16 KiB cannot
-  // reach the engine, where the library offloaded it to the blob store).
-  it.skip("CONTROL: without a codec the very same large signal lands in the bucket in the clear", async () => {
+  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // chunked transport (src/engine/blobs.ts).
+  it("CONTROL: without a codec the very same large signal lands in the bucket in the clear", async () => {
     // Proves the assertion above is load-bearing rather than a secret that never reached the blob.
     const wf = defineWorkflow("plain_sig_big", async (ctx) => {
       const data = await ctx.await<string>("card");
@@ -385,9 +384,9 @@ describe.skipIf(!natsUrl)("payload encryption — the work-item boundary", () =>
     }
   }, 60_000);
 
-  // durable-sdk: BLOCKED by docs/findings.md F1 (API v1 has no chunked upload: a value over max_payload − 16 KiB cannot
-  // reach the engine, where the library offloaded it to the blob store).
-  it.skip("a LARGE child outcome is encrypted in the PARENT's blob, not only in the child's journal", async () => {
+  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // chunked transport (src/engine/blobs.ts).
+  it("a LARGE child outcome is encrypted in the PARENT's blob, not only in the child's journal", async () => {
     // The second shrink path, and the easier one to miss: the child's own `result` entry is
     // encrypted by its journal append, but `notifyParent` rebuilds the work item from the RESOLVED
     // (decrypted) value, so the copy stored under the parent's runId is written by a different code
@@ -834,9 +833,9 @@ describe.skipIf(!natsUrl)("payload encryption — the completeness sweep", () =>
     return out.join("\n");
   }
 
-  // durable-sdk: BLOCKED by docs/findings.md F1 (API v1 has no chunked upload: a value over max_payload − 16 KiB cannot
-  // reach the engine, where the library offloaded it to the blob store).
-  it.skip("a run touching EVERY payload path leaves the secret in no durable store", async () => {
+  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // chunked transport (src/engine/blobs.ts).
+  it("a run touching EVERY payload path leaves the secret in no durable store", async () => {
     const payloadCodec = aesGcmPayloadCodec(KEY);
     const kidSmall = defineWorkflow("sweep_kid_s", async (ctx, input: { card: string }) =>
       ctx.run("echo", () => input.card),
@@ -906,9 +905,9 @@ describe.skipIf(!natsUrl)("payload encryption — the completeness sweep", () =>
     }
   }, 180_000);
 
-  // durable-sdk: BLOCKED by docs/findings.md F1 (API v1 has no chunked upload: a value over max_payload − 16 KiB cannot
-  // reach the engine, where the library offloaded it to the blob store).
-  it.skip("CONTROL: the same run without a codec leaves the secret in journal, blobs AND the hint", async () => {
+  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // chunked transport (src/engine/blobs.ts).
+  it("CONTROL: the same run without a codec leaves the secret in journal, blobs AND the hint", async () => {
     // Proves the sweep is looking in places the secret actually reaches. Without this, a typo in a
     // subject filter would make every assertion above pass by reading nothing at all.
     const PLAINSWEEP = "plainsweep";
