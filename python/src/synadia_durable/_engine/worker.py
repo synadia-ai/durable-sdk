@@ -286,6 +286,18 @@ class Worker:
                     if self._running:
                         self._report_connection_closed()
                     break
+                if isinstance(e, (BlobMissingError, BlobIntegrityError)):
+                    # The engine parked the run whose item this poll was to be handed (its journal
+                    # met a gone blob at the hand-off, API.md `poll`): the run's, not this worker's.
+                    # Loud, and poll again.
+                    self._log.error(
+                        "durable: the engine parked a run whose blob is gone — restore the blob or "
+                        "cancel the run",
+                        run_id=e.run_id,
+                        blob=e.blob_name,
+                        error=str(e),
+                    )
+                    continue
                 failures += 1
                 state.alive = False
                 state.restarts += 1
@@ -316,6 +328,20 @@ class Worker:
                 if self._run_chains.get(run_id) is task:
                     del self._run_chains[run_id]
         state.alive = False
+
+    def _park_on_blob(self, run_id: str, e: BlobMissingError | BlobIntegrityError) -> str:
+        """An offloaded payload that cannot be resolved (gone, or its digest wrong) makes the
+        journal unreadable: operational, so hand the item back (the engine naks with backoff and
+        parks the run too), loud, and never a terminal. It heals when the blob is restored, or the
+        run is cancelled."""
+        self._log.error(
+            "durable: offloaded payload unresolvable; parking run — restore the blob or cancel "
+            "the run",
+            run_id=run_id,
+            blob=e.blob_name,
+            error=str(e),
+        )
+        return "blob-unresolvable"
 
     async def _release(self, it: dict[str, Any]) -> None:
         """Hand an item back unexecuted (a poll answered after stop()): ``done retry``, the engine
@@ -350,11 +376,21 @@ class Worker:
         leased = _Leased(self._request, self._log, run_id, lease, dropped)
         transport = self._request
 
-        async def blob_request(op: Op, body: dict[str, Any]) -> dict[str, Any]:
+        async def blob_request(
+            op: Op, body: dict[str, Any], *, timeout_ms: int | None = None
+        ) -> dict[str, Any]:
             # A part of this run's blob carries the lease; another run's (a child's input) does not.
-            return await (leased(op, body) if "lease" in body else transport.request(op, body))
+            if "lease" in body:
+                return await leased(op, body, timeout_ms=timeout_ms)
+            return await transport.request(op, body, timeout_ms=timeout_ms)
 
-        blobs = EngineBlobs(blob_request, self._sizes, lease=(run_id, lease), metrics=self._metrics)
+        blobs = EngineBlobs(
+            blob_request,
+            self._sizes,
+            lease=(run_id, lease),
+            metrics=self._metrics,
+            rtt=self._nc.rtt,
+        )
         sizes = self._sizes if self._offload else None
         journal = _EngineJournal(leased, self._codec, self._metrics, blobs, sizes)
         scheduler = _EngineScheduler(leased)
@@ -398,17 +434,7 @@ class Worker:
         except asyncio.CancelledError:
             raise
         except (BlobMissingError, BlobIntegrityError) as e:
-            label = "blob-unresolvable"
-            # An offloaded payload that cannot be resolved (gone, or its digest wrong) makes the
-            # journal unreadable: operational, so hand the item back (the engine naks with backoff),
-            # loud, and never a terminal. It heals when the blob is restored, or the run cancelled.
-            self._log.error(
-                "durable: offloaded payload unresolvable; parking run — restore the blob or cancel "
-                "the run",
-                run_id=run_id,
-                blob=e.blob_name,
-                error=str(e),
-            )
+            label = self._park_on_blob(run_id, e)
             outcome = ExecOutcome(kind="retry", cause=e)
         except PayloadCodecError as e:
             label = "payload-codec"
@@ -431,9 +457,19 @@ class Worker:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await extender
 
+        # A blob the engine said is gone (`blob_gone`) under a step-end `load` or a ref's `get`
+        # inside the execution: the pure core halted with `retry` on it, as on any infrastructure
+        # error; park it as the library did, with its label and its loud line.
+        if (
+            label is None
+            and outcome.kind == "retry"
+            and isinstance(outcome.cause, (BlobMissingError, BlobIntegrityError))
+        ):
+            label = self._park_on_blob(run_id, outcome.cause)
         reported = label or outcome.kind
         if (
             outcome.kind == "retry"
+            and label is None
             and not isinstance(outcome.cause, LeaseExpiredError)
             and dropped.error is None
         ):
@@ -490,11 +526,15 @@ class _Leased:
             error=str(e),
         )
 
-    async def __call__(self, op: Op, body: dict[str, Any]) -> dict[str, Any]:
+    async def __call__(
+        self, op: Op, body: dict[str, Any], *, timeout_ms: int | None = None
+    ) -> dict[str, Any]:
         if self._dropped.error is not None:
             raise LeaseExpiredError(op, f"run {self.run_id}: the item's lease expired; not sent")
         try:
-            return await self._request.request(op, {**body, "lease": self._lease})
+            return await self._request.request(
+                op, {**body, "lease": self._lease}, timeout_ms=timeout_ms
+            )
         except LeaseExpiredError as e:
             self.drop(e)
             raise

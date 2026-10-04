@@ -15,14 +15,16 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import time
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
-from synadia_durable._engine.errors import EngineUnavailableError
+from synadia_durable._engine.errors import EngineUnavailableError, InvalidRequestError
+from synadia_durable._engine.transport import REQUEST_MARGIN_MS
 from synadia_durable._internal.metrics import Metrics, emit_safe
-from synadia_durable.errors import BlobMissingError
+from synadia_durable.errors import BlobMissingError, PayloadTooLargeError, SerializationError
 from synadia_durable.journal.blobs import digest_of
 
 if TYPE_CHECKING:
@@ -32,7 +34,17 @@ if TYPE_CHECKING:
     from synadia_durable._engine.transport import Transport
     from synadia_durable.journal.entry import BlobRef
 
-__all__ = ["EngineBlobs", "Sizes", "body_bytes", "part_bytes_of", "run_of_blob"]
+__all__ = [
+    "PUT_MS_PER_MIB",
+    "PUT_RTTS_PER_CHUNK",
+    "STORE_CHUNK_BYTES",
+    "EngineBlobs",
+    "Sizes",
+    "body_bytes",
+    "part_bytes_of",
+    "put_timeout_ms",
+    "run_of_blob",
+]
 
 #: The headroom the engine keeps under max_payload for a request's envelope (API.md "Sizes").
 _REQUEST_HEADROOM = 16 * 1024
@@ -75,6 +87,55 @@ class Sizes:
         return Limits(rm, part_bytes_of(rm))
 
 
+#: The engine's object-store chunk: one acked publish each, so one dependent round trip each.
+STORE_CHUNK_BYTES = 128 * 1024
+#: Round trips allowed per chunk the engine stores, reads back or deletes for a ``put``.
+PUT_RTTS_PER_CHUNK = 4
+#: The slowest store a ``put`` waits for: a MiB of what the engine moves per this many ms.
+PUT_MS_PER_MIB = 1_000
+
+
+def put_timeout_ms(stored: int, rtt_ms: float) -> int:
+    """How long a ``put`` part may take to answer (this repo's F33). A part is staged in the blob
+    store before it is answered; the last one is answered once the engine has read every part back,
+    checked the digest, written the blob and deleted the parts (API.md ``put``). So the wait grows
+    with the bytes the engine moves for it (``stored``: the part's own, plus the value twice on the
+    last), at a round trip per store chunk and a floor on the store's throughput, over the margin
+    every request gets. A slow store is waited for, not refused. Mirrors ``putTimeoutMs``."""
+    chunks = -(-stored // STORE_CHUNK_BYTES)
+    return math.ceil(
+        REQUEST_MARGIN_MS
+        + chunks * PUT_RTTS_PER_CHUNK * max(0.0, rtt_ms)
+        + stored / (1024 * 1024) * PUT_MS_PER_MIB
+    )
+
+
+def _deterministic_put(run_id: str, size: int, part: int, e: Exception) -> Exception:
+    """A ``put`` that the engine did not answer within its size-scaled wait, or refused as
+    malformed, is deterministic for this value (this repo's F33): a PayloadTooLargeError or
+    SerializationError, which the pure core fails the run on (and a client call raises), rather
+    than a transient the item's redelivery would meet again with the same value, for ever. A lease
+    that expired, a closed connection, no engine at all and the engine's own ``unavailable`` keep
+    their meaning."""
+    if isinstance(e, EngineUnavailableError) and e.timed_out:
+        return PayloadTooLargeError(
+            run_id,
+            f"put (run {run_id}): the engine did not store a {size}-byte value in time (part "
+            f"{part}); the blob store is too slow for a value this size: {e}",
+        )
+    if isinstance(e, InvalidRequestError):
+        return SerializationError(run_id, f"put (run {run_id}): {e}")
+    return e
+
+
+class BlobRequest(Protocol):
+    """The transport's ``request``, or the worker's leased one: a ``put`` gives its own timeout."""
+
+    def __call__(
+        self, op: Op, body: dict[str, Any], /, *, timeout_ms: int | None = None
+    ) -> Awaitable[dict[str, Any]]: ...
+
+
 def run_of_blob(name: str) -> str:
     """The run a blob belongs to: its name is ``{runId}/sha256:<hex>``."""
     return name.split("/", 1)[0] if "/" in name else ""
@@ -90,8 +151,9 @@ def body_bytes(body: dict[str, Any]) -> int:
 class EngineBlobs:
     """The engine as the library's ``BlobStore``: ``put`` uploads in parts and checks that the ref the
     engine answers names the same blob; ``get`` downloads in parts, and raises the library's
-    :class:`BlobMissingError` when the engine says the blob is gone (``get``'s ``internal``), so
-    ``resolve_entry`` names the run and the entry and the worker parks the run.
+    :class:`BlobMissingError` when the engine says the blob is gone (``get``'s ``blob_gone``, which
+    the transport maps to it), so the worker parks the run; bytes the engine found not to be the
+    digest's come up as :class:`BlobIntegrityError`, which parks it the same way.
 
     ``lease`` is the item's ``(run_id, lease)`` from an execution: sent with a part of that run's
     blob only (another run's, a child's input, carries none).
@@ -99,16 +161,27 @@ class EngineBlobs:
 
     def __init__(
         self,
-        request: Callable[[Op, dict[str, Any]], Awaitable[dict[str, Any]]],
+        request: BlobRequest,
         sizes: Sizes,
         *,
         lease: tuple[str, str] | None = None,
         metrics: Metrics | None = None,
+        rtt: Callable[[], Awaitable[float]] | None = None,
     ) -> None:
         self._request = request
         self._sizes = sizes
         self._lease = lease
         self._metrics = metrics
+        #: The connection's round trip in seconds (``nc.rtt``), measured once per upload.
+        self._rtt = rtt
+
+    async def _rtt_ms(self) -> float:
+        if self._rtt is None:
+            return 0.0
+        try:
+            return (await self._rtt()) * 1000
+        except Exception:  # noqa: BLE001 — the request itself will say what is wrong
+            return 0.0
 
     def _lease_for(self, run_id: str) -> dict[str, str]:
         if self._lease is not None and self._lease[0] == run_id:
@@ -142,22 +215,27 @@ class EngineBlobs:
         name = f"{run_id}/{digest}"
         try:
             part_bytes = (await self._sizes()).part_bytes
+            rtt_ms = await self._rtt_ms()
             upload = str(uuid.uuid4())
             last = max(0, -(-len(data) // part_bytes) - 1)
             ref: BlobRef | None = None
             for part in range(last + 1):
+                raw = data[part * part_bytes : (part + 1) * part_bytes]
                 body: dict[str, Any] = {
                     "runId": run_id,
                     **self._lease_for(run_id),
                     "name": upload,
                     "part": part,
-                    "bytes": base64.b64encode(
-                        data[part * part_bytes : (part + 1) * part_bytes]
-                    ).decode("ascii"),
+                    "bytes": base64.b64encode(raw).decode("ascii"),
                 }
+                stored = len(raw)
                 if part == last:
                     body |= {"last": True, "digest": digest}
-                r = await self._request("put", body)
+                    stored += 2 * len(data)
+                try:
+                    r = await self._request("put", body, timeout_ms=put_timeout_ms(stored, rtt_ms))
+                except Exception as e:
+                    raise _deterministic_put(run_id, len(data), part, e) from e
                 ref = r.get("ref")
             if ref is None:
                 raise EngineUnavailableError(
@@ -187,14 +265,10 @@ class EngineBlobs:
                 if r.get("last") or not b or size >= int(r.get("size", 0)):
                     break
                 part += 1
-        except EngineUnavailableError as e:
-            # `get` answers `internal` for a blob that is gone (API.md): a definitive absence.
-            if e.code == "internal":
-                self._emit("blob.get", name, 0, started, "missing")
-                raise BlobMissingError(
-                    run_id, -1, name, "the engine says the blob is gone from the blob store"
-                ) from e
-            self._emit("blob.get", name, size, started, "error")
+        except BlobMissingError:
+            # `get` answers `blob_gone` for a blob that is gone (API.md, the engine's F30): a
+            # definitive absence, which the transport made the library's BlobMissingError.
+            self._emit("blob.get", name, 0, started, "missing")
             raise
         except Exception:
             self._emit("blob.get", name, size, started, "error")

@@ -560,19 +560,31 @@ class _ConsoleLogger:
         self._emit("error", message, fields)
 
 
+#: The workers the current test started and did not stop.
+_test_workers: set[EngineWorker] = set()
+#: The workflow-name sets of every worker the current test started, stopped or not.
+_test_workflow_sets: list[tuple[str, ...]] = []
+
+
 class EngineWorker:
     """The SDK's worker, with the prefix's engine started before its first poll."""
 
-    def __init__(self, worker: Worker, prefix: str, flags: EngineFlags) -> None:
+    def __init__(
+        self, worker: Worker, prefix: str, flags: EngineFlags, names: tuple[str, ...] = ()
+    ) -> None:
         self._w = worker
         self._prefix = prefix
         self._flags = flags
+        self.names = names
 
     async def start(self) -> None:
         await ensure_engine(self._prefix, self._flags)
+        _test_workers.add(self)
+        _test_workflow_sets.append(self.names)
         await self._w.start()
 
     async def stop(self, drain_timeout_s: float = 10.0) -> None:
+        _test_workers.discard(self)
         await self._w.stop(drain_timeout_s)
 
     def health(self) -> WorkerHealth:
@@ -592,7 +604,43 @@ def create_worker(nc: Any, workflows: list[Workflow[Any, Any]], **opts: Any) -> 
     prefix = existing.map_prefix(opts.get("prefix", "de"))
     if "prefix" in opts or existing.in_mode():
         opts = {**opts, "prefix": prefix}
-    return EngineWorker(sdk_create_worker(nc, workflows, **opts), prefix, flags_of(opts))
+    names = tuple(sorted({wf.name for wf in workflows}))
+    return EngineWorker(sdk_create_worker(nc, workflows, **opts), prefix, flags_of(opts), names)
+
+
+async def end_test_workers(nc: Any) -> None:
+    """The hygiene, after each test in the mode, before its cleanup (docs/findings.md F33): a
+    worker the test left running (it failed, or timed out) is stopped, bounded; and every waiting
+    poll for each of the test's workflow sets is withdrawn (``poll {cancelPoll}``), so the engine
+    holds no pending fetch that would re-create the durables the cleanup deletes."""
+    left = list(_test_workers)
+    _test_workers.clear()
+    sets = {s for s in _test_workflow_sets if s}
+    _test_workflow_sets.clear()
+
+    async def bounded(aw: Any) -> None:
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(aw, existing.scaled(5))
+
+    await asyncio.gather(*(bounded(w.stop(1.0)) for w in left))
+    subject = f"{existing.map_prefix('de')}.api.v1.poll"
+    await asyncio.gather(
+        *(
+            bounded(
+                nc.request(
+                    subject,
+                    json.dumps(
+                        {
+                            "workflows": [{"name": n, "versions": [1]} for n in names],
+                            "cancelPoll": True,
+                        }
+                    ).encode(),
+                    timeout=existing.scaled(5),
+                )
+            )
+            for names in sets
+        )
+    )
 
 
 class EngineHandle(RunHandle[Any]):
@@ -661,6 +709,7 @@ __all__ = [
     "count_of",
     "create_client",
     "create_worker",
+    "end_test_workers",
     "engine_counts",
     "engine_for",
     "engine_log",

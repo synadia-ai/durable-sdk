@@ -15,8 +15,16 @@
 
 import { type NatsConnection } from "@nats-io/transport-node";
 import { afterAll, afterEach, beforeEach, expect, inject, vi } from "vitest";
-import { beginTest, setEngineServer, stopEngines } from "./engine.js";
-import { connect, prefixEphemeralConsumers, purgeSince, snapshot, type Snapshot } from "./existing.js"; // prettier-ignore
+import { beginTest, endTestWorkers, reportRunIds, setEngineServer, stopEngines } from "./engine.js"; // prettier-ignore
+import {
+  connect,
+  deleteRunBlobs,
+  prefixEphemeralConsumers,
+  purgeSince,
+  runIdsSince,
+  snapshot,
+  type Snapshot,
+} from "./existing.js";
 import { deleteAllStreams, leftoverMessage, listEphemeralConsumersOn } from "./leftovers.js";
 
 // Against an existing server (existing.ts): the run's one engine stays up, the leftovers check
@@ -28,6 +36,9 @@ const runPrefix = inject("runPrefix");
 const factor = inject("rttFactor");
 if (factor !== 1) vi.setConfig({ testTimeout: 30_000 * factor, hookTimeout: 30_000 * factor });
 let before: Snapshot | undefined;
+/** Every run id this file's tests touched: each cleanup deletes all their blobs by name, so a
+ * blob a timed-out test's run wrote after its own cleanup goes at the next one. */
+const fileRunIds = new Set<string>();
 // The conformance workers and clients the interop suite spawns read NATS_CREDS.
 if (runPrefix != null && process.env.DE_NATS_CREDS) process.env.NATS_CREDS = process.env.DE_NATS_CREDS; // prettier-ignore
 
@@ -72,11 +83,16 @@ afterEach(async () => {
   }
 });
 
+// A test that failed or timed out is cleaned like any other (docs/findings.md F33): vitest runs
+// this hook after both, and everything below the leftover check is in its `finally`. Its workers
+// are stopped (bounded) and its polls withdrawn first, so neither a worker it left running nor a
+// fetch the engine still holds re-creates what the cleanup deletes.
 async function afterEachExisting(prefix: string): Promise<void> {
   setEngineServer(undefined);
   if (!url) return;
   const c = await conn();
   try {
+    await endTestWorkers(c);
     let left = await prefixEphemeralConsumers(c, prefix, before?.consumers);
     if (left.length > 0) {
       await new Promise((r) => setTimeout(r, 500 * factor));
@@ -87,7 +103,13 @@ async function afterEachExisting(prefix: string): Promise<void> {
       throw new Error(leftoverMessage(left, `after "${who}"`));
     }
   } finally {
-    if (before !== undefined) await purgeSince(c, prefix, before);
+    if (before !== undefined) {
+      const runIds = await runIdsSince(c, prefix, before);
+      runIds.forEach((r) => fileRunIds.add(r));
+      await purgeSince(c, prefix, before);
+      await deleteRunBlobs(c, prefix, fileRunIds);
+      await reportRunIds(runIds);
+    }
     before = undefined;
   }
 }

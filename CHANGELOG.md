@@ -4,6 +4,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.7.0-alpha] — unreleased
 
+### Follow-up 3 (2026-10-04): `blob_gone`, the new pin, and the cleanup default
+
+`engine.pin` moves from `57ae3c9` to `ee81460` (the engine's PR #5: `status` never lags `result`, `blob_gone`, a cluster harness). Both languages unless said.
+
+- **`blob_gone` is the library's missing-blob error** (`docs/findings.md` F31; the engine's F30): the transport maps the code, with its `blob` name, to `BlobMissingError`, or to `BlobIntegrityError` when the engine says the bytes are not the digest's. Inside an execution the worker parks the run as the library did (`blob-unresolvable`, loud, `done retry`, never a terminal), also when the pure core halted on it under a step-end `load`; a `poll` that answers it is logged and polled again; a client's `result` raises it. `get`'s `internal` is no longer read as "gone" (F24 closed).
+- **A `put` part's timeout scales with what the engine stores for it** (F33): the margin, plus 4 round trips (`nc.rtt()`) per 128 KiB store chunk and 1 s per MiB, the last part counting the whole value twice. A `put` the engine does not answer within that, or refuses as `invalid`, is `PayloadTooLargeError` / `SerializationError`, which the pure core fails the run on, never a redelivery loop. The engine's `unavailable`, no responders and `expired` keep their meaning.
+- **A refusal is an `error` member with a string `code`** (the engine's F31): both transports already read it so; a unit test each (`test/unit/engine-transport.test.ts`, `python/tests/test_engine_transport.py`).
+- **The harness's mode** (F33, F34): a generated prefix deletes its seven at the end by default (`DE_CLEANUP=keep` keeps them; a `DE_PREFIX` one is kept unless `DE_CLEANUP=delete`); after each test, failed or timed out too, the workers it left running are stopped, its workflows' polls withdrawn (`cancelPoll`) before their durables are deleted, and its runs' blobs deleted by name; at the end, with the engine stopped, every blob of the run's runs and every durable the run made. Assertions over a store's contents count the test's own runs in the mode (`offload`, `payload-codec`; Python `test_offload`). `DE_INJECT_FAILURE=1` runs two tests that fail on purpose, to prove it. The README's time formula is a measured table.
+- **New tests:** `offload` "blob_gone: …" and Python's twin, and the twin of "a missing blob PARKS the run", which now reads the engine's `parked` count, not its log. The `status`-after-`result` waits stay, noted as the engine's guarantee now.
+- New findings F31 to F35; F24 closed.
+
 ### Follow-up 2 (2026-10-04): the harness's mode for an existing server
 
 `engine.pin` moves from `1efd2ec` to `57ae3c9` (the engine's PR #4, pull on demand). Both languages unless said; nothing in `src/` or `python/src/` changed.

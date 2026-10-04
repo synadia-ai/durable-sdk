@@ -158,6 +158,7 @@ describe.skipIf(!natsUrl || !uv)("interop: a TypeScript client drives a Python w
       expect(r.from).toBe("python");
       expect(typeof r.at).toBe("number");
       // durable-sdk: F27, as below; it lost the race in the existing-server mode at 150 ms (F29).
+      // Harmless now: the engine guarantees the state since ee81460 (its F29); a failure is its.
       await waitForState(() => h.status(), "completed", 10_000);
       const s = await h.status();
       expect(s.state).toBe("completed");
@@ -190,8 +191,9 @@ describe.skipIf(!natsUrl || !uv)("interop: a TypeScript client drives a Python w
       const e = await h.result(20_000).catch((x: unknown) => x);
       expect(e).toBeInstanceOf(WorkflowFailure);
       expect(String((e as Error).message)).toContain("carrier rejected");
-      // durable-sdk: `status` reads the engine's hint, written at the worker's `done`, one round
-      // trip after the terminal `result` answers from (docs/findings.md F27): wait for it.
+      // durable-sdk: `status` read the engine's hint, written at the worker's `done`, one round
+      // trip after the terminal `result` answers from (docs/findings.md F27): wait for it. Harmless
+      // now: the engine guarantees the state since ee81460 (its F29), so a failure is the engine's.
       await waitForState(() => h.status(), "failed", 10_000);
     });
 

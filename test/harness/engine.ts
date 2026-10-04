@@ -67,6 +67,11 @@ let testFlagsFixed = false;
 let testCounts: { instance: string; counts: Record<string, number> } | undefined;
 let testLogFrom = 0;
 
+/** setup-each.ts: the run ids a test touched, for the run's end to sweep (existing.ts `sweepRun`). */
+export async function reportRunIds(runIds: string[]): Promise<void> {
+  if (runIds.length > 0) await control("/runs", { runIds });
+}
+
 /** setup-each.ts, before each test in the mode: the counters the test's are measured from. */
 export async function beginTest(nc: {
   request(
@@ -157,25 +162,63 @@ function flagsOf(o: EngineFlags): EngineFlags {
   if (o.leaseTtlMs !== undefined) f.leaseTtlMs = o.leaseTtlMs;
   if (o.maintenanceIntervalMs !== undefined) f.maintenanceIntervalMs = o.maintenanceIntervalMs;
   if (o.reconcileGraceMs !== undefined) f.reconcileGraceMs = o.reconcileGraceMs;
+  if (o.offloadThreshold !== undefined) f.offloadThreshold = o.offloadThreshold;
   return f;
 }
 
+/** The workers the current test started and did not stop, with their workflows' names. */
+const testWorkers = new Set<{ stop(): Promise<void>; names: string[] }>();
+/** The workflow-name sets of every worker the current test started, stopped or not. */
+let testWorkflowSets: string[][] = [];
+
 /** The SDK's createWorker, with the prefix's engine started before the worker's first poll. */
-export function createWorker(opts: WorkerOptions): Worker {
+export function createWorker(opts: WorkerOptions & EngineFlags): Worker {
   if (opts.prefix !== undefined || existingMode()) opts = { ...opts, prefix: mapPrefix(opts.prefix ?? "de") }; // prettier-ignore
   const w = sdkCreateWorker(process.env.DE_SDK_LOG === "1" && opts.logger === undefined ? { ...opts, logger: consoleLogger } : opts); // prettier-ignore
+  const live = { stop: () => w.stop(), names: [...new Set(opts.workflows.map((wf) => wf.name))].sort() }; // prettier-ignore
   return {
     async start(): Promise<void> {
       await ensureEngine(opts.prefix ?? "de", flagsOf(opts));
+      testWorkers.add(live);
+      testWorkflowSets.push(live.names);
       await w.start();
     },
-    stop: () => w.stop(),
+    async stop(): Promise<void> {
+      testWorkers.delete(live);
+      await w.stop();
+    },
     health: () => w.health(),
   };
 }
 
+/**
+ * setup-each.ts, after each test in the mode, before its cleanup (docs/findings.md F33): a worker
+ * the test left running (it failed, or timed out and its body still runs) is stopped, bounded; and
+ * every waiting poll for each of the test's workflow sets is withdrawn (`poll {cancelPoll}`), so
+ * the engine holds no pending fetch that would re-create the durables the cleanup deletes.
+ */
+export async function endTestWorkers(nc: {
+  request(subject: string, data?: Uint8Array, opts?: { timeout: number }): Promise<unknown>;
+}): Promise<void> {
+  const factor = inject("rttFactor");
+  const left = [...testWorkers];
+  testWorkers.clear();
+  const bounded = (p: Promise<unknown>): Promise<unknown> =>
+    Promise.race([p.catch(() => undefined), new Promise((r) => setTimeout(r, 5_000 * factor))]);
+  await Promise.all(left.map((w) => bounded(w.stop())));
+  const sets = new Map(testWorkflowSets.map((n) => [n.join(","), n]));
+  testWorkflowSets = [];
+  const subject = `${inject("runPrefix")!}.api.v1.poll`;
+  await Promise.all(
+    [...sets.values()].map(
+      (names) =>
+      bounded(nc.request(subject, new TextEncoder().encode(JSON.stringify({ workflows: names.map((name) => ({ name, versions: [1] })), cancelPoll: true })), { timeout: 5_000 * factor })), // prettier-ignore
+    ),
+  );
+}
+
 /** The SDK's createClient, with the prefix's engine started before the client's first request. */
-export function createClient(opts: ClientOptions): Client {
+export function createClient(opts: ClientOptions & EngineFlags): Client {
   if (opts.prefix !== undefined || existingMode()) opts = { ...opts, prefix: mapPrefix(opts.prefix ?? "de") }; // prettier-ignore
   const c = sdkCreateClient(opts);
   // Against an existing server every wait is scaled by the measured round trip (existing.ts).

@@ -1,13 +1,21 @@
 // @synadia-ai/durable — the errors the engine's API adds to the library's (src/errors.ts, copied
 // unchanged). A refusal is `{error: {code, message}}` from a closed set (durable-engine docs/API.md
 // "Errors"); the transport turns each code into one of these, or into a library error where the
-// library already has the class: `fenced` → FencedError, `too_large` → PayloadTooLargeError.
+// library already has the class: `fenced` → FencedError, `too_large` → PayloadTooLargeError,
+// `blob_gone` → BlobMissingError (or BlobIntegrityError when the bytes are not the digest's).
 
 import { DurableError, FencedError } from "../errors.js";
 
 /** The closed set of refusal codes of API v1. */
 export type EngineErrorCode =
-  "invalid" | "fenced" | "expired" | "not_found" | "too_large" | "unavailable" | "internal";
+  | "invalid"
+  | "fenced"
+  | "expired"
+  | "not_found"
+  | "too_large"
+  | "unavailable"
+  | "blob_gone"
+  | "internal";
 
 /** A refusal (or a failure to reach the engine) on one op. */
 export class EngineError extends DurableError {
@@ -48,14 +56,17 @@ export class InvalidRequestError extends EngineError {
  * worker reports `done retry`; a client call may simply be repeated.
  */
 export class EngineUnavailableError extends EngineError {
+  /** No answer within the request's timeout (rather than no responders or a refusal). */
+  readonly timedOut: boolean;
   constructor(
     op: string,
     code: "unavailable" | "internal",
     message: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { timedOut?: boolean },
   ) {
     super(op, code, message, options);
     this.name = "EngineUnavailableError";
+    this.timedOut = options?.timedOut === true;
   }
 }
 

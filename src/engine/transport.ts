@@ -14,7 +14,13 @@ import {
   TimeoutError,
   type NatsConnection,
 } from "@nats-io/nats-core";
-import { ConnectionClosedError, PayloadTooLargeError, SerializationError } from "../errors.js";
+import {
+  BlobIntegrityError,
+  BlobMissingError,
+  ConnectionClosedError,
+  PayloadTooLargeError,
+  SerializationError,
+} from "../errors.js";
 import { type Logger, SILENT_LOGGER } from "../internal/logger.js";
 import {
   EngineFencedError,
@@ -29,12 +35,21 @@ import { apiSubject, type Op } from "./names.js";
 export const REQUEST_MARGIN_MS = 10_000;
 
 interface Refusal {
-  error: { code: string; message?: string; expectLastSeq?: number; serverCode?: number };
+  error: {
+    code: string;
+    message?: string;
+    expectLastSeq?: number;
+    serverCode?: number;
+    /** On `blob_gone`: the blob's name, `{runId}/sha256:<hex>`. */
+    blob?: string;
+  };
 }
 
 export interface RequestOptions {
   /** For `result` and `poll`: the request's own `waitMs`; the timeout is this plus the margin. */
   waitMs?: number;
+  /** The timeout itself, for a request whose answer waits on work of its size (`put`, blobs.ts). */
+  timeoutMs?: number;
 }
 
 export type Transport = <R>(op: Op, body: object, opts?: RequestOptions) => Promise<R>;
@@ -48,7 +63,7 @@ export function createTransport(
   logger: Logger = SILENT_LOGGER,
 ): Transport {
   return async <R>(op: Op, body: object, opts?: RequestOptions): Promise<R> => {
-    const timeout = (opts?.waitMs ?? 0) + REQUEST_MARGIN_MS;
+    const timeout = opts?.timeoutMs ?? (opts?.waitMs ?? 0) + REQUEST_MARGIN_MS;
     const payload = enc.encode(JSON.stringify(body));
     // A request past the server's max_payload can never be sent, so it is deterministic for this
     // value: fail it here, as the engine fails one past its request_max (`too_large`). A value
@@ -66,6 +81,9 @@ export function createTransport(
       throw fromNats(op, body, e);
     }
     const reply = JSON.parse(data) as R | Refusal;
+    // A refusal is an `error` member with a string `code`: a failed run's `result` and `status`
+    // carry its error value `{name, message}` in `error` too, and that is a success (the engine's
+    // F31, API.md "Encoding").
     if (typeof reply === "object" && reply !== null && "error" in reply && isRefusal(reply)) {
       throw fromRefusal(op, body, reply, logger);
     }
@@ -104,12 +122,29 @@ function fromRefusal(op: Op, body: object, r: Refusal, logger: Logger): Error {
       return new PayloadTooLargeError(runId, message);
     case "not_found":
       return new RunNotFoundError(op, runId);
+    case "blob_gone":
+      return blobGone(runId, r.error, message);
     case "internal":
       logger.error("durable: the engine answered internal — an operator must look", { op, runId, message }); // prettier-ignore
       return new EngineUnavailableError(op, "internal", message);
     default:
       return new EngineUnavailableError(op, "unavailable", message);
   }
+}
+
+/**
+ * `blob_gone` (the engine's F30): a blob is gone from the blob store, or holds bytes that are not
+ * its digest's. The library's own errors for the two, so the worker parks the run as the library
+ * did (loud, `done retry`, never a terminal) and a client's `result` reports it. The engine's
+ * message says which: a digest that did not match is the integrity one, anything else is missing.
+ * `seq` is -1: the engine names the blob, not the entry (its NonCommandSeq).
+ */
+function blobGone(runId: string, e: Refusal["error"], message: string): Error {
+  const blob = typeof e.blob === "string" && e.blob !== "" ? e.blob : "?";
+  const owner = blob.includes("/") ? blob.slice(0, blob.indexOf("/")) : runId;
+  return (e.message ?? "").includes("digest")
+    ? new BlobIntegrityError(owner, -1, blob, message)
+    : new BlobMissingError(owner, -1, blob, message);
 }
 
 function fromNats(op: Op, body: object, e: unknown): Error {
@@ -127,7 +162,7 @@ function fromNats(op: Op, body: object, e: unknown): Error {
     return new EngineUnavailableError(op, "unavailable", `${op}: no engine answered (no responders) — is durable-engine serve running on this prefix?`, { cause: e }); // prettier-ignore
   }
   if (e instanceof TimeoutError || (e instanceof Error && e.cause instanceof TimeoutError)) {
-    return new EngineUnavailableError(op, "unavailable", `${op}: the engine did not answer in time`, { cause: e }); // prettier-ignore
+    return new EngineUnavailableError(op, "unavailable", `${op}: the engine did not answer in time`, { cause: e, timedOut: true }); // prettier-ignore
   }
   return new EngineUnavailableError(op, "unavailable", `${op}: ${String(e)}`, { cause: e });
 }

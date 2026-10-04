@@ -95,10 +95,12 @@ describe("where the broker is spoken to at all", () => {
   });
 
   it("every request goes through the one transport, to {prefix}.api.v1.<op>", () => {
+    // durable-sdk: `rtt` is a PING to the server, no subject: the blob store's `put` scales its
+    // wait with it (docs/findings.md F33).
     expect(roster(lib, NC)).toEqual([
-      "engine/client.ts: isClosed, status",
+      "engine/client.ts: isClosed, rtt, status",
       "engine/transport.ts: request",
-      "engine/worker.ts: isClosed",
+      "engine/worker.ts: isClosed, rtt",
     ]);
     const names = lib.find((f) => f.path === "engine/names.ts")!.text;
     expect(code(names)).toMatch(/`\$\{prefix\}\.api\.v1\.\$\{op\}`/);

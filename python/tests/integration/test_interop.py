@@ -109,8 +109,9 @@ async def test_status_reports_the_terminal_state(client: Any) -> None:
     handle = await client.start(greet, {"name": "grace"})
     await handle.result(20_000)
 
-    # durable-sdk: docs/findings.md F27 — `status` can lag `result` by a round trip; it lost the race
-    # in the existing-server mode at 150 ms (F29): wait for the state.
+    # durable-sdk: docs/findings.md F27 — `status` could lag `result` by a round trip; it lost the
+    # race in the existing-server mode at 150 ms (F29): wait for the state. Harmless now: the engine
+    # guarantees the state since ee81460 (its F29), so a failure here is the engine's again.
     await _wait_for_state(handle, "completed", 10.0)
     status = await handle.status()
     assert status.state == "completed"

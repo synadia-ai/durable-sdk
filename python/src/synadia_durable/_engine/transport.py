@@ -26,7 +26,13 @@ from synadia_durable._engine.errors import (
 )
 from synadia_durable._engine.names import Op, api_subject
 from synadia_durable._internal.logger import Logger, SilentLogger
-from synadia_durable.errors import ConnectionClosedError, PayloadTooLargeError, SerializationError
+from synadia_durable.errors import (
+    BlobIntegrityError,
+    BlobMissingError,
+    ConnectionClosedError,
+    PayloadTooLargeError,
+    SerializationError,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
@@ -53,11 +59,19 @@ class Transport:
         self._log: Logger = logger or SilentLogger()
 
     async def request(
-        self, op: Op, body: dict[str, Any], *, wait_ms: int | None = None
+        self,
+        op: Op,
+        body: dict[str, Any],
+        *,
+        wait_ms: int | None = None,
+        timeout_ms: int | None = None,
     ) -> dict[str, Any]:
         """Send ``body`` to ``{prefix}.api.v1.<op>``. For ``result`` and ``poll``, ``wait_ms`` is
-        the request's own ``waitMs``; the timeout is that plus the margin."""
-        timeout_s = ((wait_ms or 0) + REQUEST_MARGIN_MS) / 1000
+        the request's own ``waitMs``; the timeout is that plus the margin. ``timeout_ms`` is the
+        timeout itself, for a request whose answer waits on work of its size (``put``, blobs.py)."""
+        if timeout_ms is None:
+            timeout_ms = (wait_ms or 0) + REQUEST_MARGIN_MS
+        timeout_s = timeout_ms / 1000
         payload = json.dumps(body, allow_nan=False, separators=(",", ":"), ensure_ascii=False)
         data = payload.encode("utf-8")
         # A request past the server's max_payload can never be sent, so it is deterministic for this
@@ -89,6 +103,9 @@ class Transport:
             raise EngineUnavailableError(
                 op, "internal", f"{op}: the engine's reply is not an object"
             )
+        # A refusal is an `error` member with a string `code`: a failed run's `result` and `status`
+        # carry its error value `{name, message}` in `error` too, and that is a success (the
+        # engine's F31, API.md "Encoding").
         refusal = reply.get("error")
         if isinstance(refusal, dict) and isinstance(refusal.get("code"), str):
             raise _from_refusal(op, body, refusal, self._log)
@@ -152,6 +169,8 @@ def _from_refusal(op: Op, body: dict[str, Any], r: dict[str, Any], log: Logger) 
         return PayloadTooLargeError(run_id, message)
     if code == "not_found":
         return RunNotFoundError(op, run_id)
+    if code == "blob_gone":
+        return _blob_gone(run_id, r, message)
     if code == "internal":
         log.error(
             "durable: the engine answered internal — an operator must look",
@@ -161,6 +180,20 @@ def _from_refusal(op: Op, body: dict[str, Any], r: dict[str, Any], log: Logger) 
         )
         return EngineUnavailableError(op, "internal", message)
     return EngineUnavailableError(op, "unavailable", message)
+
+
+def _blob_gone(run_id: str, r: dict[str, Any], message: str) -> Exception:
+    """``blob_gone`` (the engine's F30): a blob is gone from the blob store, or holds bytes that are
+    not its digest's. The library's own errors for the two, so the worker parks the run as the
+    library did (loud, ``done retry``, never a terminal) and a client's ``result`` reports it. The
+    engine's message says which: a digest that did not match is the integrity one, anything else is
+    missing. ``seq`` is -1: the engine names the blob, not the entry (its NonCommandSeq)."""
+    blob = r.get("blob")
+    name = blob if isinstance(blob, str) and blob else "?"
+    owner = name.split("/", 1)[0] if "/" in name else run_id
+    if "digest" in str(r.get("message") or ""):
+        return BlobIntegrityError(owner, -1, name, message)
+    return BlobMissingError(owner, -1, name, message)
 
 
 def _from_nats(op: Op, body: dict[str, Any], e: Exception) -> Exception:
@@ -176,5 +209,7 @@ def _from_nats(op: Op, body: dict[str, Any], e: Exception) -> Exception:
             "prefix?",
         )
     if isinstance(e, nats.errors.TimeoutError):
-        return EngineUnavailableError(op, "unavailable", f"{op}: the engine did not answer in time")
+        return EngineUnavailableError(
+            op, "unavailable", f"{op}: the engine did not answer in time", timed_out=True
+        )
     return EngineUnavailableError(op, "unavailable", f"{op}: {e!r}")

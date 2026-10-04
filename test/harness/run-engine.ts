@@ -20,6 +20,7 @@ export function runFlags(f: EngineFlags): EngineFlags {
   if (f.leaseTtlMs !== undefined) out.leaseTtlMs = f.leaseTtlMs;
   if (f.maintenanceIntervalMs !== undefined) out.maintenanceIntervalMs = f.maintenanceIntervalMs;
   if (f.reconcileGraceMs !== undefined) out.reconcileGraceMs = f.reconcileGraceMs;
+  if (f.offloadThreshold !== undefined) out.offloadThreshold = f.offloadThreshold;
   return out;
 }
 
@@ -34,6 +35,9 @@ export class RunEngine {
   #http: Server | undefined;
   #port = 0;
   starts = 0;
+  /** Every run id the run's tests touched (setup-each.ts reports them): the end's sweep deletes
+   * their blobs by name (existing.ts `sweepRun`). */
+  readonly runIds = new Set<string>();
 
   constructor(
     readonly bin: string | null,
@@ -125,16 +129,18 @@ export class RunEngine {
           res.writeHead(code, { "content-type": "application/json" });
           res.end(JSON.stringify(v));
         };
-        const parsed = (body ? JSON.parse(body) : {}) as { flags?: EngineFlags; kill?: boolean };
+        const parsed = (body ? JSON.parse(body) : {}) as { flags?: EngineFlags; kill?: boolean; runIds?: string[] }; // prettier-ignore
         const route = `${req.method ?? ""} ${req.url ?? ""}`;
         const done =
           route === "POST /ensure"
             ? this.ensure(parsed.flags ?? {})
             : route === "POST /halt"
               ? this.halt(parsed.kill === true).then(() => ({}))
-              : route.startsWith("GET /log")
-                ? Promise.resolve(this.logSince(Number(new URL(req.url ?? "", "http://x").searchParams.get("since") ?? 0))) // prettier-ignore
-                : Promise.reject(new Error(`no route ${route}`));
+              : route === "POST /runs"
+                ? Promise.resolve((parsed.runIds ?? []).forEach((r) => this.runIds.add(r))).then(() => ({})) // prettier-ignore
+                : route.startsWith("GET /log")
+                  ? Promise.resolve(this.logSince(Number(new URL(req.url ?? "", "http://x").searchParams.get("since") ?? 0))) // prettier-ignore
+                  : Promise.reject(new Error(`no route ${route}`));
         done.then(
           (v) => reply(200, v),
           (e: unknown) => reply(409, { error: e instanceof Error ? e.message : String(e) }),

@@ -7,12 +7,13 @@
 // ref, its name (`{runId}/sha256:<hex>`), its `v:2` / `v:3` marking and its digest check are the
 // library's bytes. The pure core never sees a ref: the worker's journal is resolved before replay.
 
+import { BlobMissingError, PayloadTooLargeError, SerializationError } from "../errors.js";
 import { type BlobRef } from "../journal/entry.js";
 import { type BlobStore, sha256Hex } from "../journal/blobs.js";
 import { fromBase64, toBase64 } from "../journal/payload-codec.js";
 import { type DurableEventFields, type DurableEventName } from "../internal/metrics.js";
-import { EngineUnavailableError } from "./errors.js";
-import { type Transport } from "./transport.js";
+import { EngineUnavailableError, InvalidRequestError } from "./errors.js";
+import { REQUEST_MARGIN_MS, type Transport } from "./transport.js";
 
 /** What `info`'s `limits` says a request may weigh, and the raw bytes of one `put` part. */
 export interface Sizes {
@@ -55,6 +56,30 @@ export function sizesOf(
   };
 }
 
+/** The engine's object-store chunk: one acked publish each, so one dependent round trip each. */
+export const STORE_CHUNK_BYTES = 128 * 1024;
+/** Round trips allowed per chunk the engine stores, reads back or deletes for a `put`. */
+export const PUT_RTTS_PER_CHUNK = 4;
+/** The slowest store a `put` waits for: a MiB of what the engine moves per this many ms. */
+export const PUT_MS_PER_MIB = 1_000;
+
+/**
+ * How long a `put` part may take to answer (this repo's F33). A part is staged in the blob store
+ * before it is answered; the last one is answered once the engine has read every part back,
+ * checked the digest, written the blob and deleted the parts (API.md `put`). So the wait grows
+ * with the bytes the engine moves for it (`stored`: the part's own, plus the value twice on the
+ * last), at a round trip per store chunk and a floor on the store's throughput, over the margin
+ * every request gets. A slow store is waited for, not refused.
+ */
+export function putTimeoutMs(stored: number, rttMs: number): number {
+  const chunks = Math.ceil(stored / STORE_CHUNK_BYTES);
+  return Math.ceil(
+    REQUEST_MARGIN_MS +
+      chunks * PUT_RTTS_PER_CHUNK * Math.max(0, rttMs) +
+      (stored / (1024 * 1024)) * PUT_MS_PER_MIB,
+  );
+}
+
 /** The run a blob belongs to: its name is `{runId}/sha256:<hex>`. */
 export function runOfBlob(name: string): string {
   const i = name.indexOf("/");
@@ -66,14 +91,17 @@ export interface EngineBlobsOptions {
   sizes: () => Promise<Sizes>;
   /** The item's run and lease, from an execution: sent with a part of that run's blob only. */
   lease?: { runId: string; lease: string };
+  /** The connection's round trip in ms (`nc.rtt()`), measured once per upload; 0 without it. */
+  rtt?: () => Promise<number>;
   emit?: (name: DurableEventName, fields: DurableEventFields) => void;
 }
 
 /**
  * The engine as the library's `BlobStore`: `put` uploads in parts and checks that the ref the
  * engine answers names the same blob; `get` downloads in parts, and answers `null` when the engine
- * says the blob is gone (`get`'s `internal`), so `resolveEntry` raises the library's
- * `BlobMissingError` and the worker parks the run.
+ * says the blob is gone (`get`'s `blob_gone`), so `resolveEntry` raises the library's
+ * `BlobMissingError` naming the entry and the worker parks the run. Bytes the engine found not to
+ * be the digest's come up as the transport's `BlobIntegrityError`, which parks it the same way.
  */
 export class EngineBlobs implements BlobStore {
   readonly #o: EngineBlobsOptions;
@@ -101,19 +129,29 @@ export class EngineBlobs implements BlobStore {
     const name = `${runId}/${digest}`;
     try {
       const { partBytes } = await this.#o.sizes();
+      const rtt = await this.#rtt();
       const upload = globalThis.crypto.randomUUID();
       const last = Math.max(0, Math.ceil(data.byteLength / partBytes) - 1);
       let ref: BlobRef | undefined;
       for (let part = 0; part <= last; part++) {
-        const bytes = toBase64(data.subarray(part * partBytes, (part + 1) * partBytes));
-        const r = await this.#o.request<{ ref?: BlobRef }>("put", {
-          runId,
-          ...this.#leaseFor(runId),
-          name: upload,
-          part,
-          bytes,
-          ...(part === last ? { last: true, digest } : {}),
-        });
+        const raw = data.subarray(part * partBytes, (part + 1) * partBytes);
+        const stored = raw.byteLength + (part === last ? 2 * data.byteLength : 0);
+        const r = await this.#o
+          .request<{ ref?: BlobRef }>(
+            "put",
+            {
+              runId,
+              ...this.#leaseFor(runId),
+              name: upload,
+              part,
+              bytes: toBase64(raw),
+              ...(part === last ? { last: true, digest } : {}),
+            },
+            { timeoutMs: putTimeoutMs(stored, rtt) },
+          )
+          .catch((e: unknown) => {
+            throw deterministicPut(runId, data.byteLength, part, e);
+          });
         ref = r.ref;
       }
       if (ref === undefined) throw new EngineUnavailableError("put", "internal", "put: the last part answered no ref"); // prettier-ignore
@@ -122,6 +160,14 @@ export class EngineBlobs implements BlobStore {
     } catch (e) {
       this.#o.emit?.("blob.put", { name, bytes: data.byteLength, ms: Date.now() - t0, outcome: "error" }); // prettier-ignore
       throw e;
+    }
+  }
+
+  async #rtt(): Promise<number> {
+    try {
+      return (await this.#o.rtt?.()) ?? 0;
+    } catch {
+      return 0; // the request itself will say what is wrong with the connection
     }
   }
 
@@ -140,8 +186,9 @@ export class EngineBlobs implements BlobStore {
         if (r.last === true || b.byteLength === 0 || size >= r.size) break;
       }
     } catch (e) {
-      // `get` answers `internal` for a blob that is gone (API.md): a definitive absence.
-      if (e instanceof EngineUnavailableError && e.code === "internal") {
+      // `get` answers `blob_gone` for a blob that is gone (API.md, the engine's F30): a definitive
+      // absence, which the transport made the library's BlobMissingError.
+      if (e instanceof BlobMissingError) {
         this.#o.emit?.("blob.get", { name, bytes: 0, ms: Date.now() - t0, outcome: "missing" });
         return null;
       }
@@ -157,6 +204,23 @@ export class EngineBlobs implements BlobStore {
     this.#o.emit?.("blob.get", { name, bytes: size, ms: Date.now() - t0, outcome: "ok" });
     return out;
   }
+}
+
+/**
+ * A `put` that the engine did not answer within its size-scaled wait, or refused as malformed, is
+ * deterministic for this value (this repo's F33): a PayloadTooLargeError or SerializationError,
+ * which the pure core fails the run on (and a client call rejects with), rather than a transient
+ * the item's redelivery would meet again with the same value, for ever. A lease that expired, a
+ * closed connection, no engine at all and the engine's own `unavailable` keep their meaning.
+ */
+function deterministicPut(runId: string, size: number, part: number, e: unknown): unknown {
+  if (e instanceof EngineUnavailableError && e.timedOut) {
+    return new PayloadTooLargeError(runId, `put (run ${runId}): the engine did not store a ${size}-byte value in time (part ${part}); the blob store is too slow for a value this size: ${e.message}`, { cause: e }); // prettier-ignore
+  }
+  if (e instanceof InvalidRequestError) {
+    return new SerializationError(runId, `put (run ${runId}): ${e.message}`, { cause: e });
+  }
+  return e;
 }
 
 /** The encoded size of a request body, as the transport will send it. */

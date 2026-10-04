@@ -8,11 +8,14 @@
 //   DE_PREFIX       the run's one prefix (default a generated `de-<run id>`)
 //   DE_ENGINE_URL   an engine that already serves the prefix, by its /metrics address
 //                   (`http://host:port`); without it the harness starts one for the run
-//   DE_CLEANUP      `delete`: delete the prefix's seven at the run's end (default: keep them)
+//   DE_CLEANUP      `delete` or `keep` the prefix's seven at the run's end; by default a generated
+//                   prefix is deleted (only this run can have made it) and a DE_PREFIX one kept
 //
 // No spawn, no account profile (the server's own limits apply), one prefix and one engine for the
-// run, a cleanup that purges what each test wrote under the prefix and never deletes a stream, the
-// leftovers check on the prefix's streams only, and every wait scaled by the measured round trip.
+// run, a cleanup that purges what each test wrote under the prefix and never deletes a stream
+// during the run, the leftovers check on the prefix's streams only, and every wait scaled by the
+// measured round trip. A test that failed or timed out is cleaned like any other, and its runs'
+// blobs are deleted by name, after it and again at the run's end (docs/findings.md F33).
 
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -30,6 +33,8 @@ export interface ExistingServer {
   creds: string | undefined;
   prefix: string;
   engineUrl: string | undefined;
+  /** The prefix is the run's own (no DE_PREFIX): generated here, so nobody else's. */
+  generated: boolean;
   deleteAtEnd: boolean;
 }
 
@@ -42,14 +47,17 @@ export function existingFromEnv(): ExistingServer | null {
   if (cleanup !== "" && cleanup !== "delete" && cleanup !== "keep") {
     throw new Error(`DE_CLEANUP="${cleanup}": expected delete or keep`);
   }
-  const prefix = process.env.DE_PREFIX || `de-${randomBytes(4).toString("hex")}`;
+  const given = process.env.DE_PREFIX ?? "";
+  const prefix = given || `de-${randomBytes(4).toString("hex")}`;
   if (!/^[A-Za-z0-9_-]+$/.test(prefix)) throw new Error(`DE_PREFIX="${prefix}": one subject token, no dots`); // prettier-ignore
   return {
     url,
     creds: creds === undefined || creds === "" ? undefined : creds,
     prefix,
     engineUrl: process.env.DE_ENGINE_URL || undefined,
-    deleteAtEnd: cleanup === "delete",
+    generated: given === "",
+    // A generated prefix is deleted unless DE_CLEANUP=keep; a given one kept unless =delete.
+    deleteAtEnd: cleanup === "delete" || (cleanup === "" && given === ""),
   };
 }
 
@@ -173,6 +181,100 @@ export async function snapshot(nc: NatsConnection, prefix: string): Promise<Snap
   };
 }
 
+/** The run ids whose journals a test touched: `{prefix}.journal.<runId>` new or grown since `before`. */
+export async function runIdsSince(
+  nc: NatsConnection,
+  prefix: string,
+  before: Snapshot,
+): Promise<string[]> {
+  // prettier-ignore
+  const jsm = await jetstreamManager(nc);
+  const stream = prefixStreams(prefix)[0]!;
+  const was = before.subjects.get(stream) ?? new Map<string, number>();
+  const head = `${prefix}.journal.`;
+  return [...(await subjectsOf(jsm, stream))]
+    .filter(([s, n]) => was.get(s) !== n && s.startsWith(head))
+    .map(([s]) => s.slice(head.length));
+}
+
+/** A blob of one of `runIds`: its name is `{runId}/…` (a staged upload part too), a child's or a
+ * generation's run id begins with its parent's and `_`. */
+function ofRuns(name: string, runIds: Set<string>): boolean {
+  const run = name.slice(0, Math.max(0, name.indexOf("/")));
+  if (run === "") return false;
+  if (runIds.has(run)) return true;
+  for (let i = run.indexOf("_"); i > 0; i = run.indexOf("_", i + 1)) {
+    if (runIds.has(run.slice(0, i))) return true;
+  }
+  return false;
+}
+
+/**
+ * Delete the blobs of `runIds` from the prefix's blob store by name: each object's meta record and
+ * its chunks, purged. By name, not by the snapshot's diff: a test that timed out leaves its worker
+ * and the engine writing after its cleanup (the dev NGS run left 17 blobs so), and those land in
+ * the next test's snapshot, out of every diff's reach. Returns how many objects were deleted.
+ */
+export async function deleteRunBlobs(
+  nc: NatsConnection,
+  prefix: string,
+  runIds: Iterable<string>,
+): Promise<number> {
+  const ids = new Set(runIds);
+  if (ids.size === 0) return 0;
+  const jsm = await jetstreamManager(nc);
+  const stream = prefixStreams(prefix)[6]!;
+  const bucket = stream.slice("OBJ_".length);
+  const doomed: Array<{ meta: string; chunks: string }> = [];
+  try {
+    const it = await jsm.direct.getLastMessagesFor(stream, { multi_last: [`$O.${bucket}.M.>`] });
+    for await (const m of it) {
+      const info = JSON.parse(new TextDecoder().decode(m.data)) as { name?: string; nuid?: string }; // prettier-ignore
+      if (typeof info.name !== "string" || !ofRuns(info.name, ids)) continue;
+      doomed.push({ meta: m.subject, chunks: `$O.${bucket}.C.${info.nuid ?? ""}` });
+    }
+  } catch (e) {
+    if (jsErrorCode(e) === 10059 || (e instanceof Error && /not found|no results/i.test(e.message))) return 0; // prettier-ignore
+    throw e;
+  }
+  await Promise.all(
+    doomed.flatMap((d) => [
+      jsm.streams.purge(stream, { filter: d.meta }),
+      ...(d.chunks.endsWith(".") ? [] : [jsm.streams.purge(stream, { filter: d.chunks })]),
+    ]),
+  );
+  return doomed.length;
+}
+
+/**
+ * The run's end, after its engine stopped (nothing re-creates a durable or writes a blob then):
+ * the blobs of every run the run's tests touched, by name, and every durable on the work and
+ * timers streams that was not there when the run began. What a test that failed or timed out left
+ * after its own cleanup is gone with them.
+ */
+export async function sweepRun(
+  nc: NatsConnection,
+  prefix: string,
+  runIds: Iterable<string>,
+  atStart: Snapshot,
+): Promise<{ blobs: number; durables: number }> {
+  const blobs = await deleteRunBlobs(nc, prefix, runIds);
+  const jsm = await jetstreamManager(nc);
+  let durables = 0;
+  for (const stream of prefixStreams(prefix).slice(1, 3)) {
+    const fresh = (await consumersOf(jsm, stream)).filter((c) => !atStart.consumers.has(c));
+    for (const c of fresh) {
+      try {
+        await jsm.consumers.delete(stream, c.slice(stream.length + 1));
+        durables += 1;
+      } catch (e) {
+        if (jsErrorCode(e) !== 10014) throw e;
+      }
+    }
+  }
+  return { blobs, durables };
+}
+
 /**
  * The cleanup after a test: every subject of the prefix's streams that is new or grew since
  * `before` is purged — the journal, work and timer subjects of the test's runs, their KV keys
@@ -212,7 +314,8 @@ export async function purgeSince(
   return purged;
 }
 
-/** `DE_CLEANUP=delete`: the prefix's seven, at the run's end, and nothing else. */
+/** `DE_CLEANUP=delete` (the default for a generated prefix): the prefix's seven, at the run's
+ * end, and nothing else. */
 export async function deletePrefixStreams(nc: NatsConnection, prefix: string): Promise<string[]> {
   const jsm = await jetstreamManager(nc);
   const deleted: string[] = [];
