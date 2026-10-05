@@ -4,6 +4,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.7.0-alpha] — unreleased
 
+- `engine.pin` `5047d79` (the engine's #12): a withdrawn worker is remembered 5 s there, so one `cancelPoll` is enough (its F53; the 250 ms repeat in `stop()` stays harmless and can go later); `tenant purge`, `provision -retire` and `gc` are the operator's, nothing here changes.
+
 - **`worker.stop()` waits for its polls** (`docs/findings.md` F44; the engine's F51), both languages: it returns once every slot's loop has ended, so an item a poll was handed in the instant before the withdrawal has gone back (`done retry`) before a caller can exit, instead of waiting out its ack wait under a lease nobody holds. Bounded as before. A poll that reaches the engine just after the withdrawal is withdrawn again (every 250 ms while one is out). **Every example and the snippets in both READMEs and `docs/FABRIC.md` stop the worker and drain the connection in a `finally`**, so a timeout or an error leaves no poll registered on the engine; `charge`'s comment says the signal may land before the `await` and the engine takes it on the next replay. New test in each language's `worker-recovery` integration suite. `engine.pin` unchanged.
 - The examples read `NATS_CREDS` in both languages, so they run on the fabric unchanged; `docs/FABRIC.md`: where the URL and the user come from, payload privacy (the user's half), the page walked on staging 2026-10-05.
 
