@@ -67,15 +67,24 @@ export class NatsServerProcess {
   #port = 0;
   #store = "";
   readonly limits: ServerLimits | null;
+  readonly #config: ((port: number, store: string) => string) | undefined;
 
   /**
    * `profile` picks a row of server-profiles.json (default: `DE_TEST_PROFILE`, then `ngs`);
    * `limits` overrides it outright — a test that asserts against a specific cap passes the number
    * it asserts against, so the assertion cannot drift from the table.
    */
-  constructor(opts: { profile?: ServerProfile; limits?: ServerLimits | null } = {}) {
+  constructor(
+    opts: {
+      profile?: ServerProfile;
+      limits?: ServerLimits | null;
+      /** A config of the test's own instead (`renderTenancyConfig`). */
+      config?: (port: number, store: string) => string;
+    } = {},
+  ) {
     this.limits =
       opts.limits !== undefined ? opts.limits : limitsFor(opts.profile ?? profileFromEnv());
+    this.#config = opts.config;
   }
 
   get url(): string {
@@ -98,7 +107,7 @@ export class NatsServerProcess {
     // difference between two default-sized prefixes fitting per test and twenty small ones.
     writeFileSync(
       join(this.#store, "nats.conf"),
-      renderConfig(this.#port, this.#store, this.limits),
+      this.#config?.(this.#port, this.#store) ?? renderConfig(this.#port, this.#store, this.limits),
     );
     await this.#spawn();
   }
@@ -160,6 +169,36 @@ export function renderConfig(port: number, store: string, limits: ServerLimits |
       `    users: [ { user: de, password: de } ]\n  }\n}\nno_auth_user: de\n`;
   }
   return conf;
+}
+
+/**
+ * A server for the engine's fabric mode, as the engine's tests set one up
+ * (`internal/testserver.TenancyConfig`): the account `DE` (user `de`) exports `{prefix}.{T}.api.>`
+ * to each tenant `T`, whose account imports it as `{prefix}.api.>` with `share: true`; users
+ * `de`, `<t>-client` and `<t>-worker`, each password its name.
+ */
+export function renderTenancyConfig(
+  port: number,
+  store: string,
+  prefix: string,
+  tenants: string[],
+): string {
+  // prettier-ignore
+  const exports = tenants.map((t) => `      { service: "${prefix}.${t}.api.>", accounts: [${t}] }\n`).join(""); // prettier-ignore
+  const accounts = tenants
+    .map((t) => {
+      const u = t.toLowerCase();
+      return (
+        `  ${t} {\n    users: [ { user: ${u}-client, password: ${u}-client }, { user: ${u}-worker, password: ${u}-worker } ]\n` +
+        `    imports: [ { service: { account: DE, subject: "${prefix}.${t}.api.>" }, to: "${prefix}.api.>", share: true } ]\n  }\n`
+      );
+    })
+    .join("");
+  return (
+    `host: 127.0.0.1\nport: ${String(port)}\n` +
+    `jetstream { store_dir: "${store}", max_file_store: 1099511627776, max_mem_store: 268435456 }\n` +
+    `accounts {\n  DE {\n    jetstream: enabled\n    users: [ { user: de, password: de } ]\n    exports: [\n${exports}    ]\n  }\n${accounts}}\n`
+  );
 }
 
 function findBinary(name: string): string | null {

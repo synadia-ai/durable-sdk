@@ -5,7 +5,8 @@ A refusal is ``{"error": {"code", "message"}}`` from a closed set (``durable-eng
 ``docs/API.md`` "Errors"); the transport turns each code into one of these, or into a library error
 where the library already has the class: ``fenced`` → :class:`FencedError`, ``too_large`` →
 :class:`PayloadTooLargeError`, ``blob_gone`` → :class:`BlobMissingError` (or
-:class:`BlobIntegrityError` when the bytes are not the digest's).
+:class:`BlobIntegrityError` when the bytes are not the digest's). ``tenant_limit`` and
+``licence_limit`` are refusals of their own (:class:`LimitError`), never retried.
 """
 
 from __future__ import annotations
@@ -15,19 +16,48 @@ from typing import Literal
 from synadia_durable.errors import DurableError, FencedError
 
 __all__ = [
+    "ENGINE_ERROR_CODES",
     "EngineError",
     "EngineErrorCode",
     "EngineFencedError",
     "EngineUnavailableError",
     "InvalidRequestError",
     "LeaseExpiredError",
+    "LimitError",
     "RunNotFoundError",
 ]
 
 #: The closed set of refusal codes of API v1.
 EngineErrorCode = Literal[
-    "invalid", "fenced", "expired", "not_found", "too_large", "unavailable", "blob_gone", "internal"
+    "invalid",
+    "fenced",
+    "expired",
+    "not_found",
+    "too_large",
+    "unavailable",
+    "blob_gone",
+    "internal",
+    "tenant_limit",
+    "licence_limit",
 ]
+
+#: The codes table of ``durable-engine`` ``docs/API.md`` "Errors", mirrored: each code and the class
+#: a refusal with it becomes (``invalid`` on an ``append`` or a ``child`` is a
+#: :class:`SerializationError` instead). ``tests/test_engine_errors.py`` checks it against the table
+#: at ``engine.pin``, so a code the engine adds fails a test here rather than reaching a caller as
+#: ``unavailable``.
+ENGINE_ERROR_CODES: dict[str, str] = {
+    "invalid": "InvalidRequestError",
+    "fenced": "FencedError",
+    "expired": "LeaseExpiredError",
+    "not_found": "RunNotFoundError",
+    "too_large": "PayloadTooLargeError",
+    "unavailable": "EngineUnavailableError",
+    "blob_gone": "BlobMissingError",
+    "internal": "EngineUnavailableError",
+    "tenant_limit": "LimitError",
+    "licence_limit": "LimitError",
+}
 
 
 class EngineError(DurableError):
@@ -74,6 +104,28 @@ class EngineUnavailableError(EngineError):
         super().__init__(op, code, message)
         #: No answer within the request's timeout (rather than no responders or a refusal).
         self.timed_out = timed_out
+
+
+class LimitError(EngineError):
+    """A refusal at a limit: ``tenant_limit`` (the fabric mode: the caller's tenant is at one of its
+    limits) or ``licence_limit`` (standalone: the engine's licence bounds what was asked).
+    ``limit`` names which one, as the engine says it: ``workflows``, ``workers``, ``runs``,
+    ``runsPerDay``, ``tenants``, ``expired`` (the licence's), ``bytes``, ``runs``, ``workflows``,
+    ``polls``, ``rate`` (the tenant's).
+
+    Not a fault of the request and not transient: it clears when runs end, an operator raises the
+    limit or installs a renewed licence (``rate`` within a second). So no call of this package
+    retries it: a client's call raises it, a worker's refused poll is logged at error naming the
+    limit and backs off, ``worker.start()`` raises it when its first poll is refused, and inside an
+    execution the item goes back (``done retry``), logged at error.
+    """
+
+    def __init__(
+        self, op: str, code: Literal["tenant_limit", "licence_limit"], limit: str, message: str
+    ) -> None:
+        super().__init__(op, code, message)
+        #: Which limit, as the engine names it (``""`` if a refusal named none).
+        self.limit = limit
 
 
 class RunNotFoundError(EngineError, LookupError):

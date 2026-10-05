@@ -22,6 +22,7 @@ from synadia_durable._engine.errors import (
     EngineUnavailableError,
     InvalidRequestError,
     LeaseExpiredError,
+    LimitError,
     RunNotFoundError,
 )
 from synadia_durable._engine.names import Op, api_subject
@@ -179,6 +180,21 @@ def _from_refusal(op: Op, body: dict[str, Any], r: dict[str, Any], log: Logger) 
             detail=message,
         )
         return EngineUnavailableError(op, "internal", message)
+    if code in ("tenant_limit", "licence_limit"):
+        # A refusal, never a transient (the engine's F46): it clears when runs end or an operator
+        # acts, so nothing here retries it (F40).
+        limit = r.get("limit")
+        return LimitError(op, code, limit if isinstance(limit, str) else "", message)
+    if code != "unavailable":
+        # A code this package does not know (an engine newer than it): transient, as before, but
+        # said, since it may be a refusal that will not clear.
+        log.warn(
+            "durable: the engine answered a code this SDK does not know; treating it as unavailable",
+            op=op,
+            run_id=run_id,
+            code=code,
+            detail=message,
+        )
     return EngineUnavailableError(op, "unavailable", message)
 
 

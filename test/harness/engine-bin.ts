@@ -2,10 +2,16 @@
 // (a path), or built with `go build -o` from the engine checkout (`DE_ENGINE_REPO`, default
 // ../durable-engine) at the commit `engine.pin` names. A checkout at another commit, or with local
 // changes, is refused unless `DE_ENGINE_ANY=1`.
+//
+// The build is the engine's `make build-dev` (F42): `-tags devlicence`, so it trusts the test
+// licence issuer, and `durable-licence` beside it. A standalone `serve` starts only with a licence:
+// the run mints one test licence (`durable-licence mint -test`) and every standalone engine it
+// spawns gets it as `DE_LICENCE`, unless the caller's `DE_LICENCE` names one.
 
 import { execFileSync } from "node:child_process";
-import { accessSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = fileURLToPath(new URL("../..", import.meta.url));
@@ -76,12 +82,57 @@ export function resolveEngineBinary(): string {
   }
   const outDir = join(repo, ".engine-bin");
   mkdirSync(outDir, { recursive: true });
-  const out = join(outDir, `durable-engine-${head.slice(0, 12)}${dirty ? "-dirty" : ""}`);
-  if (!existsSync(out) || dirty) {
-    execFileSync("go", ["build", "-o", out, "./cmd/durable-engine"], {
-      cwd: src,
-      stdio: "inherit",
-    });
+  const tag = `${head.slice(0, 12)}${dirty ? "-dirty" : ""}`;
+  const out = join(outDir, `durable-engine-dev-${tag}`);
+  const tool = join(outDir, `durable-licence-${tag}`);
+  if (!existsSync(out) || !existsSync(tool) || dirty) {
+    // `make build-dev`'s two builds, into this repo's .engine-bin: nothing is written in the checkout.
+    execFileSync("go", ["build", "-tags", "devlicence", "-o", out, "./cmd/durable-engine"], { cwd: src, stdio: "inherit" }); // prettier-ignore
+    execFileSync("go", ["build", "-o", tool, "./cmd/durable-licence"], { cwd: src, stdio: "inherit" }); // prettier-ignore
   }
   return out;
+}
+
+/**
+ * `durable-licence`, for the engine binary `bin`: beside a build of ours (`durable-licence-<commit>`)
+ * or beside a `DE_ENGINE` (`make build-dev` puts both in `bin/`), or `DE_LICENCE_TOOL`.
+ */
+export function licenceTool(bin: string): string {
+  const given = process.env.DE_LICENCE_TOOL;
+  if (given !== undefined && given !== "") return given;
+  const ours = bin.replace(/durable-engine-dev-([^/]+)$/, "durable-licence-$1");
+  for (const p of [ours, join(dirname(bin), "durable-licence")]) {
+    if (p !== bin && existsSync(p)) return p;
+  }
+  throw new Error(
+    `no durable-licence beside ${bin} to mint the run's test licence: set DE_LICENCE to a licence ` +
+      `file, DE_LICENCE_TOOL to the tool, or build both with \`make build-dev\` in the engine`,
+  );
+}
+
+/** Flags of `durable-licence mint` (`-workflows 1`, …): a licence whose limits a test meets. */
+export type LicenceLimits = Partial<
+  Record<"workflows" | "workers" | "runs-in-flight" | "runs-per-day" | "tenants", number>
+>;
+
+/**
+ * A test licence (`durable-licence mint -test`), written to a fresh temporary file: the run's
+ * (`name` durable-sdk-tests, the tool's generous defaults) or a test's own, with `limits`.
+ */
+export function mintTestLicence(
+  bin: string,
+  name = "durable-sdk-tests",
+  limits: LicenceLimits = {},
+): string {
+  const out = join(mkdtempSync(join(tmpdir(), "de-licence-")), "licence.jwt");
+  const flags = Object.entries(limits).flatMap(([k, v]) => [`-${k}`, String(v)]);
+  execFileSync(licenceTool(bin), ["mint", "-test", "-name", name, ...flags, "-out", out], { stdio: "pipe" }); // prettier-ignore
+  return out;
+}
+
+/** The run's licence: the caller's `DE_LICENCE`, or a test licence minted once for the run. */
+export function runLicence(bin: string): { file: string; minted: boolean } {
+  const given = process.env.DE_LICENCE;
+  if (given !== undefined && given !== "") return { file: given, minted: false };
+  return { file: mintTestLicence(bin), minted: true };
 }

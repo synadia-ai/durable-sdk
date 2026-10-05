@@ -18,6 +18,7 @@ from synadia_durable._engine.errors import (
     EngineUnavailableError,
     InvalidRequestError,
     LeaseExpiredError,
+    LimitError,
     RunNotFoundError,
 )
 from synadia_durable._engine.worker import PumpHealth, Worker, WorkerHealth, create_worker
@@ -85,6 +86,7 @@ __all__ = [
     "Handle",
     "InvalidRequestError",
     "LeaseExpiredError",
+    "LimitError",
     "Logger",
     "Metrics",
     "NonDeterminismError",

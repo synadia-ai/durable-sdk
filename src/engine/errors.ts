@@ -3,6 +3,7 @@
 // "Errors"); the transport turns each code into one of these, or into a library error where the
 // library already has the class: `fenced` → FencedError, `too_large` → PayloadTooLargeError,
 // `blob_gone` → BlobMissingError (or BlobIntegrityError when the bytes are not the digest's).
+// `tenant_limit` and `licence_limit` are refusals of their own (`LimitError`), never retried.
 
 import { DurableError, FencedError } from "../errors.js";
 
@@ -15,7 +16,28 @@ export type EngineErrorCode =
   | "too_large"
   | "unavailable"
   | "blob_gone"
-  | "internal";
+  | "internal"
+  | "tenant_limit"
+  | "licence_limit";
+
+/**
+ * The codes table of durable-engine docs/API.md "Errors", mirrored: each code and the class a
+ * refusal with it becomes (`invalid` on an `append` or a `child` is a SerializationError instead).
+ * test/unit/engine-errors.test.ts checks it against the table at engine.pin, so a code the engine
+ * adds fails a test here rather than reaching a caller as `unavailable`.
+ */
+export const ENGINE_ERROR_CODES: Readonly<Record<EngineErrorCode, string>> = {
+  invalid: "InvalidRequestError",
+  fenced: "FencedError",
+  expired: "LeaseExpiredError",
+  not_found: "RunNotFoundError",
+  too_large: "PayloadTooLargeError",
+  unavailable: "EngineUnavailableError",
+  blob_gone: "BlobMissingError",
+  internal: "EngineUnavailableError",
+  tenant_limit: "LimitError",
+  licence_limit: "LimitError",
+};
 
 /** A refusal (or a failure to reach the engine) on one op. */
 export class EngineError extends DurableError {
@@ -67,6 +89,35 @@ export class EngineUnavailableError extends EngineError {
     super(op, code, message, options);
     this.name = "EngineUnavailableError";
     this.timedOut = options?.timedOut === true;
+  }
+}
+
+/**
+ * A refusal at a limit: `tenant_limit` (the fabric mode: the caller's tenant is at one of its
+ * limits) or `licence_limit` (standalone: the engine's licence bounds what was asked). `limit`
+ * names which one, as the engine says it: `workflows`, `workers`, `runs`, `runsPerDay`, `tenants`,
+ * `expired` (the licence's), `bytes`, `runs`, `workflows`, `polls`, `rate` (the tenant's).
+ *
+ * Not a fault of the request and not transient: it clears when runs end, an operator raises the
+ * limit or installs a renewed licence (`rate` within a second). So no call of this package retries
+ * it: a client's call rejects with it, a worker's refused poll is logged at error naming the limit
+ * and backs off, `worker.start()` rejects with it when its first poll is refused, and inside an
+ * execution the item goes back (`done retry`), logged at error.
+ */
+export class LimitError extends EngineError {
+  declare readonly code: "tenant_limit" | "licence_limit";
+  /** Which limit, as the engine names it (`""` if a refusal named none). */
+  readonly limit: string;
+  constructor(
+    op: string,
+    code: "tenant_limit" | "licence_limit",
+    limit: string,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(op, code, message, options);
+    this.name = "LimitError";
+    this.limit = limit;
   }
 }
 

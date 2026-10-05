@@ -42,6 +42,14 @@ export interface EngineExtras {
   startTimeoutMs?: number;
   /** Every stderr line, as it comes. */
   onLine?: (line: string) => void;
+  /**
+   * `DE_LICENCE` for `serve` (a standalone engine starts only with a licence; F42): a file, or
+   * `null` for none (the fabric mode needs none, and one given would bound its tenants). Absent:
+   * the run's, which global-setup.ts put in the environment.
+   */
+  licence?: string | null;
+  /** Arguments before `--prefix` (`--tenancy`, `--tenant-max-bytes 0`, …). */
+  args?: string[];
 }
 
 /** One `durable-engine serve` process. */
@@ -65,12 +73,16 @@ export class EngineProcess {
     const extra: string[] = [];
     if (this.extras.creds !== undefined) extra.push("--creds", this.extras.creds);
     if (this.extras.metricsAddr !== undefined) extra.push("--metrics-addr", this.extras.metricsAddr); // prettier-ignore
+    extra.push(...(this.extras.args ?? []));
     return ["serve", "--nats", this.url, ...extra, "--prefix", this.prefix, "--instance", this.instance, ...flagArgs(this.flags)]; // prettier-ignore
   }
 
   /** Spawn and wait for the engine's `serving` line (it provisions the prefix first). */
   async start(): Promise<void> {
-    const proc = spawn(this.bin, this.args, { stdio: ["ignore", "ignore", "pipe"] });
+    const env = { ...process.env };
+    if (this.extras.licence === null) delete env.DE_LICENCE;
+    else if (this.extras.licence !== undefined) env.DE_LICENCE = this.extras.licence;
+    const proc = spawn(this.bin, this.args, { stdio: ["ignore", "ignore", "pipe"], env });
     this.#proc = proc;
     let buf = "";
     const limit = this.extras.startTimeoutMs ?? 30_000;

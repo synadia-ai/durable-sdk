@@ -11,11 +11,11 @@
 // knowing. `natsDirectUrl` is always the server itself — for the harness's own hygiene, and for a
 // test that brings its own proxy and must not stack two.
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { EngineNotAvailableError, enginePin, resolveEngineBinary } from "./engine-bin.js";
+import { EngineNotAvailableError, enginePin, resolveEngineBinary, runLicence } from "./engine-bin.js"; // prettier-ignore
 import { randomBytes } from "node:crypto";
 import {
   connect,
@@ -56,6 +56,7 @@ export default async function setup(ctx: SetupContext): Promise<() => Promise<vo
   ctx.provide("throughputBps", 0);
   ctx.provide("natsMaxPayload", 0);
   ctx.provide("runTenant", null);
+  ctx.provide("licenceFile", null);
   const existing = existingFromEnv();
   if (existing) return setupExisting(ctx, existing);
   const profile = profileFromEnv();
@@ -74,6 +75,8 @@ export default async function setup(ctx: SetupContext): Promise<() => Promise<vo
     ctx.provide("natsRttMs", 0);
     return () => Promise.resolve();
   }
+  // A standalone engine starts only with a licence (F42): one for the run, minted here.
+  const licence = provideLicence(ctx, engineBin);
   ctx.provide("engineBin", engineBin);
   const server = new NatsServerProcess({ profile });
   try {
@@ -106,7 +109,24 @@ export default async function setup(ctx: SetupContext): Promise<() => Promise<vo
     } finally {
       await proxy?.stop();
       await server.stop();
+      licence.remove();
     }
+  };
+}
+
+/**
+ * The run's licence for its standalone engines (F42): the caller's `DE_LICENCE`, or a test licence
+ * minted once for the run (`durable-licence mint -test -name durable-sdk-tests`), removed at the end.
+ */
+function provideLicence(ctx: SetupContext, engineBin: string): { file: string; remove(): void } {
+  const lic = runLicence(engineBin);
+  console.warn(lic.minted ? `licence: a test licence minted for the run, ${lic.file}\n` : `licence: DE_LICENCE ${lic.file}\n`); // prettier-ignore
+  ctx.provide("licenceFile", lic.file);
+  return {
+    file: lic.file,
+    remove: () => {
+      if (lic.minted) rmSync(dirname(lic.file), { recursive: true, force: true });
+    },
   };
 }
 
@@ -139,6 +159,7 @@ const freePort = (): Promise<number> =>
  */
 async function setupExisting(ctx: SetupContext, ex: ExistingServer): Promise<() => Promise<void>> {
   const engineBin = ex.engineUrl === undefined ? resolveEngineBinary() : null;
+  const licence = engineBin !== null ? provideLicence(ctx, engineBin) : undefined;
   const scope = scopeOf(ex.prefix);
   // The tests' identity, for the round trip, the probe and the engine's API; the admin connection
   // (DE_ADMIN_URL, the tests' own by default) for the streams: as a tenant the tests see none.
@@ -162,6 +183,7 @@ async function setupExisting(ctx: SetupContext, ex: ExistingServer): Promise<() 
     ...(ex.creds !== undefined ? { creds: ex.creds } : {}),
     metricsAddr: `127.0.0.1:${String(await freePort())}`,
     startTimeoutMs: Math.round(30_000 * factor),
+    ...(licence !== undefined ? { licence: licence.file } : {}),
   });
   console.warn(
     `\nexisting server ${ex.url}${ex.creds !== undefined ? " (creds)" : ""}, prefix ${ex.prefix}${ex.tenant !== undefined ? `, as tenant ${ex.tenant} (the streams through ${ex.adminUrl}${ex.adminCreds !== undefined ? ", creds" : ""})` : ""}, ` +
@@ -220,6 +242,7 @@ async function setupExisting(ctx: SetupContext, ex: ExistingServer): Promise<() 
     } finally {
       const metrics = await engineMetrics(ex, run);
       await run.stop();
+      licence?.remove();
       // The engine stopped, nothing re-creates a durable or writes a blob: what a test that failed
       // or timed out left after its own cleanup goes now (docs/findings.md F33).
       const swept = await sweepRun(nc, scope, run.runIds, atStart);
@@ -305,5 +328,7 @@ declare module "vitest" {
     natsMaxPayload: number;
     /** DE_TENANT, or null. */
     runTenant: string | null;
+    /** The licence of the run's standalone engines (F42), or null without an engine. */
+    licenceFile: string | null;
   }
 }

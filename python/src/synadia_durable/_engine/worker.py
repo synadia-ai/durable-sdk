@@ -9,6 +9,8 @@ wait meanwhile; the ``ExecOutcome`` goes back as ``done``. On ``expired`` from a
 is dropped and the slot polls on. A value too large for a request or a reply goes up and comes
 down in parts (``blobs.py``). Every poll names this worker, and ``stop()`` withdraws its waiting
 polls (``poll {cancelPoll}``), so a stop takes as long as the items in flight, not a poll's wait.
+A poll refused at a limit (:class:`LimitError`) is logged at error and backs off; the first one, at
+``start()``, makes ``start()`` raise so a process does not run without work silently.
 The worker holds no state across items: the consumers, the
 inbound event, the run lease, the ack matrix, the obligations after a terminal, the cascade, the
 forward, the parked index and the lost-wake repair are the engine's.
@@ -24,7 +26,12 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from synadia_durable._engine.blobs import EngineBlobs, Sizes
-from synadia_durable._engine.errors import EngineError, InvalidRequestError, LeaseExpiredError
+from synadia_durable._engine.errors import (
+    EngineError,
+    InvalidRequestError,
+    LeaseExpiredError,
+    LimitError,
+)
 from synadia_durable._engine.names import DEFAULT_PREFIX, Op
 from synadia_durable._engine.payload import (
     WireJournal,
@@ -51,6 +58,8 @@ from synadia_durable.journal.codec import json_codec
 from synadia_durable.journal.store import AppendResult, JournalAppend
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from nats.aio.client import Client as NatsClient
 
     from synadia_durable.core.children import ChildStart
@@ -103,6 +112,37 @@ class WorkerHealth:
 def _poll_backoff_s(failures: int) -> float:
     """The back-off of a slot whose poll failed: 250 ms doubling to 5 s."""
     return min(5.0, 0.25 * float(2 ** min(max(0, failures - 1), 5)))
+
+
+def limit_backoff_s(e: LimitError) -> float:
+    """The back-off of a slot whose poll was refused at a limit (API.md "Errors"): ``rate`` clears
+    within a second; the others when runs end, a worker goes away or an operator acts, so 30 s."""
+    return 1.0 if e.limit == "rate" else 30.0
+
+
+#: How often the worker says that its polls are failing (one line, with the count).
+POLL_WARN_EVERY_S = 60.0
+
+
+class EveryLog:
+    """One log line per ``every_s`` for an event that repeats: :meth:`hit` counts one and answers
+    how many the line about to be logged stands for (this one and those since the last line), or 0
+    to stay quiet. A long idle over a slow link, every poll failing, then fills no log (F41)."""
+
+    def __init__(self, every_s: float, now: Callable[[], float] = time.monotonic) -> None:
+        self.every_s = every_s
+        self._now = now
+        self._last: float | None = None
+        self._count = 0
+
+    def hit(self) -> int:
+        self._count += 1
+        t = self._now()
+        if self._last is not None and t - self._last < self.every_s:
+            return 0
+        self._last = t
+        n, self._count = self._count, 0
+        return n
 
 
 class _Dropped:
@@ -160,6 +200,12 @@ class Worker:
         self._inflight: set[asyncio.Task[None]] = set()
         #: The tail of each run's items executing on this worker (removed when it settles).
         self._run_chains: dict[str, asyncio.Task[None]] = {}
+        #: Set by stop(): a slot backing off wakes at once.
+        self._stopping: asyncio.Event | None = None
+        #: The worker's "poll failed; retrying": one line a minute, however many slots fail.
+        self._poll_warn = EveryLog(POLL_WARN_EVERY_S)
+        #: A refusal at a limit: one error line per limit per back-off, however many slots.
+        self._limit_logs: dict[str, EveryLog] = {}
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -168,11 +214,16 @@ class Worker:
             return
         if self._nc.is_closed:
             raise ConnectionClosedError("create_worker: the NATS connection is closed")
+        reachable = True
         try:
             await self._request.request("info", {})
         except ConnectionClosedError:
             raise
+        except LimitError as e:
+            self._refused_at_start(e, "info")
+            reachable = False
         except EngineError as e:
+            reachable = False
             # Not fatal: the polls retry until an engine answers, as a library worker rides out an
             # outage.
             self._log.warn(
@@ -180,12 +231,49 @@ class Worker:
                 prefix=self._prefix,
                 error=str(e),
             )
+        # The first poll checks once (`waitMs: 0`) whether the engine serves these workflows to
+        # this worker; an item it is handed goes to the first slot.
+        first: dict[str, Any] | None = None
+        if reachable:
+            try:
+                r = await self._request.request(
+                    "poll",
+                    {"workflows": self._workflows, "waitMs": 0, "worker": self._worker_id},
+                    wait_ms=0,
+                )
+                if not r.get("none"):
+                    first = r
+            except ConnectionClosedError:
+                raise
+            except LimitError as e:
+                self._refused_at_start(e, "first poll")
+            except Exception:  # noqa: BLE001 — anything else the slots meet again and retry
+                pass
         self._running = True
+        self._stopping = asyncio.Event()
         self._slots = [
             PumpHealth(stream=f"{self._prefix}.api.v1.poll", durable=f"slot-{i}", alive=True)
             for i in range(self._concurrency)
         ]
-        self._polls = [asyncio.ensure_future(self._poll_loop(s)) for s in self._slots]
+        self._polls = [
+            asyncio.ensure_future(self._poll_loop(s, first if i == 0 else None))
+            for i, s in enumerate(self._slots)
+        ]
+
+    def _refused_at_start(self, e: LimitError, where: str) -> None:
+        """A refusal at a limit (but ``rate``, which clears within a second) makes ``start()``
+        raise: a process must not run without work silently (the engine's F46)."""
+        if e.limit == "rate":
+            return
+        self._log.error(
+            f"durable: the engine refused this worker's {where} at a limit ({e.code} {e.limit}); "
+            "start() raises",
+            code=e.code,
+            limit=e.limit,
+            workflows=[w["name"] for w in self._workflows],
+            error=str(e),
+        )
+        raise e
 
     async def stop(self, drain_timeout_s: float = DEFAULT_DRAIN_TIMEOUT_S) -> None:
         """Stop polling, and let the items in flight finish (bounded by ``drain_timeout_s``).
@@ -201,6 +289,8 @@ class Worker:
         """
         was_running = self._running
         self._running = False
+        if self._stopping is not None:
+            self._stopping.set()
         for s in self._slots:
             s.alive = False
         if was_running and not self._nc.is_closed:
@@ -257,26 +347,61 @@ class Worker:
             "workers, or this one restarted, resume them from the journal."
         )
 
+    async def _nap(self, seconds: float) -> None:
+        """A sleep that stop() cuts short."""
+        if self._stopping is None:
+            await asyncio.sleep(seconds)
+            return
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(self._stopping.wait(), seconds)
+
+    def _log_limit(self, e: LimitError, where: str, **fields: Any) -> None:
+        key = f"{where}|{e.code}|{e.limit}"
+        every = self._limit_logs.get(key)
+        if every is None:
+            every = self._limit_logs[key] = EveryLog(limit_backoff_s(e))
+        n = every.hit()
+        if n == 0:
+            return
+        then = (
+            f"polling again in {limit_backoff_s(e):g} s"
+            if where == "poll"
+            else "the item goes back until it clears"
+        )
+        self._log.error(
+            f"durable: the engine refused this worker's {where} at a limit ({e.code} {e.limit}); "
+            f"{then}",
+            **fields,
+            code=e.code,
+            limit=e.limit,
+            refused=n,
+            error=str(e),
+        )
+
     def _is_running(self) -> bool:
         """``_running``, read through a call: stop() flips it while a poll is awaited."""
         return self._running
 
-    async def _poll_loop(self, state: PumpHealth) -> None:
+    async def _poll_loop(self, state: PumpHealth, first: dict[str, Any] | None = None) -> None:
         failures = 0
         while self._running:
             if self._nc.is_closed:
                 self._report_connection_closed()
                 break
             try:
-                r = await self._request.request(
-                    "poll",
-                    {
-                        "workflows": self._workflows,
-                        "waitMs": self._poll_wait_ms,
-                        "worker": self._worker_id,
-                    },
-                    wait_ms=self._poll_wait_ms,
-                )
+                if first is not None:
+                    # The item start()'s first poll was handed.
+                    r, first = first, None
+                else:
+                    r = await self._request.request(
+                        "poll",
+                        {
+                            "workflows": self._workflows,
+                            "waitMs": self._poll_wait_ms,
+                            "worker": self._worker_id,
+                        },
+                        wait_ms=self._poll_wait_ms,
+                    )
                 failures = 0
                 state.alive = self._running
             except asyncio.CancelledError:
@@ -302,12 +427,26 @@ class Worker:
                 state.alive = False
                 state.restarts += 1
                 state.last_error = str(e)
+                if isinstance(e, LimitError):
+                    # Refused at a limit (the engine's F46): never a broker blip. Loud, and polled
+                    # again only after the limit could have cleared.
+                    self._log_limit(e, "poll", workflows=[w["name"] for w in self._workflows])
+                    if self._running:
+                        await self._nap(limit_backoff_s(e))
+                    continue
                 if isinstance(e, InvalidRequestError):
                     self._log.error("durable: the engine refused this worker's poll", error=str(e))
-                elif failures == 1 or failures % 20 == 0:
-                    self._log.warn("durable: poll failed; retrying", error=str(e))
+                else:
+                    n = self._poll_warn.hit()
+                    if n > 0:
+                        self._log.warn(
+                            "durable: poll failed; retrying",
+                            error=str(e),
+                            failures=n,
+                            every_s=POLL_WARN_EVERY_S,
+                        )
                 if self._running:
-                    await asyncio.sleep(_poll_backoff_s(failures))
+                    await self._nap(_poll_backoff_s(failures))
                 continue
             if r.get("none"):
                 continue
@@ -449,7 +588,9 @@ class Worker:
             )
             outcome = ExecOutcome(kind="retry", cause=e)
         except Exception as e:  # noqa: BLE001 — everything left is infrastructure: hand it back
-            if not isinstance(e, LeaseExpiredError):
+            if isinstance(e, LimitError):
+                self._log_limit(e, "request", run_id=run_id)
+            elif not isinstance(e, LeaseExpiredError):
                 self._log.warn("durable: work item failed; will redeliver", run_id=run_id, error=str(e))  # fmt: skip
             outcome = ExecOutcome(kind="retry", cause=e)
         finally:
@@ -473,7 +614,13 @@ class Worker:
             and not isinstance(outcome.cause, LeaseExpiredError)
             and dropped.error is None
         ):
-            self._log.warn("durable: infra error during run; will retry", run_id=run_id, error=str(outcome.cause))  # fmt: skip
+            # Refused at a limit inside the execution (a child at `runs`, an append at `bytes`):
+            # the item goes back and the run waits until it clears (API.md "Errors"), loud.
+            if isinstance(outcome.cause, LimitError):
+                reported = "limit"
+                self._log_limit(outcome.cause, "request", run_id=run_id)
+            else:
+                self._log.warn("durable: infra error during run; will retry", run_id=run_id, error=str(outcome.cause))  # fmt: skip
         if dropped.error is not None:
             reported = "expired"
         else:

@@ -27,6 +27,7 @@ import {
   EngineUnavailableError,
   InvalidRequestError,
   LeaseExpiredError,
+  LimitError,
   RunNotFoundError,
 } from "./errors.js";
 import { apiSubject, type Op } from "./names.js";
@@ -42,6 +43,8 @@ interface Refusal {
     serverCode?: number;
     /** On `blob_gone`: the blob's name, `{runId}/sha256:<hex>`. */
     blob?: string;
+    /** On `tenant_limit` and `licence_limit`: which limit. */
+    limit?: string;
   };
 }
 
@@ -127,7 +130,17 @@ function fromRefusal(op: Op, body: object, r: Refusal, logger: Logger): Error {
     case "internal":
       logger.error("durable: the engine answered internal — an operator must look", { op, runId, message }); // prettier-ignore
       return new EngineUnavailableError(op, "internal", message);
+    case "tenant_limit":
+    case "licence_limit":
+      // A refusal, never a transient (the engine's F46): it clears when runs end or an operator
+      // acts, so nothing here retries it (F40).
+      return new LimitError(op, r.error.code, typeof r.error.limit === "string" ? r.error.limit : "", message); // prettier-ignore
+    case "unavailable":
+      return new EngineUnavailableError(op, "unavailable", message);
     default:
+      // A code this package does not know (an engine newer than it): transient, as before, but
+      // said, since it may be a refusal that will not clear.
+      logger.warn("durable: the engine answered a code this SDK does not know; treating it as unavailable", { op, runId, code: r.error.code, message }); // prettier-ignore
       return new EngineUnavailableError(op, "unavailable", message);
   }
 }

@@ -28,7 +28,7 @@ import subprocess
 import tempfile
 import time
 import uuid
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -180,15 +180,44 @@ class LocalServer:
         shutil.rmtree(self.store, ignore_errors=True)
 
 
-def spawn_server(limits: ServerLimits | None) -> LocalServer:
-    """Start a ``nats-server -js`` on a free port under the given limits; skip if no binary."""
+def render_tenancy_config(port: int, store: str, prefix: str, tenants: list[str]) -> str:
+    """A server for the engine's fabric mode, as the engine's tests set one up
+    (``internal/testserver.TenancyConfig``): the account ``DE`` (user ``de``) exports
+    ``{prefix}.{T}.api.>`` to each tenant ``T``, whose account imports it as ``{prefix}.api.>`` with
+    ``share: true``; users ``de``, ``<t>-client`` and ``<t>-worker``, each password its name. The
+    twin of ``renderTenancyConfig`` in ``test/harness/nats-server.ts``."""
+    exports = "".join(
+        f'      {{ service: "{prefix}.{t}.api.>", accounts: [{t}] }}\n' for t in tenants
+    )
+    accounts = "".join(
+        f"  {t} {{\n    users: [ {{ user: {t.lower()}-client, password: {t.lower()}-client }}, "
+        f"{{ user: {t.lower()}-worker, password: {t.lower()}-worker }} ]\n"
+        f'    imports: [ {{ service: {{ account: DE, subject: "{prefix}.{t}.api.>" }}, '
+        f'to: "{prefix}.api.>", share: true }} ]\n  }}\n'
+        for t in tenants
+    )
+    return (
+        f"host: 127.0.0.1\nport: {port}\n"
+        f'jetstream {{ store_dir: "{store}", max_file_store: 1099511627776, '
+        "max_mem_store: 268435456 }\n"
+        "accounts {\n  DE {\n    jetstream: enabled\n    users: [ { user: de, password: de } ]\n"
+        f"    exports: [\n{exports}    ]\n  }}\n{accounts}}}\n"
+    )
+
+
+def spawn_server(
+    limits: ServerLimits | None, *, config: Callable[[int, str], str] | None = None
+) -> LocalServer:
+    """Start a ``nats-server -js`` on a free port under the given limits, or with a ``config`` of
+    the test's own (:func:`render_tenancy_config`); skip if no binary."""
     binary = shutil.which("nats-server")
     if binary is None:
         pytest.skip("nats-server not found on PATH")
     port = _free_port()
     store = tempfile.mkdtemp(prefix="de-nats-py-")
     conf = Path(store) / "nats.conf"
-    conf.write_text(render_config(port, store, limits), encoding="utf-8")
+    text = config(port, store) if config is not None else render_config(port, store, limits)
+    conf.write_text(text, encoding="utf-8")
     proc = subprocess.Popen(
         [binary, "-c", str(conf)],
         stdout=subprocess.DEVNULL,

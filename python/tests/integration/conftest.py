@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import sys
 from collections.abc import AsyncIterator, Iterator
 
@@ -35,16 +36,33 @@ from conftest import delete_all_streams, leftover_message, list_ephemeral_consum
 
 
 @pytest.fixture(scope="session")
-def engine_bin() -> str:
-    """The engine binary for the run, resolved once; the integration suites skip without one."""
+def engine_bin() -> Iterator[str]:
+    """The engine binary for the run, resolved once; the integration suites skip without one. With
+    it the run's licence (F42): the caller's ``DE_LICENCE``, or a test licence minted once for the
+    run (``durable-licence mint -test -name durable-sdk-tests``), removed at the end."""
     if existing.EXISTING is not None and existing.EXISTING.engine_url is not None:
-        return ""  # DE_ENGINE_URL: the engine is not the harness's
+        yield ""  # DE_ENGINE_URL: the engine is not the harness's
+        return
     try:
         binary = engine.resolve_engine_binary()
     except engine.EngineNotAvailableError as e:
         pytest.skip(f"durable-engine unavailable ({e})")
     print(f"\nengine: {binary} (engine.pin {engine.engine_pin()})", file=sys.stderr)
-    return binary
+    given = os.environ.get("DE_LICENCE", "")
+    licence = given or engine.mint_test_licence(binary)
+    print(
+        f"licence: DE_LICENCE {licence}"
+        if given
+        else f"licence: a test licence minted for the run, {licence}",
+        file=sys.stderr,
+    )
+    engine.configure_licence(licence)
+    try:
+        yield binary
+    finally:
+        engine.configure_licence(None)
+        if not given:
+            shutil.rmtree(os.path.dirname(licence), ignore_errors=True)
 
 
 @pytest.fixture(scope="session")
