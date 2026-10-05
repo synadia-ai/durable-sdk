@@ -94,6 +94,8 @@ npm run test:integration           # 9 of the library's integration suites, inte
 
 The integration suites spawn a `nats-server` (≥ 2.14, from `PATH`) under the library's account-limits profile (`DE_TEST_PROFILE=ngs|tight|none`, default `ngs`), and one `durable-engine serve` per prefix a test uses, stopped after each test. The engine binary is `DE_ENGINE` (a path), or is built from `../durable-engine` (`DE_ENGINE_REPO`) at the commit in `engine.pin` as the engine's `make build-dev` builds it, into this repo: `.engine-bin/durable-engine-dev-<commit>` (`-tags devlicence`, trusting the test licence issuer) and `.engine-bin/durable-licence-<commit>`. A checkout at another commit, or with local changes, is refused unless `DE_ENGINE_ANY=1`. **The licence** (F42): a standalone `serve` starts only with one, so the harness mints a test licence once per run (`durable-licence mint -test -name durable-sdk-tests`, into a temporary directory removed at the end) and starts every standalone engine with `DE_LICENCE` set to it, the existing-server mode's too; `DE_LICENCE` in the caller's environment wins. The tool is the one built beside the engine, or `bin/durable-licence` beside a `DE_ENGINE` (`make build-dev` puts both there), or `DE_LICENCE_TOOL`. An engine in the fabric mode (`serve --tenancy`, the `limits` suite's) gets none: it needs none, and one would bound its tenants. Without the binary or Go the suites skip, saying why. `DE_ENGINE_LOG=1` echoes the engines' logs, and `DE_SDK_LOG=1` gives a worker without a logger a console one. `DE_TEST_RTT_MS=<ms>` puts the library's delay proxy between every test's connection and the server (the engines stay on the direct URL); `docs/findings.md` F28 has the runs at 150 and 300 ms. Nothing reaches beyond 127.0.0.1 but in the mode below.
 
+**Two builds of the engine since its #9 (`engine.pin` `97a1778`):** the harness builds `-tags devlicence` for the standalone engines it spawns (a test licence, F42) and **`-tags fabric` for a spawn in tenancy mode** (`serve --tenancy`: the fabric mode exists only in that build, the engine's F44, and it takes no licence), both into `.engine-bin/` from the pinned checkout. With `DE_ENGINE` given, a tenancy-mode spawn needs `DE_ENGINE_FABRIC` beside it, or the checkout at the pin to build from; the tenancy tests fail loud otherwise.
+
 `npm run check` adds the typecheck, lint and formatting.
 
 ### Against an existing server
@@ -131,7 +133,7 @@ DE_TEST_RTT_MS=150 npm run test:integration     # every round trip 150 ms, the e
 export DE_NATS_URL=tls://connect.ngs.global
 export DE_NATS_CREDS=<agent-fabric-tests>/local/ngs/creds/tenant-a-dev/<user>.creds
 export DE_PREFIX=de                          # the seven exist there: the engine's start reconciles, creates none
-export DE_ENGINE=$PWD/.engine-bin/durable-engine-dev-a7c5010858c0   # its durable-licence-a7c5010858c0 beside it mints the run's licence
+export DE_ENGINE=$PWD/.engine-bin/durable-engine-dev-97a17781cfe3   # its durable-licence-97a17781cfe3 beside it mints the run's licence
 npm run test:integration 2>&1 | tee ngs-ts.log
 (cd python && uv run pytest tests/integration -rs 2>&1 | tee ../ngs-py.log)
 ```

@@ -46,8 +46,11 @@ function onPath(name: string): string | null {
  * EngineNotAvailableError when neither can be had (the suites skip), and a plain Error when the
  * checkout is at the wrong commit (the run fails: a silent skip would hide it).
  */
-export function resolveEngineBinary(): string {
-  const given = process.env.DE_ENGINE;
+/** Which build of the engine: `dev` (-tags devlicence, standalone with a test licence) or `fabric` (-tags fabric, the only build with --tenancy; no licence). */
+export type EngineBuild = "dev" | "fabric";
+
+export function resolveEngineBinary(build: EngineBuild = "dev"): string {
+  const given = build === "fabric" ? process.env.DE_ENGINE_FABRIC : process.env.DE_ENGINE;
   if (given !== undefined && given !== "") {
     try {
       accessSync(given, constants.X_OK);
@@ -60,7 +63,7 @@ export function resolveEngineBinary(): string {
   const src = process.env.DE_ENGINE_REPO ?? join(repo, "..", "durable-engine");
   if (!existsSync(join(src, "go.mod"))) {
     throw new EngineNotAvailableError(
-      `no DE_ENGINE and no engine checkout at ${src} (DE_ENGINE_REPO)`,
+      `no ${build === "fabric" ? "DE_ENGINE_FABRIC" : "DE_ENGINE"} and no engine checkout at ${src} (DE_ENGINE_REPO)`,
     );
   }
   if (onPath("go") === null) {
@@ -83,11 +86,11 @@ export function resolveEngineBinary(): string {
   const outDir = join(repo, ".engine-bin");
   mkdirSync(outDir, { recursive: true });
   const tag = `${head.slice(0, 12)}${dirty ? "-dirty" : ""}`;
-  const out = join(outDir, `durable-engine-dev-${tag}`);
+  const out = join(outDir, `durable-engine-${build}-${tag}`);
   const tool = join(outDir, `durable-licence-${tag}`);
   if (!existsSync(out) || !existsSync(tool) || dirty) {
     // `make build-dev`'s two builds, into this repo's .engine-bin: nothing is written in the checkout.
-    execFileSync("go", ["build", "-tags", "devlicence", "-o", out, "./cmd/durable-engine"], { cwd: src, stdio: "inherit" }); // prettier-ignore
+    execFileSync("go", ["build", "-tags", build === "fabric" ? "fabric" : "devlicence", "-o", out, "./cmd/durable-engine"], { cwd: src, stdio: "inherit" }); // prettier-ignore
     execFileSync("go", ["build", "-o", tool, "./cmd/durable-licence"], { cwd: src, stdio: "inherit" }); // prettier-ignore
   }
   return out;

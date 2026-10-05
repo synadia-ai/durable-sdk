@@ -2,6 +2,7 @@
 // the spawned server; run-engine.ts (global-setup.ts) starts the one engine of a run against an
 // existing server (existing.ts).
 
+import { resolveEngineBinary } from "./engine-bin.js";
 import { type ChildProcess, spawn } from "node:child_process";
 
 /** The library's worker/client options that are the engine's command line now. */
@@ -82,7 +83,10 @@ export class EngineProcess {
     const env = { ...process.env };
     if (this.extras.licence === null) delete env.DE_LICENCE;
     else if (this.extras.licence !== undefined) env.DE_LICENCE = this.extras.licence;
-    const proc = spawn(this.bin, this.args, { stdio: ["ignore", "ignore", "pipe"], env });
+    // The fabric mode (--tenancy) exists only in the fabric build since the engine's #9 (its F44):
+    // a tenancy-mode spawn runs that build, resolved beside the dev one (DE_ENGINE_FABRIC names it).
+    const bin = this.extras.args?.includes("--tenancy") ? resolveEngineBinary("fabric") : this.bin;
+    const proc = spawn(bin, this.args, { stdio: ["ignore", "ignore", "pipe"], env });
     this.#proc = proc;
     let buf = "";
     const limit = this.extras.startTimeoutMs ?? 30_000;
