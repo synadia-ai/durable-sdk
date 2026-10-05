@@ -5,12 +5,13 @@
 // timeoutMs are also part of v0.1 — see DESIGN.md §2 — but aren't exercised here.)
 //
 //   1. start a local nats-server:  nats-server -js
-//   2. run:                        NATS_URL=nats://127.0.0.1:4222 npm run example:charge
+//   2. run:                        NATS_URL=nats://127.0.0.1:4222 npm run example:charge   (on the fabric: NATS_URL=<the fabric> NATS_CREDS=<your creds file>)
 //
 // Durability: while it's parked at "await payment" or "sleep", kill the process and re-run with the
 // SAME runId (DE_RUN_ID=<id>) — it resumes from the journal instead of re-running completed steps.
 
-import { connect } from "@nats-io/transport-node";
+import { readFileSync } from "node:fs";
+import { connect, credsAuthenticator } from "@nats-io/transport-node";
 import {
   createClient,
   createWorker,
@@ -71,7 +72,10 @@ const consoleLogger: Logger = {
 
 async function main(): Promise<void> {
   const url = process.env.NATS_URL ?? "nats://127.0.0.1:4222";
-  const nc = await connect(withReconnectDefaults({ servers: url }));
+  // NATS_CREDS: a creds file, for the fabric (docs/FABRIC.md); absent, a plain local server.
+  const creds = process.env.NATS_CREDS;
+  const auth = creds ? { authenticator: credsAuthenticator(readFileSync(creds)) } : {};
+  const nc = await connect(withReconnectDefaults({ servers: url, ...auth }));
   console.log(`connected to ${url}`);
 
   // one worker process can host many workflows; register the order and its sub-workflow

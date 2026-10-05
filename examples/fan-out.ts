@@ -2,12 +2,13 @@
 // gather them with native Promise.all; race a child against a durable timer with ctx.race.
 //
 //   1. start a local nats-server:  nats-server -js
-//   2. run:                        NATS_URL=nats://127.0.0.1:4222 npm run example:fan-out
+//   2. run:                        NATS_URL=nats://127.0.0.1:4222 npm run example:fan-out   (on the fabric: NATS_URL=<the fabric> NATS_CREDS=<your creds file>)
 //
 // All children START in one pass (before any await), then the run suspends once and each child-done
 // re-drives it until every branch has resolved — true parallel fan-out over the work queue.
 
-import { connect } from "@nats-io/transport-node";
+import { readFileSync } from "node:fs";
+import { connect, credsAuthenticator } from "@nats-io/transport-node";
 import { createClient, createWorker, defineWorkflow, type Ctx } from "../src/index.js";
 
 // A child "task" — an ordinary durable workflow, invoked below as a fan-out branch.
@@ -32,7 +33,10 @@ const raced = defineWorkflow("raced", async (ctx: Ctx, n: number) => {
 
 async function main(): Promise<void> {
   const url = process.env.NATS_URL ?? "nats://127.0.0.1:4222";
-  const nc = await connect({ servers: url });
+  // NATS_CREDS: a creds file, for the fabric (docs/FABRIC.md); absent, a plain local server.
+  const creds = process.env.NATS_CREDS;
+  const auth = creds ? { authenticator: credsAuthenticator(readFileSync(creds)) } : {};
+  const nc = await connect({ servers: url, ...auth });
   console.log(`connected to ${url}`);
   const worker = createWorker({ nc, workflows: [batch, task, raced] });
   await worker.start();

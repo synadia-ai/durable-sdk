@@ -13,7 +13,8 @@
 // log) while only `attach` executes. The final result stitches together values produced in two
 // different processes, each side effect having fired exactly once. See docs/walkthroughs/crash-replay.md.
 
-import { connect } from "@nats-io/transport-node";
+import { readFileSync } from "node:fs";
+import { connect, credsAuthenticator } from "@nats-io/transport-node";
 import {
   createClient,
   createWorker,
@@ -66,7 +67,10 @@ const logger: Logger = {
 
 async function main(): Promise<void> {
   const url = process.env.NATS_URL ?? "nats://127.0.0.1:4222";
-  const nc = await connect(withReconnectDefaults({ servers: url }));
+  // NATS_CREDS: a creds file, for the fabric (docs/FABRIC.md); absent, a plain local server.
+  const creds = process.env.NATS_CREDS;
+  const auth = creds ? { authenticator: credsAuthenticator(readFileSync(creds)) } : {};
+  const nc = await connect(withReconnectDefaults({ servers: url, ...auth }));
   // A low AckWait so a fresh worker re-picks up the in-flight (crashed) work item in ~2s instead of 30.
   const worker = createWorker({ nc, workflows: [provision], ackWaitMs: 2_000, logger });
   await worker.start();
