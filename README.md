@@ -173,7 +173,7 @@ DE_TEST_RTT_MS=150 npm run test:integration     # every round trip 150 ms, the e
 export DE_NATS_URL=tls://connect.ngs.global
 export DE_NATS_CREDS=<agent-fabric-tests>/local/ngs/creds/tenant-a-dev/<user>.creds
 export DE_PREFIX=de                          # the seven exist there: the engine's start reconciles, creates none
-export DE_ENGINE=$PWD/.engine-bin/durable-engine-dev-97a17781cfe3   # its durable-licence-97a17781cfe3 beside it mints the run's licence
+export DE_ENGINE=$PWD/.engine-bin/durable-engine-dev-5047d7943c31   # its durable-licence-5047d7943c31 beside it mints the run's licence
 npm run test:integration 2>&1 | tee ngs-ts.log
 (cd python && uv run pytest tests/integration -rs 2>&1 | tee ../ngs-py.log)
 ```
