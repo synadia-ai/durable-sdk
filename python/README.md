@@ -56,13 +56,15 @@ async def main() -> None:
         os.environ.get("NATS_URL", "nats://127.0.0.1:4222"), **with_reconnect_defaults()
     )
     worker = create_worker(nc, [order])
-    await worker.start()
-    client = create_client(nc)
-    handle = await client.start(order, {"cartId": "c-42"})
-    await client.signal(handle.run_id, "payment", {"approved": True})
-    print(await handle.result(20_000))  # {'status': 'paid', 'orderId': 'ord-c-42'}
-    await worker.stop()
-    await nc.drain()
+    try:
+        await worker.start()
+        client = create_client(nc)
+        handle = await client.start(order, {"cartId": "c-42"})
+        await client.signal(handle.run_id, "payment", {"approved": True})
+        print(await handle.result(20_000))  # {'status': 'paid', 'orderId': 'ord-c-42'}
+    finally:
+        await worker.stop()  # on any error too: its polls withdrawn, their items handed back
+        await nc.drain()
 
 
 asyncio.run(main())
@@ -93,7 +95,7 @@ Each runs with `uv run python examples/<name>.py` (in `python/`) against the qui
 
 ## What moved to the engine
 
-The worker is the API's loop: one `poll` per concurrency slot; for each item the journal (paged with `load`), the library's `execute_run` with its seams as `append`, `wake` and `child` under the item's lease, `extend` every third of the ack wait, then `done`; every poll names the worker, and `stop()` withdraws its waiting polls (`poll {cancelPoll}`), so a stop takes as long as the items in flight. A value too large for one request goes up in `put` parts and travels as a ref; a ref the engine hands back, for a value too large for a reply, comes down in `get` parts, its digest checked (`_engine/blobs.py`). Everything else the library's worker did is the engine's: the consumers, provisioning, the inbound event, the run lease, the ack matrix, `child-done`, the cascade of a cancel, the forward across continue-as-new, the parked index and the lost-wake repair, the maintenance pass, offload.
+The worker is the API's loop: one `poll` per concurrency slot; for each item the journal (paged with `load`), the library's `execute_run` with its seams as `append`, `wake` and `child` under the item's lease, `extend` every third of the ack wait, then `done`; every poll names the worker, and `stop()` withdraws its waiting polls (`poll {cancelPoll}`), so a stop takes as long as the items in flight; it returns once every poll has returned, an item one was handed in the instant before handed back (`done retry`), so a process may exit right after it (`docs/findings.md` F44). Stop the worker in a `finally`, as the examples do: a process that exits on an error without `stop()` leaves its polls to the engine for their wait, and an item handed to one waits out its ack wait. A value too large for one request goes up in `put` parts and travels as a ref; a ref the engine hands back, for a value too large for a reply, comes down in `get` parts, its digest checked (`_engine/blobs.py`). Everything else the library's worker did is the engine's: the consumers, provisioning, the inbound event, the run lease, the ack matrix, `child-done`, the cascade of a cancel, the forward across continue-as-new, the parked index and the lost-wake repair, the maintenance pass, offload.
 
 So `create_worker` takes `nc`, `workflows`, `prefix`, `dependencies`, `concurrency` (default 16 poll slots), `poll_wait_ms` (default 30 000), `logger`, `metrics` and `payload_codec`. The library's other options are accepted and ignored, each named for the `serve` flag it became: `ack_wait_ms` → `--ack-wait`, `max_work_ms` → `--max-work`, `lease=False` → `--no-lease`, `lease_ttl_ms` → `--lease-ttl`, `stream_max_bytes` → `--stream-max-bytes`, `maintenance_interval_ms` → `--maintenance-interval`, `reconcile_grace_ms` → `--reconcile-grace`, and `offload`'s threshold → `--offload-threshold`; `offload=False` keeps its meaning (nothing goes up in parts, a value too large for a request fails loud). `create_client` takes `nc`, `prefix`, `payload_codec`, `logger`, `metrics` (`blob.put`, `blob.get`) and `offload=False`.
 
@@ -163,7 +165,7 @@ The unit suites need nothing. The integration suites (`tests/integration/`) spaw
 `DE_INJECT_FAILURE=1` adds the two tests that fail on purpose (`test_injected_failure.py`). At the end the harness writes the prefix's streams, the engine's `/metrics` and its log to `../.de-run/<prefix>-py/`.
 
 ```sh
-DE_NATS_URL=nats://127.0.0.1:14222 uv run pytest tests/integration -rs   # 73 passed, 22 skipped, ~56 s
+DE_NATS_URL=nats://127.0.0.1:14222 uv run pytest tests/integration -rs   # 74 passed, 22 skipped, ~56 s
 ```
 
 The dev NGS run's command lines and the measured times of both languages (a local server, the delay proxy, dev NGS) are in the root README's table ([Against an existing server](../README.md#against-an-existing-server); F33).

@@ -100,28 +100,29 @@ async def main() -> None:
         url, **({"user_credentials": creds} if creds else {}), **with_reconnect_defaults()
     )
     worker = create_worker(nc, [book_trip])
-    await worker.start()
-    client = create_client(nc)
+    try:
+        await worker.start()
+        client = create_client(nc)
 
-    print("\n— py-trip-booked (4 rooms free) —")
-    ok = await client.start(
-        book_trip, {"trip": "PAR", "rooms": 4}, StartOptions(run_id="py-trip-booked")
-    )
+        print("\n— py-trip-booked (4 rooms free) —")
+        ok = await client.start(
+            book_trip, {"trip": "PAR", "rooms": 4}, StartOptions(run_id="py-trip-booked")
+        )
 
-    print("\n— py-trip-rolledback (0 rooms free) —")
-    bad = await client.start(
-        book_trip, {"trip": "TYO", "rooms": 0}, StartOptions(run_id="py-trip-rolledback")
-    )
+        print("\n— py-trip-rolledback (0 rooms free) —")
+        bad = await client.start(
+            book_trip, {"trip": "TYO", "rooms": 0}, StartOptions(run_id="py-trip-rolledback")
+        )
 
-    # Await both BEFORE the header, so the steps' narration stays above it: the two runs execute
-    # concurrently on this one worker, and their output interleaves as they go.
-    booked, rolled_back = await ok.result(10_000), await bad.result(10_000)
-    print("\noutcomes:")
-    print("  py-trip-booked     →", booked)
-    print("  py-trip-rolledback →", rolled_back)
-
-    await worker.stop()
-    await nc.drain()
+        # Await both BEFORE the header, so the steps' narration stays above it: the two runs execute
+        # concurrently on this one worker, and their output interleaves as they go.
+        booked, rolled_back = await ok.result(10_000), await bad.result(10_000)
+        print("\noutcomes:")
+        print("  py-trip-booked     →", booked)
+        print("  py-trip-rolledback →", rolled_back)
+    finally:
+        await worker.stop()
+        await nc.drain()
     print(f"\n✅ seeded the saga demo at {url} — open the dashboard to inspect both journals")
 
 

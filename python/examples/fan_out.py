@@ -56,17 +56,18 @@ async def main() -> None:
     )
     print(f"connected to {url}")
     worker = create_worker(nc, [batch, task, raced])
-    await worker.start()
-    client = create_client(nc)
+    try:
+        await worker.start()
+        client = create_client(nc)
 
-    fan = await client.start(batch, {"numbers": [2, 3, 4, 5, 6]})
-    print("batch total:", await fan.result(20_000))
+        fan = await client.start(batch, {"numbers": [2, 3, 4, 5, 6]})
+        print("batch total:", await fan.result(20_000))
 
-    race = await client.start(raced, 9)
-    print("race:", await race.result(20_000))
-
-    await worker.stop()
-    await nc.drain()
+        race = await client.start(raced, 9)
+        print("race:", await race.result(20_000))
+    finally:
+        await worker.stop()
+        await nc.drain()
 
 
 if __name__ == "__main__":

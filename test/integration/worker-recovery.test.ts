@@ -644,4 +644,63 @@ describe.skipIf(!natsUrl)("worker recovery — kills, chains and oversized failu
       await worker.stop();
     }
   }, 90_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
+
+  // prettier-ignore
+  it("stop() hands back an item its poll was handed as it stopped — another worker has it at once, never after an ack wait", async () => {
+    // The engine's F51 (the SDK's part): a poll answered with an item in the instant before the
+    // withdrawal reaches the worker after the `cancelPoll` was answered. A stop() that returned
+    // then, with the process exiting right after, left the item to a lease nobody held, until its
+    // ack wait (30 s). stop() now returns only once every poll has returned and that item has gone
+    // back (`done retry`). The worker's connection holds the item's poll reply until the
+    // withdrawal is answered, and a little longer, as the wire would; it is closed the moment
+    // stop() resolves, as process.exit would.
+    const wf = defineWorkflow("rec_stop_handback", (ctx) => ctx.run("s", () => "ran"));
+    const dec = new TextDecoder();
+    const holder = await connect({ servers: natsUrl! });
+    let withdrawn!: () => void;
+    const withdrawal = new Promise<void>((r) => (withdrawn = r));
+    let handed!: () => void;
+    const handedOff = new Promise<void>((r) => (handed = r));
+    const dones: string[] = [];
+    const held = new Proxy(holder, {
+      get(t, k) {
+        if (k === "request") {
+          return async (subject: string, data?: Uint8Array, o?: { timeout: number }) => {
+            const body = JSON.parse(dec.decode(data ?? new Uint8Array())) as { cancelPoll?: boolean; outcome?: { kind: string } }; // prettier-ignore
+            const reply = await t.request(subject, data, o);
+            if (subject.endsWith(".api.v1.poll") && body.cancelPoll === true) withdrawn();
+            else if (subject.endsWith(".api.v1.poll") && "runId" in (JSON.parse(dec.decode(reply.data)) as object)) {
+              handed();
+              await withdrawal;
+              await new Promise((r) => setTimeout(r, 200));
+            } else if (subject.endsWith(".api.v1.done")) dones.push(body.outcome?.kind ?? "?");
+            return reply;
+          };
+        }
+        const v: unknown = Reflect.get(t, k);
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(t) : v;
+      },
+    });
+    const stopping = createWorker({ nc: held, workflows: [wf], prefix: REC, ...SIZED, concurrency: 1 });
+    let other: ReturnType<typeof createWorker> | undefined;
+    try {
+      await stopping.start();
+      const client = createClient({ nc, prefix: REC, ...SIZED });
+      const h = await client.start(wf, {});
+      await Promise.race([handedOff, new Promise((_, no) => setTimeout(() => no(new Error("the item never reached the poll")), 10_000 * WAN))]); // prettier-ignore
+      await stopping.stop();
+      expect(dones).toEqual(["retry"]); // handed back before stop() resolved
+      await holder.close(); // the process exits
+
+      other = createWorker({ nc, workflows: [wf], prefix: REC, ...SIZED });
+      await other.start();
+      const t0 = Date.now();
+      expect(await h.result(15_000)).toBe("ran");
+      expect(Date.now() - t0).toBeLessThan(15_000 * WAN); // the ack wait is 30 s
+    } finally {
+      await stopping.stop();
+      await other?.stop();
+      if (!holder.isClosed()) await holder.close();
+    }
+  }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 });

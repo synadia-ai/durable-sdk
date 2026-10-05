@@ -26,26 +26,28 @@ async function main(): Promise<void> {
   const nc = await connect({ servers: url, ...auth });
   console.log(`connected to ${url}`);
   const worker = createWorker({ nc, workflows: [longJob] });
-  await worker.start();
-  const client = createClient({ nc });
-
-  const handle = await client.start(longJob, {});
-  console.log(`started ${handle.runId}`);
-
-  await new Promise((r) => setTimeout(r, 500)); // let it park on the sleep
-  console.log("status before cancel:", (await handle.status()).state);
-  console.log("cancelling…");
-  await client.cancel(handle.runId, { reason: "changed my mind" });
-
   try {
-    await handle.result(15_000);
-  } catch (e) {
-    console.log("result() rejected with:", e instanceof CancelledError ? "CancelledError" : e);
-  }
-  console.log("status after cancel:", (await handle.status()).state); // "cancelled"
+    await worker.start();
+    const client = createClient({ nc });
 
-  await worker.stop();
-  await nc.drain();
+    const handle = await client.start(longJob, {});
+    console.log(`started ${handle.runId}`);
+
+    await new Promise((r) => setTimeout(r, 500)); // let it park on the sleep
+    console.log("status before cancel:", (await handle.status()).state);
+    console.log("cancelling…");
+    await client.cancel(handle.runId, { reason: "changed my mind" });
+
+    try {
+      await handle.result(15_000);
+    } catch (e) {
+      console.log("result() rejected with:", e instanceof CancelledError ? "CancelledError" : e);
+    }
+    console.log("status after cancel:", (await handle.status()).state); // "cancelled"
+  } finally {
+    await worker.stop();
+    await nc.drain();
+  }
 }
 
 main().catch((e: unknown) => {

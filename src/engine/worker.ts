@@ -6,7 +6,9 @@
 // ack wait meanwhile; the `ExecOutcome` goes back as `done`. On `expired` from any request the item
 // is dropped and the slot polls on. A value too large for a request or a reply goes up and comes
 // down in parts (blobs.ts). Every poll names this worker, and stop() withdraws its waiting polls
-// (`poll {cancelPoll}`), so a stop takes as long as the items in flight, not a poll's wait. A poll
+// (`poll {cancelPoll}`), so a stop takes as long as the items in flight, not a poll's wait; it
+// returns once every slot's loop has ended, so an item handed to a poll in the instant before the
+// withdrawal has gone back (`done retry`) before a caller can exit (the engine's F51). A poll
 // refused at a limit (`LimitError`) is logged at error and backs off; the first one, at start(),
 // rejects start() so a process does not run without work silently. The
 // worker holds no state across items: the consumers, the inbound event, the run lease, the ack
@@ -47,8 +49,14 @@ import { createTransport, type RequestOptions } from "./transport.js";
 /** How long one `poll` asks the engine to wait (API.md's loop: 30 s; the engine caps it). */
 const POLL_WAIT_MS = 30_000;
 
-/** How long stop() waits for the items in flight before it returns anyway. */
+/** How long stop() waits for the slots (their polls and the items in flight) before it returns anyway. */
 const STOP_DRAIN_MS = 30_000;
+
+/**
+ * How often stop() withdraws again while a poll is still out: a `cancelPoll` withdraws the polls
+ * waiting in the engine at that moment, and a poll sent just before it can arrive just after.
+ */
+const WITHDRAW_AGAIN_MS = 250;
 
 export interface WorkerOptions {
   nc: NatsConnection;
@@ -246,6 +254,10 @@ export function createWorker(opts: WorkerOptions): Worker {
   /** runId of every item held right now, by item. */
   const held = new Map<symbol, string>();
   const inflight = new Set<Promise<void>>();
+  /** Each slot's loop: stop() returns once they have all ended. */
+  const loops: Promise<void>[] = [];
+  /** The slots' polls awaiting their reply right now. */
+  let polling = 0;
   /** The tail of each run's items executing on this worker (removed when it settles). */
   const runChains = new Map<string, Promise<void>>();
 
@@ -495,7 +507,12 @@ export function createWorker(opts: WorkerOptions): Worker {
           r = first;
           first = undefined;
         } else {
-          r = await request<PollReply>("poll", { workflows, waitMs: pollWaitMs, worker: workerId }, { waitMs: pollWaitMs }); // prettier-ignore
+          polling += 1;
+          try {
+            r = await request<PollReply>("poll", { workflows, waitMs: pollWaitMs, worker: workerId }, { waitMs: pollWaitMs }); // prettier-ignore
+          } finally {
+            polling -= 1;
+          }
         }
         failures = 0;
         state.alive = running;
@@ -585,9 +602,10 @@ export function createWorker(opts: WorkerOptions): Worker {
       }
       running = true;
       slots.length = 0;
+      loops.length = 0;
       for (let i = 0; i < concurrency; i++) {
         slots.push({ stream: `${prefix}.api.v1.poll`, durable: `slot-${i}`, alive: true, restarts: 0 }); // prettier-ignore
-        void pollLoop(i, i === 0 ? first : undefined);
+        loops.push(pollLoop(i, i === 0 ? first : undefined));
       }
     },
     async stop(): Promise<void> {
@@ -597,23 +615,39 @@ export function createWorker(opts: WorkerOptions): Worker {
       for (const s of slots) s.alive = false;
       // Withdraw this worker's polls still waiting in the engine (API.md "Withdrawing polls"):
       // every instance answers them `none` at once and never hands them an item. An item handed in
-      // the instant before goes straight back (`done retry`). Without an engine to answer, the
-      // polls end at their own wait, as before.
-      if (wasRunning && !opts.nc.isClosed()) {
-        const withdraw = { workflows: [], worker: workerId, cancelPoll: true };
-        await request("poll", withdraw).catch((e: unknown) => {
-          logger.debug("durable: withdrawing the polls failed; they end at their wait", { error: String(e) }); // prettier-ignore
+      // the instant before goes straight back (`done retry`). A poll that reaches the engine just
+      // after the withdrawal is withdrawn again, every WITHDRAW_AGAIN_MS while one is out. Without
+      // an engine to answer, the polls end at their own wait.
+      const withdraw = async (): Promise<void> => {
+        if (opts.nc.isClosed()) return;
+        await request("poll", { workflows: [], worker: workerId, cancelPoll: true }).catch(
+          (e: unknown) => {
+            logger.debug("durable: withdrawing the polls failed; they end at their wait", { error: String(e) }); // prettier-ignore
+          },
+        );
+      };
+      if (wasRunning) await withdraw();
+      // Every slot's loop ends (bounded): its item in flight finishes, and its poll returns. A poll
+      // answered with an item in the instant before the withdrawal hands it back (`done retry`)
+      // before stop() resolves, so a caller that exits right after loses nothing to a lease nobody
+      // holds (the engine's F51).
+      const ended = Promise.allSettled([...loops]).then(() => "ended" as const);
+      const deadline = Date.now() + STOP_DRAIN_MS;
+      for (;;) {
+        let t: ReturnType<typeof setTimeout> | undefined;
+        const tick = new Promise<"tick">((r) => {
+          t = setTimeout(() => r("tick"), Math.max(0, Math.min(WITHDRAW_AGAIN_MS, deadline - Date.now()))); // prettier-ignore
+          t.unref?.();
         });
+        const r = await Promise.race([ended, tick]);
+        clearTimeout(t);
+        if (r === "ended") break;
+        if (Date.now() >= deadline) {
+          logger.warn("durable: stop() returned with items or polls still in flight", { inflight: inflight.size, polling }); // prettier-ignore
+          break;
+        }
+        if (wasRunning && polling > 0) await withdraw();
       }
-      // The items in flight finish (bounded).
-      let t: ReturnType<typeof setTimeout> | undefined;
-      const bound = new Promise<"bound">((r) => {
-        t = setTimeout(() => r("bound"), STOP_DRAIN_MS);
-        t.unref?.();
-      });
-      const r = await Promise.race([Promise.allSettled([...inflight]), bound]);
-      clearTimeout(t);
-      if (r === "bound") logger.warn("durable: stop() returned with items still in flight", { inflight: inflight.size }); // prettier-ignore
     },
     health(): WorkerHealth {
       const connectionClosed = opts.nc.isClosed();

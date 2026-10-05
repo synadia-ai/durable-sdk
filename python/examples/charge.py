@@ -78,26 +78,30 @@ async def main() -> None:
 
     # One worker process hosts many workflows: register the order and the sub-workflow it calls.
     worker = create_worker(nc, [order, ship])
-    await worker.start()
-    client = create_client(nc)
+    try:
+        await worker.start()
+        client = create_client(nc)
 
-    run_id = os.environ.get("DE_RUN_ID")
-    handle = await client.start(
-        order,
-        {"cart_id": "c-42", "amount": 19.99},
-        StartOptions(run_id=run_id) if run_id else None,
-    )
-    print(f"started order {handle.run_id}")
+        run_id = os.environ.get("DE_RUN_ID")
+        handle = await client.start(
+            order,
+            {"cart_id": "c-42", "amount": 19.99},
+            StartOptions(run_id=run_id) if run_id else None,
+        )
+        print(f"started order {handle.run_id}")
 
-    await asyncio.sleep(0.4)  # the payment webhook fires a moment later
-    print("approving payment via client.signal(...)")
-    await client.signal(handle.run_id, "payment", {"approved": True})
+        # The payment webhook fires a moment later. Over a slow link the signal may land before the
+        # workflow reaches its `wait`: the engine journals it and the run takes it on the next
+        # replay (durable-engine F51), so the 0.4 s is for the narration, not for correctness.
+        await asyncio.sleep(0.4)
+        print("approving payment via client.signal(...)")
+        await client.signal(handle.run_id, "payment", {"approved": True})
 
-    print("result:", await handle.result(20_000))
-    print("status:", await handle.status())
-
-    await worker.stop()
-    await nc.drain()
+        print("result:", await handle.result(20_000))
+        print("status:", await handle.status())
+    finally:
+        await worker.stop()
+        await nc.drain()
 
 
 if __name__ == "__main__":

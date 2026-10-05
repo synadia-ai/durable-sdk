@@ -48,14 +48,16 @@ const order = defineWorkflow("order", async (ctx, cart: { cartId: string }) => {
 
 const nc = await connect({ servers: process.env.NATS_URL ?? "nats://127.0.0.1:4222" });
 const worker = createWorker({ nc, workflows: [order] });
-await worker.start();
-
-const client = createClient({ nc });
-const handle = await client.start(order, { cartId: "c-42" });
-await client.signal(handle.runId, "payment", { approved: true });
-console.log(await handle.result(20_000)); // { status: 'paid', orderId: 'ord-c-42' }
-await worker.stop();
-await nc.drain();
+try {
+  await worker.start();
+  const client = createClient({ nc });
+  const handle = await client.start(order, { cartId: "c-42" });
+  await client.signal(handle.runId, "payment", { approved: true });
+  console.log(await handle.result(20_000)); // { status: 'paid', orderId: 'ord-c-42' }
+} finally {
+  await worker.stop(); // on any error too: its polls withdrawn, an item they were handed goes back
+  await nc.drain();
+}
 ```
 
 ### Using it from your own project
@@ -84,7 +86,7 @@ Each runs with `npm run example:<name>` against the quickstart's `nats-server -j
 
 ## What moved to the engine
 
-The worker is the API's loop: one `poll` per concurrency slot; for each item the journal (paged with `load`), the library's `executeRun` with its seams as `append`, `wake` and `child` under the item's lease, `extend` every third of the ack wait, then `done`; every poll names the worker, and `stop()` withdraws its waiting polls (`poll {cancelPoll}`), so a stop takes as long as the items in flight. A value too large for one request goes up in `put` parts and travels as a ref; a ref the engine hands back, for a value too large for a reply, comes down in `get` parts, its digest checked (`src/engine/blobs.ts`, through the library's own offload code). Everything else the library's worker did is the engine's: the consumers, provisioning, the inbound event, the run lease, the ack matrix, `child-done`, the cascade of a cancel, the forward across continue-as-new, the parked index and the lost-wake repair, the maintenance pass, offload.
+The worker is the API's loop: one `poll` per concurrency slot; for each item the journal (paged with `load`), the library's `executeRun` with its seams as `append`, `wake` and `child` under the item's lease, `extend` every third of the ack wait, then `done`; every poll names the worker, and `stop()` withdraws its waiting polls (`poll {cancelPoll}`), so a stop takes as long as the items in flight; it returns once every poll has returned, an item one was handed in the instant before handed back (`done retry`), so a process may exit right after it (`docs/findings.md` F44). Stop the worker in a `finally`, as the examples do: a process that exits on an error without `stop()` leaves its polls to the engine for their wait, and an item handed to one waits out its ack wait. A value too large for one request goes up in `put` parts and travels as a ref; a ref the engine hands back, for a value too large for a reply, comes down in `get` parts, its digest checked (`src/engine/blobs.ts`, through the library's own offload code). Everything else the library's worker did is the engine's: the consumers, provisioning, the inbound event, the run lease, the ack matrix, `child-done`, the cascade of a cancel, the forward across continue-as-new, the parked index and the lost-wake repair, the maintenance pass, offload.
 
 So `createWorker` takes `nc`, `workflows`, `prefix`, `dependencies`, `concurrency` (default 16), `pollWaitMs` (default 30 000), `logger`, `metrics` and `payloadCodec`. The library's other options are accepted and ignored, each named for the `serve` flag it became: `ackWaitMs` → `--ack-wait`, `maxWorkMs` → `--max-work`, `lease: false` → `--no-lease`, `leaseTtlMs` → `--lease-ttl`, `streamMaxBytes` → `--stream-max-bytes`, `maintenanceIntervalMs` → `--maintenance-interval`, `reconcileGraceMs` → `--reconcile-grace`, and `offload`'s threshold → `--offload-threshold`; `offload: false` keeps its meaning (nothing goes up in parts, a value too large for a request fails loud). `createClient` takes `nc`, `prefix`, `payloadCodec`, `logger`, `metrics` (`blob.put`, `blob.get`) and `offload: false`.
 
@@ -159,9 +161,9 @@ Locally, against a server started by hand:
 ```sh
 nats-server -js -a 127.0.0.1 -p 14222 -sd /tmp/de-js &
 export DE_NATS_URL=nats://127.0.0.1:14222      # a generated prefix each run, deleted at the end
-npm run test:integration                        # 120 passed, 23 skipped, ~75 s
+npm run test:integration                        # 121 passed, 23 skipped, ~65 s
 DE_TEST_RTT_MS=150 npm run test:integration     # every round trip 150 ms, the engine's too
-(cd python && uv run pytest tests/integration -rs)   # 73 passed, 22 skipped, ~56 s
+(cd python && uv run pytest tests/integration -rs)   # 74 passed, 22 skipped, ~56 s
 ```
 
 **The dev NGS run** (the coordinator's, on Mario's word; nothing here runs it):

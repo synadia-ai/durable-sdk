@@ -73,34 +73,37 @@ async function main(): Promise<void> {
   const nc = await connect(withReconnectDefaults({ servers: url, ...auth }));
   // A low AckWait so a fresh worker re-picks up the in-flight (crashed) work item in ~2s instead of 30.
   const worker = createWorker({ nc, workflows: [provision], ackWaitMs: 2_000, logger });
-  await worker.start();
+  try {
+    await worker.start();
+    const client = createClient({ nc });
+    const runId = process.env.DE_RUN_ID ?? "crash-demo";
+    const handle = await client.start(provision, { vm: "web-1" }, { runId });
+    console.log(`started provision ${handle.runId}\n`);
 
-  const client = createClient({ nc });
-  const runId = process.env.DE_RUN_ID ?? "crash-demo";
-  const handle = await client.start(provision, { vm: "web-1" }, { runId });
-  console.log(`started provision ${handle.runId}\n`);
-
-  if (process.env.CRASH === "1") {
-    // A finished run is immutable — the worker won't re-execute it, so on an already-completed runId the
-    // crash line is never reached. Detect that and exit cleanly (otherwise we'd hang on the open NATS
-    // connection); on a fresh run the workflow calls process.exit(1) mid-run so we never get past the wait.
-    const { state } = await handle.status();
-    if (
-      state === "completed" ||
-      state === "failed" ||
-      state === "cancelled" ||
-      state === "continued"
-    ) {
-      console.log(`run ${runId} is already '${state}' — nothing to crash. Use a fresh DE_RUN_ID.`);
+    if (process.env.CRASH === "1") {
+      // A finished run is immutable — the worker won't re-execute it, so on an already-completed runId the
+      // crash line is never reached. Detect that and exit cleanly (otherwise we'd hang on the open NATS
+      // connection); on a fresh run the workflow calls process.exit(1) mid-run so we never get past the wait.
+      // (That exit is the simulated crash: it skips the finally below on purpose.)
+      const { state } = await handle.status();
+      if (
+        state === "completed" ||
+        state === "failed" ||
+        state === "cancelled" ||
+        state === "continued"
+      ) {
+        console.log(
+          `run ${runId} is already '${state}' — nothing to crash. Use a fresh DE_RUN_ID.`,
+        );
+      } else {
+        await new Promise((r) => setTimeout(r, 8_000));
+      }
     } else {
-      await new Promise((r) => setTimeout(r, 8_000));
+      console.log("waiting for the resumed run to finish…\n");
+      console.log("result:", await handle.result(20_000));
+      console.log("status:", (await handle.status()).state);
     }
-    await worker.stop();
-    await nc.drain();
-  } else {
-    console.log("waiting for the resumed run to finish…\n");
-    console.log("result:", await handle.result(20_000));
-    console.log("status:", (await handle.status()).state);
+  } finally {
     await worker.stop();
     await nc.drain();
   }

@@ -94,21 +94,27 @@ async function main(): Promise<void> {
   const auth = creds ? { authenticator: credsAuthenticator(readFileSync(creds)) } : {};
   const nc = await connect(withReconnectDefaults({ servers: url, ...auth }));
   const worker = createWorker({ nc, workflows: [bookTrip], logger });
-  await worker.start();
-  const client = createClient({ nc });
+  try {
+    await worker.start();
+    const client = createClient({ nc });
 
-  console.log("\n— trip-booked (4 rooms free) —");
-  const ok = await client.start(bookTrip, { trip: "PAR", rooms: 4 }, { runId: "trip-booked" });
+    console.log("\n— trip-booked (4 rooms free) —");
+    const ok = await client.start(bookTrip, { trip: "PAR", rooms: 4 }, { runId: "trip-booked" });
 
-  console.log("\n— trip-rolledback (0 rooms free) —");
-  const bad = await client.start(bookTrip, { trip: "TYO", rooms: 0 }, { runId: "trip-rolledback" });
+    console.log("\n— trip-rolledback (0 rooms free) —");
+    const bad = await client.start(
+      bookTrip,
+      { trip: "TYO", rooms: 0 },
+      { runId: "trip-rolledback" },
+    );
 
-  console.log("\noutcomes:");
-  console.log("  trip-booked     →", await ok.result(10_000));
-  console.log("  trip-rolledback →", await bad.result(10_000));
-
-  await worker.stop();
-  await nc.drain();
+    console.log("\noutcomes:");
+    console.log("  trip-booked     →", await ok.result(10_000));
+    console.log("  trip-rolledback →", await bad.result(10_000));
+  } finally {
+    await worker.stop();
+    await nc.drain();
+  }
   console.log(`\n✅ seeded saga demo at ${url} — open the dashboard to inspect both journals`);
 }
 
