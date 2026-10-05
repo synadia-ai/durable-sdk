@@ -45,28 +45,29 @@ async def main() -> None:
     )
     print(f"connected to {url}")
     worker = create_worker(nc, [long_job])
-    await worker.start()
-    client = create_client(nc)
-
-    handle = await client.start(long_job, None)
-    print(f"started {handle.run_id}")
-
-    await asyncio.sleep(0.5)  # let it park on the sleep
-    print("status before cancel:", (await handle.status()).state)
-    print("cancelling…")
-    await client.cancel(handle.run_id, "changed my mind")
-
     try:
-        await handle.result(15_000)
-    except CancelledError:
-        # synadia_durable.CancelledError — deliberately NOT asyncio.CancelledError, which asyncio
-        # throws into coroutines itself. Conflating the two would make a task cancellation
-        # indistinguishable from a durable one.
-        print("result() raised: CancelledError")
-    print("status after cancel:", (await handle.status()).state)  # "cancelled"
+        await worker.start()
+        client = create_client(nc)
 
-    await worker.stop()
-    await nc.drain()
+        handle = await client.start(long_job, None)
+        print(f"started {handle.run_id}")
+
+        await asyncio.sleep(0.5)  # let it park on the sleep
+        print("status before cancel:", (await handle.status()).state)
+        print("cancelling…")
+        await client.cancel(handle.run_id, "changed my mind")
+
+        try:
+            await handle.result(15_000)
+        except CancelledError:
+            # synadia_durable.CancelledError — deliberately NOT asyncio.CancelledError, which asyncio
+            # throws into coroutines itself. Conflating the two would make a task cancellation
+            # indistinguishable from a durable one.
+            print("result() raised: CancelledError")
+        print("status after cancel:", (await handle.status()).state)  # "cancelled"
+    finally:
+        await worker.stop()
+        await nc.drain()
 
 
 if __name__ == "__main__":

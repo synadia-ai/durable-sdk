@@ -80,28 +80,32 @@ async function main(): Promise<void> {
 
   // one worker process can host many workflows; register the order and its sub-workflow
   const worker = createWorker({ nc, workflows: [order, ship], logger: consoleLogger });
-  await worker.start();
+  try {
+    await worker.start();
 
-  const client = createClient({ nc });
-  const runId = process.env.DE_RUN_ID;
-  const handle = await client.start(
-    order,
-    { cartId: "c-42", amount: 19.99 },
-    runId ? { runId } : undefined,
-  );
-  console.log(`started order ${handle.runId}`);
+    const client = createClient({ nc });
+    const runId = process.env.DE_RUN_ID;
+    const handle = await client.start(
+      order,
+      { cartId: "c-42", amount: 19.99 },
+      runId ? { runId } : undefined,
+    );
+    console.log(`started order ${handle.runId}`);
 
-  // simulate the payment webhook firing a moment later
-  await new Promise((r) => setTimeout(r, 400));
-  console.log("approving payment via client.signal(...)");
-  await client.signal(handle.runId, "payment", { approved: true });
+    // simulate the payment webhook firing a moment later. Over a slow link the signal may land
+    // before the workflow reaches its `await`: the engine journals it and the run takes it on the
+    // next replay (durable-engine F51), so the 400 ms is for the narration, not for correctness.
+    await new Promise((r) => setTimeout(r, 400));
+    console.log("approving payment via client.signal(...)");
+    await client.signal(handle.runId, "payment", { approved: true });
 
-  const result = await handle.result(20_000);
-  console.log("result:", result);
-  console.log("status:", await handle.status());
-
-  await worker.stop();
-  await nc.drain();
+    const result = await handle.result(20_000);
+    console.log("result:", result);
+    console.log("status:", await handle.status());
+  } finally {
+    await worker.stop();
+    await nc.drain();
+  }
 }
 
 main().catch((e: unknown) => {

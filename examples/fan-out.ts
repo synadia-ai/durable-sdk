@@ -39,18 +39,20 @@ async function main(): Promise<void> {
   const nc = await connect({ servers: url, ...auth });
   console.log(`connected to ${url}`);
   const worker = createWorker({ nc, workflows: [batch, task, raced] });
-  await worker.start();
-  const client = createClient({ nc });
+  try {
+    await worker.start();
+    const client = createClient({ nc });
 
-  const batchHandle = await client.start(batch, { items: [1, 2, 3, 4, 5] });
-  console.log(`started batch ${batchHandle.runId}`);
-  console.log("batch result:", await batchHandle.result(20_000)); // 1+4+9+16+25 = 55
+    const batchHandle = await client.start(batch, { items: [1, 2, 3, 4, 5] });
+    console.log(`started batch ${batchHandle.runId}`);
+    console.log("batch result:", await batchHandle.result(20_000)); // 1+4+9+16+25 = 55
 
-  const raceHandle = await client.start(raced, 7);
-  console.log("race result:", await raceHandle.result(20_000)); // "task won (49)"
-
-  await worker.stop();
-  await nc.drain();
+    const raceHandle = await client.start(raced, 7);
+    console.log("race result:", await raceHandle.result(20_000)); // "task won (49)"
+  } finally {
+    await worker.stop();
+    await nc.drain();
+  }
 }
 
 main().catch((e: unknown) => {

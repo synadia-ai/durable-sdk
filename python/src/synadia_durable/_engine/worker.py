@@ -8,8 +8,9 @@ replayed by the library's ``execute_run`` with its three seams as requests under
 wait meanwhile; the ``ExecOutcome`` goes back as ``done``. On ``expired`` from any request the item
 is dropped and the slot polls on. A value too large for a request or a reply goes up and comes
 down in parts (``blobs.py``). Every poll names this worker, and ``stop()`` withdraws its waiting
-polls (``poll {cancelPoll}``), so a stop takes as long as the items in flight, not a poll's wait.
-A poll refused at a limit (:class:`LimitError`) is logged at error and backs off; the first one, at
+polls (``poll {cancelPoll}``), so a stop takes as long as the items in flight, not a poll's wait;
+it returns once every slot's loop has ended, so an item handed to a poll in the instant before the
+withdrawal has gone back (``done retry``) before a caller can exit (the engine's F51). A poll refused at a limit (:class:`LimitError`) is logged at error and backs off; the first one, at
 ``start()``, makes ``start()`` raise so a process does not run without work silently.
 The worker holds no state across items: the consumers, the
 inbound event, the run lease, the ack matrix, the obligations after a terminal, the cascade, the
@@ -74,6 +75,9 @@ __all__ = ["PumpHealth", "Worker", "WorkerHealth", "create_worker"]
 DEFAULT_POLL_WAIT_MS = 30_000
 #: How long ``stop()`` lets the items in flight finish before it returns anyway (the library's).
 DEFAULT_DRAIN_TIMEOUT_S = 10.0
+#: How often stop() withdraws again while a poll is still out: a ``cancelPoll`` withdraws the polls
+#: waiting in the engine at that moment, and a poll sent just before it can arrive just after.
+WITHDRAW_AGAIN_S = 0.25
 #: Work items this worker executes at once: one ``poll`` per slot.
 DEFAULT_CONCURRENCY = 16
 
@@ -198,6 +202,8 @@ class Worker:
         #: run_id of every item held right now, by item.
         self._held: dict[object, str] = {}
         self._inflight: set[asyncio.Task[None]] = set()
+        #: The slots' polls awaiting their reply right now.
+        self._polling = 0
         #: The tail of each run's items executing on this worker (removed when it settles).
         self._run_chains: dict[str, asyncio.Task[None]] = {}
         #: Set by stop(): a slot backing off wakes at once.
@@ -280,12 +286,14 @@ class Worker:
 
         This worker's polls still waiting in the engine are withdrawn (``poll {cancelPoll}``,
         API.md "Withdrawing polls"): every instance answers them ``none`` at once and never hands
-        them an item. An item handed in the instant before goes straight back (``done retry``).
-        Without an engine to answer, the polls end at their own wait, as before.
+        them an item. An item handed in the instant before goes straight back (``done retry``), and
+        ``stop()`` returns only once every slot's loop has ended, that hand-back included, so a
+        caller that exits right after loses nothing to a lease nobody holds (the engine's F51).
+        Without an engine to answer, the polls end at their own wait.
 
-        Past the timeout the items still in flight are cancelled, as the library's ``stop()`` did: a
-        shutdown must complete. They send no ``done``, so their leases lapse and the items
-        redeliver at the ack wait, which is correct, just slower.
+        Past the timeout the items still in flight, and the slots, are cancelled, as the library's
+        ``stop()`` did: a shutdown must complete. They send no ``done``, so their leases lapse and
+        the items redeliver at the ack wait, which is correct, just slower.
         """
         was_running = self._running
         self._running = False
@@ -293,26 +301,44 @@ class Worker:
             self._stopping.set()
         for s in self._slots:
             s.alive = False
-        if was_running and not self._nc.is_closed:
-            try:
-                await self._request.request(
-                    "poll", {"workflows": [], "worker": self._worker_id, "cancelPoll": True}
-                )
-            except Exception as e:  # noqa: BLE001 — the polls then end at their own wait
-                self._log.debug("durable: withdrawing the polls failed; they end at their wait", error=str(e))  # fmt: skip
-        if self._inflight:
-            _done, pending = await asyncio.wait(set(self._inflight), timeout=drain_timeout_s)
-            if pending:
-                self._log.warn(
-                    "durable: stop() cancelled items still in flight; they redeliver at the ack "
-                    "wait",
-                    inflight=len(pending),
-                )
-                for task in pending:
-                    task.cancel()
-                for task in pending:
-                    with contextlib.suppress(asyncio.CancelledError, Exception):
-                        await task
+        if was_running:
+            await self._withdraw()
+        # Every slot's loop ends: its item in flight finishes, and its poll returns (an item it is
+        # handed now goes back before this does). A poll that reaches the engine just after the
+        # withdrawal is withdrawn again, every WITHDRAW_AGAIN_S while one is out.
+        pending = {t for t in self._polls if not t.done()}
+        deadline = time.monotonic() + drain_timeout_s
+        while pending:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            _done, pending = await asyncio.wait(pending, timeout=min(WITHDRAW_AGAIN_S, left))
+            if pending and was_running and self._polling > 0:
+                await self._withdraw()
+        if pending:
+            items = [t for t in self._inflight if not t.done()]
+            self._log.warn(
+                "durable: stop() cancelled items or polls still in flight; they redeliver at the "
+                "ack wait",
+                inflight=len(items),
+                polling=self._polling,
+            )
+            for task in (*items, *pending):
+                task.cancel()
+            for task in (*items, *pending):
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
+
+    async def _withdraw(self) -> None:
+        """``poll {cancelPoll}`` for this worker's polls; failing, they end at their own wait."""
+        if self._nc.is_closed:
+            return
+        try:
+            await self._request.request(
+                "poll", {"workflows": [], "worker": self._worker_id, "cancelPoll": True}
+            )
+        except Exception as e:  # noqa: BLE001 — the polls then end at their own wait
+            self._log.debug("durable: withdrawing the polls failed; they end at their wait", error=str(e))  # fmt: skip
 
     def health(self) -> WorkerHealth:
         """A snapshot of what this worker is doing right now. Never touches the network."""
@@ -393,15 +419,19 @@ class Worker:
                     # The item start()'s first poll was handed.
                     r, first = first, None
                 else:
-                    r = await self._request.request(
-                        "poll",
-                        {
-                            "workflows": self._workflows,
-                            "waitMs": self._poll_wait_ms,
-                            "worker": self._worker_id,
-                        },
-                        wait_ms=self._poll_wait_ms,
-                    )
+                    self._polling += 1
+                    try:
+                        r = await self._request.request(
+                            "poll",
+                            {
+                                "workflows": self._workflows,
+                                "waitMs": self._poll_wait_ms,
+                                "worker": self._worker_id,
+                            },
+                            wait_ms=self._poll_wait_ms,
+                        )
+                    finally:
+                        self._polling -= 1
                 failures = 0
                 state.alive = self._running
             except asyncio.CancelledError:

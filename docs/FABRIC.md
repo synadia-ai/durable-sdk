@@ -32,8 +32,14 @@ const nc = await connect(
   }),
 );
 const worker = createWorker({ nc, workflows: [order] }); // prefix "de", the default
-await worker.start();
-const client = createClient({ nc });
+try {
+  await worker.start();
+  const client = createClient({ nc });
+  // … start, signal, result, as standalone
+} finally {
+  await worker.stop(); // on any error too: its polls withdrawn, an item they were handed goes back
+  await nc.drain();
+}
 ```
 
 ```python
@@ -50,8 +56,13 @@ nc = await nats.connect(
     **with_reconnect_defaults(),
 )
 worker = create_worker(nc, [order])  # prefix "de", the default
-await worker.start()
-client = create_client(nc)
+try:
+    await worker.start()
+    client = create_client(nc)
+    # … start, signal, result, as standalone
+finally:
+    await worker.stop()  # on any error too: its polls withdrawn, their items handed back
+    await nc.drain()
 ```
 
 The URL is the fabric's; NGS is shown. The examples in [`examples/`](../examples/README.md) and [`python/examples/`](../python/examples/README.md) read `NATS_URL` and, when it is set, `NATS_CREDS`, so they run on the fabric unchanged: `NATS_URL=<the fabric> NATS_CREDS=<your creds file> npm run example:charge` (Python needs `nkeys` for a creds file, F30).

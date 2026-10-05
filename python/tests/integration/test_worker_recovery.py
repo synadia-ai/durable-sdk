@@ -320,3 +320,68 @@ async def test_the_maintenance_pass_and_pumps_survive_a_deleted_timers_stream(
         assert await handle.result(20_000) == "woke"  # timers work again
     finally:
         await healed.stop()
+
+
+class _HoldingPolls:
+    """A worker's connection that holds a poll's item until the worker's ``cancelPoll`` has been
+    answered, and a little longer, as the wire would; and records every ``done``'s outcome."""
+
+    def __init__(self, nc: Any) -> None:
+        self._nc = nc
+        self.handed = asyncio.Event()
+        self.withdrawn = asyncio.Event()
+        self.dones: list[str] = []
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._nc, name)
+
+    async def request(self, subject: str, payload: bytes = b"", **kwargs: Any) -> Any:
+        body = json.loads(payload or b"{}")
+        reply = await self._nc.request(subject, payload, **kwargs)
+        if subject.endswith(".api.v1.poll") and body.get("cancelPoll") is True:
+            self.withdrawn.set()
+        elif subject.endswith(".api.v1.poll") and "runId" in json.loads(reply.data):
+            self.handed.set()
+            await self.withdrawn.wait()
+            await asyncio.sleep(0.2)
+        elif subject.endswith(".api.v1.done"):
+            self.dones.append(str(body.get("outcome", {}).get("kind")))
+        return reply
+
+
+async def test_stop_hands_back_an_item_its_poll_was_handed_as_it_stopped(
+    nc: Any, nats_url: str, prefix: str
+) -> None:
+    """The engine's F51 (the SDK's part): a poll answered with an item in the instant before the
+    withdrawal reaches the worker after the ``cancelPoll`` was answered. A ``stop()`` that returned
+    then, with the process exiting right after, left the item to a lease nobody held, until its ack
+    wait (30 s). ``stop()`` now returns only once every poll has returned and that item has gone
+    back (``done retry``): another worker has it at once. The worker's connection is closed the
+    moment ``stop()`` returns, as an exiting process would."""
+
+    async def body(ctx: Ctx, _input: Any) -> str:
+        return str(await ctx.run("s", lambda: "ran"))
+
+    wf = define_workflow("pyrec_stop_handback", body)
+    holder = await existing.connect(nats_url)
+    held = _HoldingPolls(holder)
+    stopping = create_worker(held, [wf], prefix=prefix, concurrency=1, **SIZED)
+    other = None
+    try:
+        await stopping.start()
+        client = create_client(nc, prefix=prefix, **SIZED)
+        handle = await client.start(wf, {})
+        await asyncio.wait_for(held.handed.wait(), existing.scaled(10))
+        await stopping.stop()
+        assert held.dones == ["retry"], "stop() returned before the item it was handed went back"
+        await holder.close()  # the process exits
+
+        other = create_worker(nc, [wf], prefix=prefix, **SIZED)
+        await other.start()
+        assert await handle.result(15_000) == "ran"  # the ack wait is 30 s
+    finally:
+        await stopping.stop()
+        if other is not None:
+            await other.stop()
+        if not holder.is_closed:
+            await holder.close()

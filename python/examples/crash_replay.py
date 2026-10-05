@@ -77,16 +77,19 @@ async def main() -> None:
     # A low ack wait so phase 2 re-picks up the item the crashed process was holding in ~2 s rather
     # than the default 30. In production the default is the right trade; here it keeps the demo brisk.
     worker = create_worker(nc, [provision], ack_wait_ms=2_000, lease_ttl_ms=2_000)
-    await worker.start()
-    client = create_client(nc)
+    try:
+        await worker.start()
+        client = create_client(nc)
 
-    run_id = os.environ.get("DE_RUN_ID", "crash-demo")
-    handle = await client.start(provision, {"name": "vm-1"}, StartOptions(run_id=run_id))
-    print(f"run {handle.run_id}")
+        run_id = os.environ.get("DE_RUN_ID", "crash-demo")
+        handle = await client.start(provision, {"name": "vm-1"}, StartOptions(run_id=run_id))
+        print(f"run {handle.run_id}")
 
-    print("result:", await handle.result(30_000))
-    await worker.stop()
-    await nc.drain()
+        print("result:", await handle.result(30_000))
+    finally:
+        # Not reached in phase 1: the simulated crash (os._exit above) skips it on purpose.
+        await worker.stop()
+        await nc.drain()
 
 
 if __name__ == "__main__":
