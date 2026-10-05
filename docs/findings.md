@@ -564,3 +564,13 @@ The existing-server mode is otherwise unchanged. `DE_ENGINE_URL`'s engine is its
 **The checkout.** `../durable-engine` was on another branch with local changes (`mario/engine-fabric-next` at `e379e90`), which the harness refuses (as in F22). Nothing was done to it: every run here built from a local clone of it at `a7c5010` (`DE_ENGINE_REPO=<scratch>/durable-engine`).
 
 **Runs** (2026-10-05, a local nats-server 2.14.6, the engine `a7c5010` built by the harness with the minted licence, sequentially): TypeScript unit 345 passed (15 files); integration 139 passed, 4 skipped (137 and 4 before `limits`), 296 s. Python 509 passed, 3 skipped, 2 xfailed (the unit suites 417 passed, 2 xfailed; 484 passed before this work's 25 tests), 237 s. Against a local server (`DE_NATS_URL=nats://127.0.0.1:14222`): TypeScript 120 passed, 23 skipped, 75 s; Python 73 passed, 22 skipped, 56 s (the 2 new skips each are `limits`).
+
+### F43 — The engine's fabric build, and the pin at `97a1778`
+
+**Where.** `engine.pin`, `test/harness/engine-bin.ts`, `test/harness/engine-process.ts`, `python/tests/engine.py`; the engine's #9 (`97a1778`), its F44.
+
+**What.** Since the engine's #9 a release build has no tenancy mode: `--tenancy` and the other fabric flags exist only in a binary built with `-tags fabric`, which needs no licence, and a build without the tag refuses the flag as unknown, exit 2. The harness built one `-tags devlicence` binary and used it for every spawn, the tenancy-mode ones included, so on this pin every tenancy test would have failed at the engine's start.
+
+**SDK.** The harness resolves two builds from the pinned checkout into `.engine-bin/`: `durable-engine-dev-<commit>` (`-tags devlicence`, with the licence tool beside it) and `durable-engine-fabric-<commit>` (`-tags fabric`); a spawn whose arguments carry `--tenancy` runs the fabric build, in both languages. A caller's `DE_ENGINE` stays the standalone binary; `DE_ENGINE_FABRIC` names the fabric one beside it, else the checkout at the pin is built. Nothing else of the pin's changes reaches the suites: the engine's F48 makes a tenant's first polls answer `none` while its durables are created (the SDK's retry path unchanged), F49 sizes resources at creation only, F50 adds an optional `onBehalfOf` the SDKs do not send.
+
+**Where it belongs.** The fabric's pins round (2026-10-05); closed here.

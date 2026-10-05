@@ -66,14 +66,14 @@ def engine_pin() -> str:
     return (REPO / "engine.pin").read_text(encoding="utf-8").strip()
 
 
-def resolve_engine_binary() -> str:
+def resolve_engine_binary(build: str = "dev") -> str:
     """The engine binary to run: ``DE_ENGINE``, or a build of the pinned checkout.
 
     Raises :class:`EngineNotAvailableError` when neither can be had (the suites skip), and a plain
     ``RuntimeError`` when the checkout is at the wrong commit (the run fails: a silent skip would
     hide it).
     """
-    given = os.environ.get("DE_ENGINE", "")
+    given = os.environ.get("DE_ENGINE_FABRIC" if build == "fabric" else "DE_ENGINE", "")
     if given:
         if not (os.path.isfile(given) and os.access(given, os.X_OK)):
             raise RuntimeError(f"DE_ENGINE={given}: not an executable file")
@@ -82,7 +82,7 @@ def resolve_engine_binary() -> str:
     src = Path(os.environ.get("DE_ENGINE_REPO") or REPO.parent / "durable-engine")
     if not (src / "go.mod").exists():
         raise EngineNotAvailableError(
-            f"no DE_ENGINE and no engine checkout at {src} (DE_ENGINE_REPO)"
+            f"no {'DE_ENGINE_FABRIC' if build == 'fabric' else 'DE_ENGINE'} and no engine checkout at {src} (DE_ENGINE_REPO)"
         )
     if shutil.which("go") is None:
         raise EngineNotAvailableError(f"no DE_ENGINE, and Go is not on PATH to build {src}")
@@ -106,13 +106,13 @@ def resolve_engine_binary() -> str:
     out_dir = REPO / ".engine-bin"
     out_dir.mkdir(exist_ok=True)
     tag = f"{head[:12]}{'-dirty' if dirty else ''}"
-    out = out_dir / f"durable-engine-dev-{tag}"
+    out = out_dir / f"durable-engine-{build}-{tag}"
     tool = out_dir / f"durable-licence-{tag}"
     if not out.exists() or not tool.exists() or dirty:
         # `make build-dev`'s two builds, into this repo's .engine-bin: nothing is written in the
         # checkout.
         subprocess.run(
-            ["go", "build", "-tags", "devlicence", "-o", str(out), "./cmd/durable-engine"],
+            ["go", "build", "-tags", "fabric" if build == "fabric" else "devlicence", "-o", str(out), "./cmd/durable-engine"],
             cwd=src,
             check=True,
         )
@@ -312,8 +312,11 @@ class EngineProcess:
                 env.pop("DE_LICENCE", None)
         else:
             env["DE_LICENCE"] = str(licence)
+        # The fabric mode (--tenancy) exists only in the fabric build since the engine's #9 (its
+        # F44): a tenancy-mode spawn runs that build, resolved beside the dev one.
+        binary = resolve_engine_binary("fabric") if "--tenancy" in self.extra_args else self.binary
         proc = subprocess.Popen(
-            [self.binary, *self.args], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=env
+            [binary, *self.args], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=env
         )
         self._proc = proc
         threading.Thread(target=self._read, args=(proc,), daemon=True).start()

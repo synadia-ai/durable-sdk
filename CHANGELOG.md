@@ -4,6 +4,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.7.0-alpha] — unreleased
 
+- `engine.pin` `97a1778` (the engine's #9): the harness builds `-tags fabric` for a tenancy-mode spawn, since the fabric mode exists only in that build (its F44); `DE_ENGINE_FABRIC` names one beside a given `DE_ENGINE` (F43).
+
 ### Follow-up 5 (2026-10-05): the limit codes refuse loud, and the licensed engine
 
 `engine.pin` moves from `d3e741d` to `a7c5010` (the engine's PR #8, the licence, P2-22). Both languages unless said.
