@@ -42,3 +42,5 @@ The workflows run unchanged on the fabric; the prefix is `de` on both. **The con
 ## The rest
 
 The rest of the library's examples (the AI, scale and journal-dump demos) stay in the library. The `durable_agent` example is left out: its front door registers it as a Synadia agent through the fabric's agent SDK (`synadia-ai-agent-service`), which this repo does not depend on (`docs/findings.md` F18); the fabric SDK's reference agents carry a durable agent of their own (its `docs/durable.md`).
+
+On the fabric every example takes `NATS_CREDS=<your creds file>` next to `NATS_URL` (since 2026-10-05; Python needs `nkeys`): the code does not change, the connection does ([`docs/FABRIC.md`](../docs/FABRIC.md)).

@@ -69,7 +69,11 @@ async def provision(ctx: Ctx, vm: dict[str, Any]) -> dict[str, str]:
 
 async def main() -> None:
     url = os.environ.get("NATS_URL", "nats://127.0.0.1:4222")
-    nc = await nats.connect(url, **with_reconnect_defaults())
+    # NATS_CREDS: a creds file, for the fabric (docs/FABRIC.md; needs nkeys, findings F30); absent, a plain local server.
+    creds = os.environ.get("NATS_CREDS")
+    nc = await nats.connect(
+        url, **({"user_credentials": creds} if creds else {}), **with_reconnect_defaults()
+    )
     # A low ack wait so phase 2 re-picks up the item the crashed process was holding in ~2 s rather
     # than the default 30. In production the default is the right trade; here it keeps the demo brisk.
     worker = create_worker(nc, [provision], ack_wait_ms=2_000, lease_ttl_ms=2_000)

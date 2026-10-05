@@ -41,3 +41,5 @@ The workflows run unchanged on the fabric; the prefix is `de` on both. **The con
 ## The rest
 
 The rest of the library's examples (the dashboard, the AI and scale demos) stay in the library; its walkthroughs are under `../synadia-durable-execution/docs/walkthroughs/`.
+
+On the fabric every example takes `NATS_CREDS=<your creds file>` next to `NATS_URL` (since 2026-10-05; Python needs `nkeys`): the code does not change, the connection does ([`docs/FABRIC.md`](../docs/FABRIC.md)).
