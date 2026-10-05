@@ -112,7 +112,15 @@ def resolve_engine_binary(build: str = "dev") -> str:
         # `make build-dev`'s two builds, into this repo's .engine-bin: nothing is written in the
         # checkout.
         subprocess.run(
-            ["go", "build", "-tags", "fabric" if build == "fabric" else "devlicence", "-o", str(out), "./cmd/durable-engine"],
+            [
+                "go",
+                "build",
+                "-tags",
+                "fabric" if build == "fabric" else "devlicence",
+                "-o",
+                str(out),
+                "./cmd/durable-engine",
+            ],
             cwd=src,
             check=True,
         )
