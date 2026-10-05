@@ -12,7 +12,8 @@
 // Seeds two runs: `trip-booked` (all three steps succeed) and `trip-rolledback` (no rooms → unwind).
 // See docs/walkthroughs/saga.md.
 
-import { connect } from "@nats-io/transport-node";
+import { readFileSync } from "node:fs";
+import { connect, credsAuthenticator } from "@nats-io/transport-node";
 import {
   createClient,
   createWorker,
@@ -88,7 +89,10 @@ const logger: Logger = {
 
 async function main(): Promise<void> {
   const url = process.env.NATS_URL ?? "nats://127.0.0.1:4222";
-  const nc = await connect(withReconnectDefaults({ servers: url }));
+  // NATS_CREDS: a creds file, for the fabric (docs/FABRIC.md); absent, a plain local server.
+  const creds = process.env.NATS_CREDS;
+  const auth = creds ? { authenticator: credsAuthenticator(readFileSync(creds)) } : {};
+  const nc = await connect(withReconnectDefaults({ servers: url, ...auth }));
   const worker = createWorker({ nc, workflows: [bookTrip], logger });
   await worker.start();
   const client = createClient({ nc });

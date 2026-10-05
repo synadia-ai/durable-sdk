@@ -94,7 +94,11 @@ async def book_trip(ctx: Ctx, trip: dict[str, Any]) -> dict[str, str]:
 
 async def main() -> None:
     url = os.environ.get("NATS_URL", "nats://127.0.0.1:4222")
-    nc = await nats.connect(url, **with_reconnect_defaults())
+    # NATS_CREDS: a creds file, for the fabric (docs/FABRIC.md; needs nkeys, findings F30); absent, a plain local server.
+    creds = os.environ.get("NATS_CREDS")
+    nc = await nats.connect(
+        url, **({"user_credentials": creds} if creds else {}), **with_reconnect_defaults()
+    )
     worker = create_worker(nc, [book_trip])
     await worker.start()
     client = create_client(nc)

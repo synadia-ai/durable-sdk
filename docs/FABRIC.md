@@ -12,6 +12,8 @@ Walked on 2026-10-05 at `engine.pin` `97a1778`, on a local three-account server 
 | the tenant's **service import** of the engine's API | `de.api.>`, imported from the DE account with `share: true`                                                                            | the console's onboarding (decision 61), once per tenant |
 | this SDK                                            | `@synadia-ai/durable` or `synadia-durable`, unpublished: [Using it from your own project](../README.md#using-it-from-your-own-project) |                                                         |
 
+**Where these come from:** your tenant's console. Its onboarding made the import; its Account page mints a user and gives you the creds file and the fabric's NATS URL (the fabric's onboarding guide; on staging the URL is `tls://connect.ngs.synadia-test.com:4222`). Nothing in this SDK provisions any of it.
+
 That is all. **No durable rights:** the user needs no right on a stream, a bucket or an object store, only to publish on `de.api.>`. **No provisioning and no sizing:** the engine's resources live in the DE account, and a worker's first poll binds its workflow names there. **No licence:** `DE_LICENCE` and `--licence` are standalone's. The agent creates nothing.
 
 ## The code
@@ -52,7 +54,7 @@ await worker.start()
 client = create_client(nc)
 ```
 
-The URL is the fabric's; NGS is shown. The examples in [`examples/`](../examples/README.md) read `NATS_URL` alone and take no creds file, so on the fabric the connection above is the line to put in their place.
+The URL is the fabric's; NGS is shown. The examples in [`examples/`](../examples/README.md) and [`python/examples/`](../python/examples/README.md) read `NATS_URL` and, when it is set, `NATS_CREDS`, so they run on the fabric unchanged: `NATS_URL=<the fabric> NATS_CREDS=<your creds file> npm run example:charge` (Python needs `nkeys` for a creds file, F30).
 
 ## Where the run lives
 
@@ -132,6 +134,12 @@ Every refusal on the fabric, with the engine's code (`docs/API.md` "Errors"; mir
 | who may cancel a run | anyone who may publish on `de.api.v1.cancel`                          | any user of your tenant, and the console (as its own user, stamped `by`); no other tenant |
 | `by` on entries      | absent                                                                | the caller's user                                                                         |
 | the code             | the same                                                              | the same                                                                                  |
+
+## Payload privacy
+
+What you pass the SDK — a run's input, a step's result, a signal's data, a child's input, the result — is written into the journal in the engine's account as the entry's payload slot, a value past the inline limit as a blob there. **Without a payload codec it is plaintext**, readable by whoever reads that account: the engine's operator and the fabric's console (its reader shows a run's values in the journal timeline). **With `payloadCodec: aesGcmPayloadCodec(key)` on every worker and client of your tenant** (32 bytes, from your own secret store, never the engine's), the slot is encrypted before it leaves your process and decrypted only there: the engine and the console see a run's shape, its step names, its timing and its status, and never a value (the console shows such a slot as _encrypted_). The key is yours alone; a worker without it cannot replay a run written with it, and a run's slots written without one stay plaintext. The codec's details are the library's [`docs/OPERATIONS.md`](../../synadia-durable-execution/docs/OPERATIONS.md) (the frozen spec; the wire's `v:3`), and the engine's half — what its operator can and cannot read — is the engine's `docs/OPERATIONS.md`.
+
+**Walked on staging, 2026-10-05:** the quickstart's snippet above, as a tenant's user with its creds file, started a run that completed; its `start` entry in the engine's account carries that user's key as `by`; from another tenant the same run's `status` answered `pending` (the empty record) and a `cancel` was refused `not_found`. The `charge` example ran on staging in both languages with `NATS_CREDS`; one of three TypeScript runs stalled for a while: its signal landed 400 ms after the start, during the run's first execution, the worker appended the `await` and then sent no `done`, the engine's lease lapsed after its ack wait and the item redelivered to the next worker, which completed the run two minutes later (the run lost nothing; the finding is the SDK's and the engine's to settle).
 
 ## What the SDK cannot do on the fabric
 
