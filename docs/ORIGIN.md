@@ -2,6 +2,8 @@
 
 Which file came from where. The library is `@synadia-ai/durable`, `../synadia-durable-execution` (GitHub `synadia-ai/durable-ts`), **frozen at `7456c75`**: copied from, never edited, never imported at run time. Its `docs/PROTOCOL.md` (normative), `docs/IMPLEMENTATION-GUIDE.md` and `docs/DESIGN.md` stay there and are cited by path. The engine is `../durable-engine` at the commit `engine.pin` names (`a7c5010` since the 2026-10-05 follow-up, the engine's PR #8, the licence; `d3e741d` after the fourth 2026-10-04 follow-up, the engine's PR #7, tenancy; `ee81460` after the third, `blob_gone`; `57ae3c9` after the second, the existing-server mode; `1efd2ec` after the first; `d8c0d73` before); its `docs/API.md` is the contract `src/engine/` is built from.
 
+**The pages' home** (P2-23): the user's pages are this repo's, [`README.md`](../README.md), [`python/README.md`](../python/README.md) (its twin), [`FABRIC.md`](FABRIC.md) (on the fabric) and the two examples READMEs; the user's half of the library's `docs/OPERATIONS.md` is the READMEs' "Running a worker", its operator's half the engine's `docs/OPERATIONS.md`.
+
 Every path below is the same in this repo and in the library unless a second path is given, so a diff against `7456c75` stays readable:
 
 ```sh
