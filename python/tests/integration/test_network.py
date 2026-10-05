@@ -42,6 +42,7 @@ from shell.journal_store import NatsJournal
 from shell.names import Names
 from synadia_durable import (
     ConnectionClosedError,
+    DurableTimeoutError,
     define_workflow,
 )
 from synadia_durable._internal.json import encode_json
@@ -708,7 +709,26 @@ async def test_a_lost_ack_the_append_landed_its_reply_did_not(
     await _wait_until(landed, 10, "s2's step-end to land while its ack is withheld")
     proxy.cut()  # the withheld ack dies with the connection
     proxy.set_stall("none")
-    assert await handle.result(30_000) == "ok"
+    # durable-sdk: the 30 s bound is the worker's own recovery: its append times out at the request margin
+    # (10 s, a timer load does not stretch), its `done retry` goes back, the redelivery replays
+    # and finishes (≈10.3 s from the append, measured quiet and beside the engine's race suite).
+    # This test's engine has the default ack wait and lease TTL, 30 s, so a run that reaches the
+    # bound fell to the engine's lapse instead: the `done` did not land. Its failure says which
+    # (docs/findings.md F45).
+    t0 = time.monotonic()
+    try:
+        assert await handle.result(30_000) == "ok"
+    except DurableTimeoutError as e:
+        try:
+            warns = [line for line in await engine_log(prefix) if "level=WARN" in line or "level=ERROR" in line]  # fmt: skip
+        except pytest.skip.Exception:  # DE_ENGINE_URL: the engine's log is its operator's
+            warns = []
+        raise AssertionError(
+            f"the run did not finish within 30 s of the cut ({time.monotonic() - t0:.1f} s): "
+            f"work.done {rec.tally('work.done', 'outcome')}, journal.append "
+            f"{[(a.get('kind'), a.get('seq'), a.get('outcome'), a.get('ms')) for a in rec.named('journal.append')]}, "
+            f"the engine's warnings {warns[-10:]}"
+        ) from e
     # Emergence: the worker really did see that append FAIL, and really did retry the item.
     lost = [
         e["outcome"]

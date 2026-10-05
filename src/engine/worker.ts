@@ -6,7 +6,9 @@
 // ack wait meanwhile; the `ExecOutcome` goes back as `done`. On `expired` from any request the item
 // is dropped and the slot polls on. A value too large for a request or a reply goes up and comes
 // down in parts (blobs.ts). Every poll names this worker, and stop() withdraws its waiting polls
-// (`poll {cancelPoll}`), so a stop takes as long as the items in flight, not a poll's wait; it
+// with one `poll {cancelPoll}`: the engine remembers the withdrawn worker 5 s, so a poll of it that
+// arrives later answers `none` at once (its F53, `withdrawn-remembered`, the floor start() checks
+// in `info.capabilities`). A stop takes as long as the items in flight, not a poll's wait; it
 // returns once every slot's loop has ended, so an item handed to a poll in the instant before the
 // withdrawal has gone back (`done retry`) before a caller can exit (the engine's F51). A poll
 // refused at a limit (`LimitError`) is logged at error and backs off; the first one, at start(),
@@ -41,7 +43,14 @@ import { type PayloadCodec } from "../journal/payload-codec.js";
 import { type AppendResult, type Journal, type JournalAppend } from "../journal/store.js";
 import { type AnyWorkflow } from "../types.js";
 import { EngineBlobs, sizesOf } from "./blobs.js";
-import { EngineError, InvalidRequestError, LeaseExpiredError, LimitError } from "./errors.js";
+import {
+  checkEngineFloor,
+  EngineError,
+  InvalidRequestError,
+  LeaseExpiredError,
+  LimitError,
+  UnsupportedEngineError,
+} from "./errors.js";
 import { DEFAULT_PREFIX, type Op } from "./names.js";
 import { fitEntry, fitSlot, reverseJournal, type WireJournal, wireEntry } from "./payload.js";
 import { createTransport, type RequestOptions } from "./transport.js";
@@ -51,12 +60,6 @@ const POLL_WAIT_MS = 30_000;
 
 /** How long stop() waits for the slots (their polls and the items in flight) before it returns anyway. */
 const STOP_DRAIN_MS = 30_000;
-
-/**
- * How often stop() withdraws again while a poll is still out: a `cancelPoll` withdraws the polls
- * waiting in the engine at that moment, and a poll sent just before it can arrive just after.
- */
-const WITHDRAW_AGAIN_MS = 250;
 
 export interface WorkerOptions {
   nc: NatsConnection;
@@ -258,6 +261,12 @@ export function createWorker(opts: WorkerOptions): Worker {
   const loops: Promise<void>[] = [];
   /** The slots' polls awaiting their reply right now. */
   let polling = 0;
+  /**
+   * The engine's floor (`info.capabilities`), checked: at start() when an engine answered `info`,
+   * else by the first slot whose poll is answered (one `info` for all the slots meanwhile).
+   */
+  let floorChecked = false;
+  let floorCheck: Promise<UnsupportedEngineError | undefined> | undefined;
   /** The tail of each run's items executing on this worker (removed when it settles). */
   const runChains = new Map<string, Promise<void>>();
 
@@ -492,6 +501,32 @@ export function createWorker(opts: WorkerOptions): Worker {
     }
   }
 
+  /**
+   * The floor, deferred: start() found no engine, and now a poll was answered. One `info` for every
+   * slot asking meanwhile; a failure leaves it to the next answered poll. An engine below the floor
+   * stops this worker, loud: start() has resolved, so the caller sees health() stopped.
+   */
+  async function belowFloor(): Promise<boolean> {
+    if (floorChecked) return false;
+    floorCheck ??= request<Record<string, unknown>>("info", {})
+      .then((info) => {
+        floorChecked = true;
+        return checkEngineFloor(prefix, info);
+      })
+      .catch((e: unknown) => {
+        logger.debug("durable: info failed; the floor is checked at the next answered poll", { error: String(e) }); // prettier-ignore
+        return undefined;
+      })
+      .finally(() => {
+        floorCheck = undefined;
+      });
+    const refused = await floorCheck;
+    if (refused === undefined || !running) return false;
+    logger.error(`durable: ${refused.message}; this worker stops`, { prefix, engine: refused.engine, commit: refused.commit, capabilities: refused.capabilities, missing: refused.missing }); // prettier-ignore
+    void worker.stop();
+    return true;
+  }
+
   async function pollLoop(i: number, first: PollReply | undefined): Promise<void> {
     const state = slots[i]!;
     let failures = 0;
@@ -547,6 +582,10 @@ export function createWorker(opts: WorkerOptions): Worker {
         if (running) await nap(pollBackoffMs(failures));
         continue;
       }
+      if (!floorChecked && (await belowFloor())) {
+        if (r.none !== true) await release(r);
+        break;
+      }
       if (r.none === true) continue;
       if (!running) {
         await release(r);
@@ -568,7 +607,7 @@ export function createWorker(opts: WorkerOptions): Worker {
     state.alive = false;
   }
 
-  return {
+  const worker: Worker = {
     async start(): Promise<void> {
       if (running) return;
       if (opts.nc.isClosed()) throw new ConnectionClosedError("createWorker: the NATS connection is closed"); // prettier-ignore
@@ -579,26 +618,34 @@ export function createWorker(opts: WorkerOptions): Worker {
         logger.error(`durable: the engine refused this worker's ${where} at a limit (${e.code} ${e.limit}); start() rejects`, { code: e.code, limit: e.limit, workflows: workflows.map((w) => w.name), error: e.message }); // prettier-ignore
         return true;
       };
-      let reachable = true;
+      floorChecked = false;
       try {
-        await request("info", {});
+        const info = await request<Record<string, unknown>>("info", {});
+        // The floor: an engine that does not announce what this SDK needs (ENGINE_FLOOR) is refused
+        // here, by its capabilities, never by its version (every build so far says 0.2.0-dev).
+        const below = checkEngineFloor(prefix, info);
+        if (below !== undefined) {
+          logger.error(`durable: ${below.message}; start() rejects`, { prefix, engine: below.engine, commit: below.commit, capabilities: below.capabilities, missing: below.missing }); // prettier-ignore
+          throw below;
+        }
+        floorChecked = true;
       } catch (e) {
-        if (e instanceof ConnectionClosedError || refused(e, "info")) throw e;
-        reachable = false;
-        // Not fatal: the polls retry until an engine answers, as a library worker rides out an outage.
+        if (e instanceof ConnectionClosedError || e instanceof UnsupportedEngineError || refused(e, "info")) throw e; // prettier-ignore
+        // Not fatal: the polls retry until an engine answers, as a library worker rides out an
+        // outage; the first slot whose poll is answered checks the floor then.
         if (e instanceof EngineError) logger.warn("durable: no engine answered info; polling until one does", { prefix, error: e.message }); // prettier-ignore
       }
-      // The first poll checks once (`waitMs: 0`) whether the engine serves these workflows to this
-      // worker; an item it is handed goes to the first slot.
+      // The first poll (`waitMs: 0`), sent whether or not `info` answered: it checks once whether
+      // the engine serves these workflows to this worker, and it is this worker's start to the
+      // engine, which ends the 5 s it remembers a stop() of the same worker (its F53). An item it
+      // is handed goes to the first slot.
       let first: PollReply | undefined;
-      if (reachable) {
-        try {
-          const r = await request<PollReply>("poll", { workflows, waitMs: 0, worker: workerId }, { waitMs: 0 }); // prettier-ignore
-          if (r.none !== true) first = r;
-        } catch (e) {
-          if (e instanceof ConnectionClosedError || refused(e, "first poll")) throw e;
-          // Anything else the slots meet again and retry, as before.
-        }
+      try {
+        const r = await request<PollReply>("poll", { workflows, waitMs: 0, worker: workerId }, { waitMs: 0 }); // prettier-ignore
+        if (r.none !== true) first = r;
+      } catch (e) {
+        if (e instanceof ConnectionClosedError || refused(e, "first poll")) throw e;
+        // Anything else the slots meet again and retry, as before.
       }
       running = true;
       slots.length = 0;
@@ -613,41 +660,31 @@ export function createWorker(opts: WorkerOptions): Worker {
       running = false;
       for (const wake of [...napping]) wake();
       for (const s of slots) s.alive = false;
-      // Withdraw this worker's polls still waiting in the engine (API.md "Withdrawing polls"):
-      // every instance answers them `none` at once and never hands them an item. An item handed in
-      // the instant before goes straight back (`done retry`). A poll that reaches the engine just
-      // after the withdrawal is withdrawn again, every WITHDRAW_AGAIN_MS while one is out. Without
-      // an engine to answer, the polls end at their own wait.
-      const withdraw = async (): Promise<void> => {
-        if (opts.nc.isClosed()) return;
+      // Withdraw this worker's polls, once (API.md "Withdrawing polls"): every instance answers
+      // those waiting `none` at once and never hands them an item, and remembers the worker 5 s,
+      // so a poll of it that arrives after the withdrawal (sent just before it) answers `none` at
+      // once too (the engine's F53, the floor start() checked). An item handed in the instant
+      // before goes straight back (`done retry`). Without an engine to answer, the polls end at
+      // their own wait.
+      if (wasRunning && !opts.nc.isClosed()) {
         await request("poll", { workflows: [], worker: workerId, cancelPoll: true }).catch(
           (e: unknown) => {
             logger.debug("durable: withdrawing the polls failed; they end at their wait", { error: String(e) }); // prettier-ignore
           },
         );
-      };
-      if (wasRunning) await withdraw();
+      }
       // Every slot's loop ends (bounded): its item in flight finishes, and its poll returns. A poll
       // answered with an item in the instant before the withdrawal hands it back (`done retry`)
       // before stop() resolves, so a caller that exits right after loses nothing to a lease nobody
       // holds (the engine's F51).
-      const ended = Promise.allSettled([...loops]).then(() => "ended" as const);
-      const deadline = Date.now() + STOP_DRAIN_MS;
-      for (;;) {
-        let t: ReturnType<typeof setTimeout> | undefined;
-        const tick = new Promise<"tick">((r) => {
-          t = setTimeout(() => r("tick"), Math.max(0, Math.min(WITHDRAW_AGAIN_MS, deadline - Date.now()))); // prettier-ignore
-          t.unref?.();
-        });
-        const r = await Promise.race([ended, tick]);
-        clearTimeout(t);
-        if (r === "ended") break;
-        if (Date.now() >= deadline) {
-          logger.warn("durable: stop() returned with items or polls still in flight", { inflight: inflight.size, polling }); // prettier-ignore
-          break;
-        }
-        if (wasRunning && polling > 0) await withdraw();
-      }
+      let t: ReturnType<typeof setTimeout> | undefined;
+      const late = new Promise<"late">((r) => {
+        t = setTimeout(() => r("late"), STOP_DRAIN_MS);
+        t.unref?.();
+      });
+      const r = await Promise.race([Promise.allSettled([...loops]).then(() => "ended" as const), late]); // prettier-ignore
+      clearTimeout(t);
+      if (r === "late") logger.warn("durable: stop() returned with items or polls still in flight", { inflight: inflight.size, polling }); // prettier-ignore
     },
     health(): WorkerHealth {
       const connectionClosed = opts.nc.isClosed();
@@ -660,6 +697,7 @@ export function createWorker(opts: WorkerOptions): Worker {
       };
     },
   };
+  return worker;
 }
 
 /** The `done` outcome: its kind (the engine acts on the journal's terminal, never on a value). */

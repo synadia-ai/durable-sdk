@@ -20,6 +20,7 @@ from synadia_durable._engine.errors import (
     LeaseExpiredError,
     LimitError,
     RunNotFoundError,
+    UnsupportedEngineError,
 )
 from synadia_durable._engine.worker import PumpHealth, Worker, WorkerHealth, create_worker
 from synadia_durable._internal.logger import Logger, StdlibLogger
@@ -107,6 +108,7 @@ __all__ = [
     "StartOptions",
     "StdlibLogger",
     "StepNestingError",
+    "UnsupportedEngineError",
     "Worker",
     "WorkerHealth",
     "Workflow",

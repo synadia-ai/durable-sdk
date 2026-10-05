@@ -84,5 +84,7 @@ export {
   LeaseExpiredError,
   LimitError,
   RunNotFoundError,
+  UnsupportedEngineError,
+  ENGINE_FLOOR,
   type EngineErrorCode,
 } from "./engine/errors.js";

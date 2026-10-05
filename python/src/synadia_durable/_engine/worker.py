@@ -8,10 +8,14 @@ replayed by the library's ``execute_run`` with its three seams as requests under
 wait meanwhile; the ``ExecOutcome`` goes back as ``done``. On ``expired`` from any request the item
 is dropped and the slot polls on. A value too large for a request or a reply goes up and comes
 down in parts (``blobs.py``). Every poll names this worker, and ``stop()`` withdraws its waiting
-polls (``poll {cancelPoll}``), so a stop takes as long as the items in flight, not a poll's wait;
-it returns once every slot's loop has ended, so an item handed to a poll in the instant before the
-withdrawal has gone back (``done retry``) before a caller can exit (the engine's F51). A poll refused at a limit (:class:`LimitError`) is logged at error and backs off; the first one, at
-``start()``, makes ``start()`` raise so a process does not run without work silently.
+polls with one ``poll {cancelPoll}``: the engine remembers the withdrawn worker 5 s, so a poll of
+it that arrives later answers ``none`` at once (its F53, ``withdrawn-remembered``, the floor
+``start()`` checks in ``info.capabilities``). A stop takes as long as the items in flight, not a
+poll's wait; it returns once every slot's loop has ended, so an item handed to a poll in the
+instant before the withdrawal has gone back (``done retry``) before a caller can exit (the
+engine's F51). A poll refused at a limit (:class:`LimitError`) is logged at error and backs off;
+the first one, at ``start()``, makes ``start()`` raise so a process does not run without work
+silently.
 The worker holds no state across items: the consumers, the
 inbound event, the run lease, the ack matrix, the obligations after a terminal, the cascade, the
 forward, the parked index and the lost-wake repair are the engine's.
@@ -32,6 +36,8 @@ from synadia_durable._engine.errors import (
     InvalidRequestError,
     LeaseExpiredError,
     LimitError,
+    UnsupportedEngineError,
+    check_engine_floor,
 )
 from synadia_durable._engine.names import DEFAULT_PREFIX, Op
 from synadia_durable._engine.payload import (
@@ -75,9 +81,6 @@ __all__ = ["PumpHealth", "Worker", "WorkerHealth", "create_worker"]
 DEFAULT_POLL_WAIT_MS = 30_000
 #: How long ``stop()`` lets the items in flight finish before it returns anyway (the library's).
 DEFAULT_DRAIN_TIMEOUT_S = 10.0
-#: How often stop() withdraws again while a poll is still out: a ``cancelPoll`` withdraws the polls
-#: waiting in the engine at that moment, and a poll sent just before it can arrive just after.
-WITHDRAW_AGAIN_S = 0.25
 #: Work items this worker executes at once: one ``poll`` per slot.
 DEFAULT_CONCURRENCY = 16
 
@@ -204,6 +207,12 @@ class Worker:
         self._inflight: set[asyncio.Task[None]] = set()
         #: The slots' polls awaiting their reply right now.
         self._polling = 0
+        #: The engine's floor (``info.capabilities``), checked: at start() when an engine answered
+        #: ``info``, else by the first slot whose poll is answered (one ``info`` for all meanwhile).
+        self._floor_checked = False
+        self._floor_check: asyncio.Future[UnsupportedEngineError | None] | None = None
+        #: A stop() the worker began itself (an engine below the floor), kept from the collector.
+        self._self_stop: asyncio.Task[None] | None = None
         #: The tail of each run's items executing on this worker (removed when it settles).
         self._run_chains: dict[str, asyncio.Task[None]] = {}
         #: Set by stop(): a slot backing off wakes at once.
@@ -220,41 +229,49 @@ class Worker:
             return
         if self._nc.is_closed:
             raise ConnectionClosedError("create_worker: the NATS connection is closed")
-        reachable = True
+        self._floor_checked = False
+        self._self_stop = None
         try:
-            await self._request.request("info", {})
+            info = await self._request.request("info", {})
         except ConnectionClosedError:
             raise
         except LimitError as e:
             self._refused_at_start(e, "info")
-            reachable = False
         except EngineError as e:
-            reachable = False
             # Not fatal: the polls retry until an engine answers, as a library worker rides out an
-            # outage.
+            # outage; the first slot whose poll is answered checks the floor then.
             self._log.warn(
                 "durable: no engine answered info; polling until one does",
                 prefix=self._prefix,
                 error=str(e),
             )
-        # The first poll checks once (`waitMs: 0`) whether the engine serves these workflows to
-        # this worker; an item it is handed goes to the first slot.
+        else:
+            # The floor: an engine that does not announce what this SDK needs is refused here, by
+            # its capabilities, never by its version (every build so far says 0.2.0-dev).
+            below = check_engine_floor(self._prefix, info)
+            if below is not None:
+                self._log_below_floor(below, "start() raises")
+                raise below
+            self._floor_checked = True
+        # The first poll (`waitMs: 0`), sent whether or not `info` answered: it checks once whether
+        # the engine serves these workflows to this worker, and it is this worker's start to the
+        # engine, which ends the 5 s it remembers a stop() of the same worker (its F53). An item it
+        # is handed goes to the first slot.
         first: dict[str, Any] | None = None
-        if reachable:
-            try:
-                r = await self._request.request(
-                    "poll",
-                    {"workflows": self._workflows, "waitMs": 0, "worker": self._worker_id},
-                    wait_ms=0,
-                )
-                if not r.get("none"):
-                    first = r
-            except ConnectionClosedError:
-                raise
-            except LimitError as e:
-                self._refused_at_start(e, "first poll")
-            except Exception:  # noqa: BLE001 — anything else the slots meet again and retry
-                pass
+        try:
+            r = await self._request.request(
+                "poll",
+                {"workflows": self._workflows, "waitMs": 0, "worker": self._worker_id},
+                wait_ms=0,
+            )
+            if not r.get("none"):
+                first = r
+        except ConnectionClosedError:
+            raise
+        except LimitError as e:
+            self._refused_at_start(e, "first poll")
+        except Exception:  # noqa: BLE001 — anything else the slots meet again and retry
+            pass
         self._running = True
         self._stopping = asyncio.Event()
         self._slots = [
@@ -265,6 +282,49 @@ class Worker:
             asyncio.ensure_future(self._poll_loop(s, first if i == 0 else None))
             for i, s in enumerate(self._slots)
         ]
+
+    def _log_below_floor(self, e: UnsupportedEngineError, then: str) -> None:
+        self._log.error(
+            f"durable: {e}; {then}",
+            prefix=self._prefix,
+            engine=e.engine,
+            commit=e.commit,
+            capabilities=e.capabilities,
+            missing=e.missing,
+        )
+
+    async def _below_floor(self) -> bool:
+        """The floor, deferred: start() found no engine, and now a poll was answered. One ``info``
+        for every slot asking meanwhile; a failure leaves it to the next answered poll. An engine
+        below the floor stops this worker, loud: ``start()`` has returned, so the caller sees
+        ``health()`` stopped."""
+        if self._floor_checked:
+            return False
+        if self._floor_check is None:
+            self._floor_check = asyncio.ensure_future(self._check_floor())
+        check = self._floor_check
+        try:
+            refused = await asyncio.shield(check)
+        finally:
+            if self._floor_check is check and check.done():
+                self._floor_check = None
+        if refused is None:
+            return False
+        if self._self_stop is None and self._running:
+            self._log_below_floor(refused, "this worker stops")
+            self._self_stop = asyncio.ensure_future(self.stop())
+        return True
+
+    async def _check_floor(self) -> UnsupportedEngineError | None:
+        try:
+            info = await self._request.request("info", {})
+        except Exception as e:  # noqa: BLE001 — the next answered poll asks again
+            self._log.debug(
+                "durable: info failed; the floor is checked at the next answered poll", error=str(e)
+            )
+            return None
+        self._floor_checked = True
+        return check_engine_floor(self._prefix, info)
 
     def _refused_at_start(self, e: LimitError, where: str) -> None:
         """A refusal at a limit (but ``rate``, which clears within a second) makes ``start()``
@@ -284,9 +344,11 @@ class Worker:
     async def stop(self, drain_timeout_s: float = DEFAULT_DRAIN_TIMEOUT_S) -> None:
         """Stop polling, and let the items in flight finish (bounded by ``drain_timeout_s``).
 
-        This worker's polls still waiting in the engine are withdrawn (``poll {cancelPoll}``,
-        API.md "Withdrawing polls"): every instance answers them ``none`` at once and never hands
-        them an item. An item handed in the instant before goes straight back (``done retry``), and
+        This worker's polls are withdrawn, once (``poll {cancelPoll}``, API.md "Withdrawing
+        polls"): every instance answers those waiting ``none`` at once and never hands them an
+        item, and remembers the worker 5 s, so a poll of it that arrives after the withdrawal (sent
+        just before it) answers ``none`` at once too (the engine's F53, the floor ``start()``
+        checked). An item handed in the instant before goes straight back (``done retry``), and
         ``stop()`` returns only once every slot's loop has ended, that hand-back included, so a
         caller that exits right after loses nothing to a lease nobody holds (the engine's F51).
         Without an engine to answer, the polls end at their own wait.
@@ -304,17 +366,11 @@ class Worker:
         if was_running:
             await self._withdraw()
         # Every slot's loop ends: its item in flight finishes, and its poll returns (an item it is
-        # handed now goes back before this does). A poll that reaches the engine just after the
-        # withdrawal is withdrawn again, every WITHDRAW_AGAIN_S while one is out.
-        pending = {t for t in self._polls if not t.done()}
-        deadline = time.monotonic() + drain_timeout_s
-        while pending:
-            left = deadline - time.monotonic()
-            if left <= 0:
-                break
-            _done, pending = await asyncio.wait(pending, timeout=min(WITHDRAW_AGAIN_S, left))
-            if pending and was_running and self._polling > 0:
-                await self._withdraw()
+        # handed now goes back before this does).
+        current = asyncio.current_task()
+        pending = {t for t in self._polls if not t.done() and t is not current}
+        if pending:
+            _done, pending = await asyncio.wait(pending, timeout=max(0.0, drain_timeout_s))
         if pending:
             items = [t for t in self._inflight if not t.done()]
             self._log.warn(
@@ -478,6 +534,10 @@ class Worker:
                 if self._running:
                     await self._nap(_poll_backoff_s(failures))
                 continue
+            if not self._floor_checked and await self._below_floor():
+                if not r.get("none"):
+                    await self._release(r)
+                break
             if r.get("none"):
                 continue
             if not self._is_running():

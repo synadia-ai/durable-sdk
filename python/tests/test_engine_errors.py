@@ -4,7 +4,9 @@
 caller as ``unavailable`` (the engine's F46; F40). The two limit codes are :class:`LimitError`,
 retried by no call: a client's call raises it, a worker's ``start()`` raises it when its first poll
 is refused, a refused poll is logged at error and backs off, and a worker's failing polls say so
-once a minute (F41).
+once a minute (F41). An engine below the floor (``info.capabilities`` without
+``withdrawn-remembered``) is refused at ``start()``, or at the first answered poll when ``start()``
+found none, and ``stop()`` withdraws once (F45).
 """
 
 from __future__ import annotations
@@ -24,8 +26,10 @@ import pytest
 from synadia_durable import create_client, create_worker, define_workflow
 from synadia_durable._engine.errors import (
     ENGINE_ERROR_CODES,
+    EngineError,
     EngineUnavailableError,
     LimitError,
+    UnsupportedEngineError,
 )
 from synadia_durable._engine.transport import Transport
 from synadia_durable._engine.worker import EveryLog, limit_backoff_s
@@ -94,6 +98,9 @@ async def _body(_ctx: Any, _input: Any) -> str:
 
 
 WF = define_workflow("lim", _body)
+
+#: An engine at the floor's ``info`` (its #13 and later).
+INFO = {"engine": "0.2.0-dev", "commit": "16cb3da", "capabilities": ["withdrawn-remembered"]}
 
 
 def _engines_codes() -> list[str] | None:
@@ -193,7 +200,9 @@ async def test_result_raises_at_once_where_unavailable_is_asked_again() -> None:
 
 
 async def test_start_raises_when_its_first_poll_is_refused_and_runs_nothing() -> None:
-    nc = FakeNc(lambda op, _: _refusal("licence_limit", limit="workflows") if op == "poll" else {})
+    nc = FakeNc(
+        lambda op, _: _refusal("licence_limit", limit="workflows") if op == "poll" else INFO
+    )
     log = Recorder()
     w = create_worker(nc, [WF], logger=log)  # type: ignore[arg-type]
     with pytest.raises(LimitError) as caught:
@@ -223,7 +232,7 @@ async def test_rate_which_clears_within_a_second_does_not_fail_start() -> None:
     def answer(op: str, _body: Any) -> Any:
         nonlocal polls
         if op != "poll":
-            return {}
+            return INFO
         polls += 1
         return _refusal("tenant_limit", limit="rate") if polls == 1 else none()
 
@@ -239,7 +248,7 @@ async def test_a_later_refused_poll_is_one_error_per_back_off_and_not_polled_mea
     def answer(op: str, _body: Any) -> Any:
         nonlocal polls
         if op != "poll":
-            return {}
+            return INFO
         polls += 1
         return {"none": True} if polls == 1 else _refusal("licence_limit", limit="workers")
 
@@ -281,7 +290,7 @@ async def test_every_log_one_line_per_interval_standing_for_what_it_kept_quiet()
 
 
 async def test_every_slot_failing_for_a_while_is_one_warning() -> None:
-    nc = FakeNc(lambda op, _: nats.errors.NoRespondersError() if op == "poll" else {})
+    nc = FakeNc(lambda op, _: nats.errors.NoRespondersError() if op == "poll" else INFO)
     log = Recorder()
     w = create_worker(nc, [WF], concurrency=4, logger=log)  # type: ignore[arg-type]
     await w.start()
@@ -291,3 +300,146 @@ async def test_every_slot_failing_for_a_while_is_one_warning() -> None:
     warns = [f for _, m, f in log.lines if "poll failed; retrying" in m]
     assert len(warns) == 1
     assert (warns[0]["failures"], warns[0]["every_s"]) == (1, 60.0)
+
+
+# --- the engine's floor: info.capabilities, never the version (F45) ------------------------------
+
+
+async def test_start_raises_on_an_engine_with_no_capabilities_naming_it_by_engine_and_commit() -> (
+    None
+):
+    nc = FakeNc(
+        lambda op, _: (
+            {"engine": "0.2.0-dev", "commit": "5047d79"} if op == "info" else {"none": True}
+        )
+    )
+    log = Recorder()
+    w = create_worker(nc, [WF], prefix="old", logger=log)  # type: ignore[arg-type]
+    with pytest.raises(UnsupportedEngineError) as caught:
+        await w.start()
+    e = caught.value
+    assert isinstance(e, EngineError)
+    assert (e.code, e.engine, e.commit, e.capabilities, e.missing) == (
+        "unsupported",
+        "0.2.0-dev",
+        "5047d79",
+        None,
+        ["withdrawn-remembered"],
+    )
+    for part in ('"old"', "0.2.0-dev", "5047d79", "16cb3da", "withdrawn-remembered"):
+        assert part in str(e)
+    assert nc.ops == ["info"]
+    assert not w.health().running
+    assert len([1 for level, _, _ in log.lines if level == "error"]) == 1
+
+
+async def test_start_raises_on_capabilities_without_withdrawn_remembered() -> None:
+    nc = FakeNc(
+        lambda op, _: (
+            {"engine": "0.2.0-dev", "capabilities": ["something-else"]}
+            if op == "info"
+            else {"none": True}
+        )
+    )
+    with pytest.raises(UnsupportedEngineError) as caught:
+        await create_worker(nc, [WF]).start()  # type: ignore[arg-type]
+    assert caught.value.missing == ["withdrawn-remembered"]
+
+
+async def test_an_engine_that_announces_it_starts() -> None:
+    async def none() -> dict[str, Any]:
+        await asyncio.sleep(0.02)
+        return {"none": True}
+
+    nc = FakeNc(lambda op, _: INFO if op == "info" else none())
+    w = create_worker(nc, [WF], concurrency=1)  # type: ignore[arg-type]
+    await w.start()
+    assert w.health().running
+    await w.stop()
+    assert nc.ops.count("info") == 1  # checked once, at start()
+
+
+async def test_no_engine_at_start_still_polls_waitms_0_and_the_first_answered_poll_checks_the_floor() -> (
+    None
+):
+    up = False
+    bodies: list[dict[str, Any]] = []
+
+    async def item() -> dict[str, Any]:
+        await asyncio.sleep(0.01)
+        return {
+            "runId": "r1",
+            "lease": "L",
+            "workflow": "lim",
+            "version": 1,
+            "attempt": 1,
+            "journal": [],
+            "ackWaitMs": 30_000,
+            "workDeadlineMs": 0,
+        }
+
+    def answer(op: str, body: Any) -> Any:
+        if op == "poll":
+            bodies.append(body)
+        if not up:
+            return nats.errors.NoRespondersError()
+        if op == "info":
+            return {"engine": "0.2.0-dev", "commit": "5047d79"}
+        if op == "poll":
+            return {"none": True} if body.get("cancelPoll") else item()
+        return {}
+
+    nc = FakeNc(answer)
+    log = Recorder()
+    w = create_worker(nc, [WF], concurrency=3, logger=log)  # type: ignore[arg-type]
+    await w.start()  # no engine: not fatal
+    assert nc.ops[:2] == ["info", "poll"]
+    assert bodies[0]["waitMs"] == 0
+    assert w.health().running
+    up = True
+    for _ in range(100):
+        if not w.health().running:
+            break
+        await asyncio.sleep(0.02)
+    assert not w.health().running
+    await asyncio.sleep(0.05)
+    assert nc.ops.count("info") == 2  # start()'s, and one for every slot
+    assert nc.ops.count("done") > 0  # the items it was handed go back
+    errors = [m for level, m, _ in log.lines if level == "error"]
+    assert len(errors) == 1
+    assert "5047d79" in errors[0]
+    assert "this worker stops" in errors[0]
+    await w.stop()
+
+
+async def test_stop_withdraws_once_and_returns_when_the_engine_answers_the_polls() -> None:
+    waiting: list[asyncio.Future[dict[str, Any]]] = []
+    cancels = 0
+
+    def answer(op: str, body: Any) -> Any:
+        nonlocal cancels
+        if op == "info":
+            return INFO
+        if op != "poll":
+            return {}
+        if body.get("cancelPoll"):
+            cancels += 1
+            for w in waiting:
+                w.set_result({"none": True})
+            waiting.clear()
+            return {"none": True}
+        if body.get("waitMs") == 0:
+            return {"none": True}
+        f: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        waiting.append(f)
+        return f
+
+    w = create_worker(FakeNc(answer), [WF], concurrency=4)  # type: ignore[arg-type]
+    await w.start()
+    await asyncio.sleep(0.02)
+    assert len(waiting) == 4
+    t0 = time.monotonic()
+    await w.stop()
+    assert time.monotonic() - t0 < 0.5
+    await asyncio.sleep(0.3)  # no repeat afterwards either
+    assert cancels == 1
