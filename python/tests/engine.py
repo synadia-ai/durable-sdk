@@ -14,6 +14,11 @@ at another commit, or with local changes, is refused unless ``DE_ENGINE_ANY=1``.
 integration suites skip, saying why. Nothing reaches beyond 127.0.0.1 unless ``DE_NATS_URL`` says
 so.
 
+The build is the engine's ``make build-dev`` (F42): ``-tags devlicence``, so it trusts the test
+licence issuer, and ``durable-licence`` beside it. A standalone ``serve`` starts only with a
+licence: the run mints one test licence (``durable-licence mint -test``) and every standalone engine
+it spawns gets it as ``DE_LICENCE``, unless the caller's ``DE_LICENCE`` names one.
+
 Against an existing server (``existing.py``, ``DE_NATS_URL``) there is one prefix and one engine
 for the run instead: every prefix a test names is the run's, the engine is the session's
 (``RunEngine``), and a test's flags restart it only when they differ from the ones it runs with.
@@ -31,6 +36,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 from collections import deque
 from dataclasses import dataclass
@@ -99,10 +105,70 @@ def resolve_engine_binary() -> str:
         )
     out_dir = REPO / ".engine-bin"
     out_dir.mkdir(exist_ok=True)
-    out = out_dir / f"durable-engine-{head[:12]}{'-dirty' if dirty else ''}"
-    if not out.exists() or dirty:
-        subprocess.run(["go", "build", "-o", str(out), "./cmd/durable-engine"], cwd=src, check=True)
+    tag = f"{head[:12]}{'-dirty' if dirty else ''}"
+    out = out_dir / f"durable-engine-dev-{tag}"
+    tool = out_dir / f"durable-licence-{tag}"
+    if not out.exists() or not tool.exists() or dirty:
+        # `make build-dev`'s two builds, into this repo's .engine-bin: nothing is written in the
+        # checkout.
+        subprocess.run(
+            ["go", "build", "-tags", "devlicence", "-o", str(out), "./cmd/durable-engine"],
+            cwd=src,
+            check=True,
+        )
+        subprocess.run(
+            ["go", "build", "-o", str(tool), "./cmd/durable-licence"], cwd=src, check=True
+        )
     return str(out)
+
+
+# --- the licence (F42) ---------------------------------------------------------------------------
+
+
+def licence_tool(binary: str) -> str:
+    """``durable-licence``, for the engine binary: beside a build of ours
+    (``durable-licence-<commit>``) or beside a ``DE_ENGINE`` (``make build-dev`` puts both in
+    ``bin/``), or ``DE_LICENCE_TOOL``."""
+    given = os.environ.get("DE_LICENCE_TOOL", "")
+    if given:
+        return given
+    b = Path(binary)
+    ours = b.with_name(b.name.replace("durable-engine-dev-", "durable-licence-", 1))
+    for p in (ours, b.with_name("durable-licence")):
+        if p != b and p.exists():
+            return str(p)
+    raise RuntimeError(
+        f"no durable-licence beside {binary} to mint the run's test licence: set DE_LICENCE to a "
+        "licence file, DE_LICENCE_TOOL to the tool, or build both with `make build-dev` in the "
+        "engine"
+    )
+
+
+def mint_test_licence(binary: str, name: str = "durable-sdk-tests", **limits: int) -> str:
+    """A test licence (``durable-licence mint -test``), written to a fresh temporary file: the
+    run's (``name`` durable-sdk-tests, the tool's generous defaults) or a test's own, with
+    ``limits`` (``workflows=1``, ``runs_in_flight=1``, …: the tool's flags)."""
+    out = Path(tempfile.mkdtemp(prefix="de-licence-")) / "licence.jwt"
+    flags = [x for k, v in limits.items() for x in (f"-{k.replace('_', '-')}", str(v))]
+    subprocess.run(
+        [licence_tool(binary), "mint", "-test", "-name", name, *flags, "-out", str(out)],
+        check=True,
+        capture_output=True,
+    )
+    return str(out)
+
+
+#: The licence of the run's standalone engines (integration/conftest.py), or None: the environment's.
+_licence: str | None = None
+
+
+def configure_licence(path: str | None) -> None:
+    global _licence
+    _licence = path
+
+
+#: For :class:`EngineProcess`: the run's licence (``configure_licence``).
+RUN_LICENCE: Any = object()
 
 
 # --- the engine's command line -------------------------------------------------------------------
@@ -180,6 +246,8 @@ class EngineProcess:
         metrics_addr: str | None = None,
         start_timeout_s: float = 30.0,
         on_line: Any = None,
+        licence: str | object | None = RUN_LICENCE,
+        extra_args: list[str] | None = None,
     ) -> None:
         global _instances
         _instances += 1
@@ -195,6 +263,11 @@ class EngineProcess:
         self.metrics_addr = metrics_addr
         self.start_timeout_s = start_timeout_s
         self.on_line = on_line
+        #: ``DE_LICENCE`` for ``serve``: a file, ``None`` for none (the fabric mode needs none, and
+        #: one given would bound its tenants), or the run's (``RUN_LICENCE``).
+        self.licence = licence
+        #: Arguments before ``--prefix`` (``--tenancy``, ``--tenant-max-bytes 0``, …).
+        self.extra_args = extra_args or []
 
     @property
     def args(self) -> list[str]:
@@ -203,6 +276,7 @@ class EngineProcess:
             extra += ["--creds", self.creds]
         if self.metrics_addr is not None:
             extra += ["--metrics-addr", self.metrics_addr]
+        extra += self.extra_args
         return [
             "serve",
             "--nats",
@@ -231,8 +305,15 @@ class EngineProcess:
 
     async def start(self) -> None:
         """Spawn and wait for the engine's ``serving`` line (it provisions the prefix first)."""
+        env = dict(os.environ)
+        licence = _licence if self.licence is RUN_LICENCE else self.licence
+        if licence is None:
+            if self.licence is not RUN_LICENCE:
+                env.pop("DE_LICENCE", None)
+        else:
+            env["DE_LICENCE"] = str(licence)
         proc = subprocess.Popen(
-            [self.binary, *self.args], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+            [self.binary, *self.args], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=env
         )
         self._proc = proc
         threading.Thread(target=self._read, args=(proc,), daemon=True).start()
@@ -711,6 +792,7 @@ __all__ = [
     "RunEngine",
     "begin_test",
     "configure",
+    "configure_licence",
     "configure_run",
     "count_of",
     "create_client",
@@ -721,6 +803,8 @@ __all__ = [
     "engine_log",
     "engine_pin",
     "ensure_engine",
+    "licence_tool",
+    "mint_test_licence",
     "provision",
     "resolve_engine_binary",
     "restart_engine",

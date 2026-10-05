@@ -4,6 +4,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.7.0-alpha] — unreleased
 
+### Follow-up 5 (2026-10-05): the limit codes refuse loud, and the licensed engine
+
+`engine.pin` moves from `d3e741d` to `a7c5010` (the engine's PR #8, the licence, P2-22). Both languages unless said.
+
+- **`tenant_limit` and `licence_limit` are `LimitError`** (`docs/findings.md` F40; the engine's F46): `code`, `limit` (the engine's word: `workflows`, `workers`, `runs`, `runsPerDay`, `tenants`, `expired`, `bytes`, `polls`, `rate`) and the engine's message; exported from both packages. Never retried: a client's call rejects with it after one request (`result()` included); `worker.start()` rejects with it when its `info` or its first poll (`waitMs: 0`, new) is refused (`rate` aside); a later refused poll is logged at error naming the limit, once per limit per back-off, and polled again after 30 s (`rate`: 1 s), cut short by `stop()`; inside an execution the item goes back (`done retry`), logged at error, `work.done` outcome `limit`. A code the SDK does not know stays `EngineUnavailableError`, now logged at warn.
+- **The codes table mirrored** as `ENGINE_ERROR_CODES` (`src/engine/errors.ts`, `_engine/errors.py`), with a unit test in each language that fails when the engine's table at `engine.pin` has a code the mirror lacks, or a code maps to another class.
+- **The poll warning** (F41): `poll failed; retrying` is one line per minute per worker, with the count of failures since (was every slot's 1st and every 20th). The retry is unchanged.
+- **The harness on the licensed engine** (F42): it builds what `make build-dev` builds (`-tags devlicence`, and `durable-licence`) into `.engine-bin/`, mints one test licence per run (`durable-licence mint -test -name durable-sdk-tests`) and starts every standalone engine with `DE_LICENCE` set to it; the caller's `DE_LICENCE` wins; `DE_LICENCE_TOOL` names the tool when `DE_ENGINE` has none beside it. An engine in the fabric mode gets none. The existing-server mode is otherwise unchanged.
+- **New tests:** `test/unit/engine-errors.test.ts` (23) and `python/tests/test_engine_errors.py` (23); `test/integration/limits.test.ts` and `python/tests/integration/test_limits.py` (2 each): a licence limit (`workflows`, `runs`) on a standalone engine of the test's own and a tenant limit (`workflows`) on a fabric-mode engine on a three-account server of the test's own (`renderTenancyConfig`, `render_tenancy_config`). TypeScript 345 unit, 139 integration passed and 4 skipped; Python 509 passed, 3 skipped, 2 xfailed.
+- The READMEs: the quickstart with `make build-dev` and a test licence, the errors table, the licence in the harness, the counts. New findings F40 to F42.
+
 ### Follow-up 4 (2026-10-04): the tenancy pin, bandwidth in the budgets, the harness as a tenant
 
 `engine.pin` moves from `ee81460` to `d3e741d` (the engine's PR #7, tenancy). Both languages unless said; nothing in `src/` or `python/src/` changed.

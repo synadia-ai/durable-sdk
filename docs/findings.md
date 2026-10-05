@@ -524,3 +524,43 @@ accounts {
 ### F39 — F32 handed on to the engine
 
 F32 (nats-py's object-store delete writes a meta with an empty `mtime`, which the engine's nats.go reader cannot parse, so a blob deleted from Python reads `unavailable`, not `blob_gone`) goes to the engine as an ask from here: read such a meta as a deleted object. The coordinator carries it into the engine's next brief. Nothing changed here: the Python tests still delete an object by purging its subjects.
+
+### F40 — The limit codes are refusals, `LimitError` (the engine's F46)
+
+**Where.** `src/engine/errors.ts`, `src/engine/transport.ts`, `src/engine/worker.ts` and their twins in `python/src/synadia_durable/_engine/`; the engine's `docs/API.md` "Errors", "The licence", "Tenancy" at `a7c5010`; the brief `2026-10-05-durable-sdk-limit-codes.md`.
+
+**What.** The engine's closed set has ten codes; both SDKs mapped eight and read `tenant_limit` and `licence_limit` as `unavailable`, so a client's caller retried what will not clear and a refused worker polled again as after a broker blip. Now both are **`LimitError`** (`code` the one the engine said, `limit` its `limit` member verbatim, the engine's message kept), an `EngineError` and not an `EngineUnavailableError`, so nothing that retries the transient retries it:
+
+- **A client's call** (`start`, `signal`, `cancel`, `result`, the `put` parts) rejects with it after one request; `result()` no longer asks again as it does on `unavailable`.
+- **A worker's `start()`** sends `info` and then one poll that checks once (`waitMs: 0`), and rejects with the `LimitError` of either (logged at error, naming the limit), so a process does not run without work silently. An item that first poll is handed goes to the first slot. `rate` is the exception: it clears within a second, so `start()` goes on and the slots meet it.
+- **A refused poll** after that is logged at **error** with the code, the limit, the workflows and how many refusals the line stands for, once per limit per back-off however many slots it refuses, and that slot polls again after **30 s** (`rate`: 1 s). The API carries no retry advice, so the back-off is the API's prose ("`rate` clears within a second, the others when runs end or an operator acts"). `stop()` wakes a slot from its back-off at once.
+- **Inside an execution** (a `child` at `runs`, an `append` at `bytes`, any op at `rate`) the pure core halts with `retry`, as on any infrastructure error, and the worker hands the item back (`done retry`), logged at error instead of `infra error during run`; `work.done`'s outcome is `limit`.
+- **A code neither SDK knows** stays `EngineUnavailableError` (an older SDK on a newer engine keeps working), now logged at warn naming the code.
+
+**The mirror.** `ENGINE_ERROR_CODES` in both languages is the codes table, code → class; `test/unit/engine-errors.test.ts` and `python/tests/test_engine_errors.py` read the table from the engine checkout at `engine.pin` (`git show <pin>:docs/API.md`, skipped without a checkout) and fail when the two differ, then check each code maps to its class. Before the pin moved, the test failed on the missing `licence_limit`, as meant.
+
+**Brief vs API.** The brief names the limits `workflows`, `workers`, `runs_in_flight`, `runs_per_day`, `tenants`, `rate`, `bytes`; those are `durable-licence mint`'s flags. The API's `limit` member says `runs` and `runsPerDay` (the licence's) and `bytes`, `runs`, `workflows`, `polls`, `rate` (the tenant's), plus `expired`; the SDKs pass the engine's word through and match none of them but `rate`. The brief's integration test is "a tenant limit of 0 workflows"; the engine reads 0 or less as **no limit** (`engine/tenancy.go` `limited`), so the test sets the tenant's `maxWorkflows` to 1, binds one name and is refused the second, as the licence test does with `-workflows 1`.
+
+**Tests.** Unit (no server), each language: every code its class; the table at the pin; both codes `LimitError` with their `limit`; no client call retried; `start()` rejected on a refused first poll and on a refused `info`, not on `rate`; a later refused poll one error line and one poll per slot per back-off; `stop()` prompt. Integration, each language (`limits`, `test_limits`): a standalone engine of the test's own on a licence `-workflows 1 -runs-in-flight 1` refuses a second workflow's worker at `start()` (`licence_limit` `workflows`) and a second run's `start` (`licence_limit` `runs`, the engine's refusal count up by exactly one), and the run in flight still finishes; an engine in the fabric mode on a three-account server of the test's own, tenant A's record `{"maxWorkflows": 1}`, refuses A's second workflow (`tenant_limit` `workflows`) while B binds two. Both skip against an existing server (they need a server and an engine of their own).
+
+### F41 — The idle poll's warning, once a minute with a count
+
+**Where.** `src/engine/worker.ts` `pollLoop`, `python/src/synadia_durable/_engine/worker.py` `_poll_loop`; the staging run the brief cites (four `unavailable: context deadline exceeded` refusals at a tenant's first polls, the engine's to fix in its next brief).
+
+**What.** Each slot warned `poll failed; retrying` at its first failure and every twentieth, so a worker of 16 slots over a slow link logged 16 lines at once and more for as long as it lasted. The retry and its back-off (250 ms doubling to 5 s) stay; the warning is now the **worker's**, one line a minute at most (`EveryLog`, `POLL_WARN_EVERY_MS` / `POLL_WARN_EVERY_S`), carrying `failures`, the count since the line before, and `everyMs` / `every_s`. A refused poll at a limit (F40) and an `invalid` one log at error as before, and are not counted here. Unit-tested in both languages: four slots failing for most of a second are one warning.
+
+### F42 — `engine.pin` is the licence merge, `a7c5010`, and the harness mints a test licence
+
+**Where.** `engine.pin`; `test/harness/engine-bin.ts`, `engine-process.ts`, `global-setup.ts`, `engine.ts`; `python/tests/engine.py`, `python/tests/integration/conftest.py`; the engine's `docs/API.md` "The licence", `docs/QUICKSTART.md`, `Makefile`.
+
+**What.** At `a7c5010` (the engine's PR #8, P2-22) a standalone `serve` refuses to start without a valid licence (exit 2). The harness now:
+
+- **builds** what `make build-dev` builds, with the same two `go build`s but into this repo's `.engine-bin/`, so the engine checkout is read and built from, never written: `durable-engine-dev-<commit>` (`-tags devlicence`, which trusts the test issuer) and `durable-licence-<commit>`;
+- **mints one test licence per run** (`durable-licence mint -test -name durable-sdk-tests`, the tool's defaults: 100 workflows, 100 workers, 10,000 runs in flight, a million a day, one tenant, 30 days) into a temporary directory, removed at the end, and starts every standalone engine with `DE_LICENCE` set to it: the per-test engines, and the existing-server mode's one engine. `DE_LICENCE` in the caller's environment wins (nothing is minted). With `DE_ENGINE` the tool is `durable-licence` beside it (`make build-dev`'s `bin/`), or `DE_LICENCE_TOOL`;
+- starts an engine in **the fabric mode** (`limits`' tenancy test) with no `DE_LICENCE` at all: it needs none, and a licence would bound its tenants (the test licence's one tenant would refuse tenant B).
+
+The existing-server mode is otherwise unchanged. `DE_ENGINE_URL`'s engine is its operator's, licence and all.
+
+**The checkout.** `../durable-engine` was on another branch with local changes (`mario/engine-fabric-next` at `e379e90`), which the harness refuses (as in F22). Nothing was done to it: every run here built from a local clone of it at `a7c5010` (`DE_ENGINE_REPO=<scratch>/durable-engine`).
+
+**Runs** (2026-10-05, a local nats-server 2.14.6, the engine `a7c5010` built by the harness with the minted licence, sequentially): TypeScript unit 345 passed (15 files); integration 139 passed, 4 skipped (137 and 4 before `limits`), 296 s. Python 509 passed, 3 skipped, 2 xfailed (the unit suites 417 passed, 2 xfailed; 484 passed before this work's 25 tests), 237 s. Against a local server (`DE_NATS_URL=nats://127.0.0.1:14222`): TypeScript 120 passed, 23 skipped, 75 s; Python 73 passed, 22 skipped, 56 s (the 2 new skips each are `limits`).

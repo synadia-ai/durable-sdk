@@ -127,7 +127,8 @@ export function ensureEngine(prefix: string, flags: EngineFlags = {}): Promise<u
   if (p === undefined) {
     const bin = inject("engineBin");
     if (!bin) return Promise.reject(new EngineNotAvailableError("no engine binary"));
-    const e = new EngineProcess(bin, url, prefix, flags);
+    const licence = inject("licenceFile");
+    const e = new EngineProcess(bin, url, prefix, flags, licence !== null ? { licence } : {});
     p = e.start().then(() => e);
     engines.set(key, p);
     p.catch(() => engines.delete(key));

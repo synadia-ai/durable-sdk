@@ -6,7 +6,9 @@
 // ack wait meanwhile; the `ExecOutcome` goes back as `done`. On `expired` from any request the item
 // is dropped and the slot polls on. A value too large for a request or a reply goes up and comes
 // down in parts (blobs.ts). Every poll names this worker, and stop() withdraws its waiting polls
-// (`poll {cancelPoll}`), so a stop takes as long as the items in flight, not a poll's wait. The
+// (`poll {cancelPoll}`), so a stop takes as long as the items in flight, not a poll's wait. A poll
+// refused at a limit (`LimitError`) is logged at error and backs off; the first one, at start(),
+// rejects start() so a process does not run without work silently. The
 // worker holds no state across items: the consumers, the inbound event, the run lease, the ack
 // matrix, the obligations after a terminal, the cascade, the forward, the parked index and the
 // lost-wake repair are the engine's.
@@ -37,7 +39,7 @@ import { type PayloadCodec } from "../journal/payload-codec.js";
 import { type AppendResult, type Journal, type JournalAppend } from "../journal/store.js";
 import { type AnyWorkflow } from "../types.js";
 import { EngineBlobs, sizesOf } from "./blobs.js";
-import { EngineError, InvalidRequestError, LeaseExpiredError } from "./errors.js";
+import { EngineError, InvalidRequestError, LeaseExpiredError, LimitError } from "./errors.js";
 import { DEFAULT_PREFIX, type Op } from "./names.js";
 import { fitEntry, fitSlot, reverseJournal, type WireJournal, wireEntry } from "./payload.js";
 import { createTransport, type RequestOptions } from "./transport.js";
@@ -147,11 +149,43 @@ interface PollReply {
   workDeadlineMs: number;
 }
 
-const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
 /** The back-off of a slot whose poll failed: 250 ms doubling to 5 s. */
 function pollBackoffMs(failures: number): number {
   return Math.min(5_000, 250 * 2 ** Math.min(Math.max(0, failures - 1), 5));
+}
+
+/**
+ * The back-off of a slot whose poll was refused at a limit (API.md "Errors"): `rate` clears within
+ * a second; the others when runs end, a worker goes away or an operator acts, so 30 s.
+ */
+export function limitBackoffMs(e: LimitError): number {
+  return e.limit === "rate" ? 1_000 : 30_000;
+}
+
+/** How often the worker says that its polls are failing (one line, with the count). */
+export const POLL_WARN_EVERY_MS = 60_000;
+
+/**
+ * One log line per `everyMs` for an event that repeats: `hit()` counts one and answers how many
+ * the line about to be logged stands for (this one and those since the last line), or 0 to stay
+ * quiet. A long idle over a slow link, every poll failing, then fills no log (F41).
+ */
+export class EveryLog {
+  #last = -Infinity;
+  #count = 0;
+  constructor(
+    readonly everyMs: number,
+    readonly now: () => number = Date.now,
+  ) {}
+  hit(): number {
+    this.#count += 1;
+    const t = this.now();
+    if (t - this.#last < this.everyMs) return 0;
+    this.#last = t;
+    const n = this.#count;
+    this.#count = 0;
+    return n;
+  }
 }
 
 export function createWorker(opts: WorkerOptions): Worker {
@@ -181,6 +215,31 @@ export function createWorker(opts: WorkerOptions): Worker {
 
   let running = false;
   let closedReported = false;
+  /** The slots backing off: stop() wakes them at once. */
+  const napping = new Set<() => void>();
+  /** A sleep that stop() cuts short. */
+  const nap = (ms: number): Promise<void> =>
+    new Promise((r) => {
+      const wake = (): void => {
+        clearTimeout(t);
+        napping.delete(wake);
+        r();
+      };
+      const t = setTimeout(wake, ms);
+      napping.add(wake);
+    });
+  /** The worker's "poll failed; retrying": one line a minute, however many slots fail. */
+  const pollWarn = new EveryLog(POLL_WARN_EVERY_MS);
+  /** A refusal at a limit: one error line per limit per back-off, however many slots it refuses. */
+  const limitLogs = new Map<string, EveryLog>();
+  function logLimit(e: LimitError, where: string, fields: Record<string, unknown> = {}): void {
+    const key = `${where}|${e.code}|${e.limit}`;
+    let l = limitLogs.get(key);
+    if (l === undefined) limitLogs.set(key, (l = new EveryLog(limitBackoffMs(e))));
+    const n = l.hit();
+    const then = where === "poll" ? `polling again in ${String(limitBackoffMs(e) / 1000)} s` : "the item goes back until it clears"; // prettier-ignore
+    if (n > 0) logger.error(`durable: the engine refused this worker's ${where} at a limit (${e.code} ${e.limit}); ${then}`, { ...fields, code: e.code, limit: e.limit, refused: n, error: e.message }); // prettier-ignore
+  }
   /** This worker's name on its polls, so that stop() withdraws its polls and no one else's. */
   const workerId = globalThis.crypto.randomUUID();
   const slots: WorkerHealth["pumps"] = [];
@@ -353,6 +412,8 @@ export function createWorker(opts: WorkerOptions): Worker {
             "this worker has the same payloadCodec (and key) as the writer",
           { runId, error: String(e) },
         );
+      } else if (e instanceof LimitError) {
+        logLimit(e, "request", { runId });
       } else if (!(e instanceof LeaseExpiredError)) {
         logger.warn("durable: work item failed; will redeliver", { runId, error: String(e) });
       }
@@ -378,8 +439,14 @@ export function createWorker(opts: WorkerOptions): Worker {
       !(outcome.error instanceof LeaseExpiredError) &&
       dropped === undefined
     ) {
-      logger.warn("durable: infra error during run; will retry", { runId, error: String(outcome.error) }); // prettier-ignore
+      // Refused at a limit inside the execution (a child at `runs`, an append at `bytes`): the
+      // item goes back and the run waits until it clears (API.md "Errors"), loud.
+      if (outcome.error instanceof LimitError) {
+        label = "limit";
+        logLimit(outcome.error, "request", { runId });
+      } else logger.warn("durable: infra error during run; will retry", { runId, error: String(outcome.error) }); // prettier-ignore
     }
+    if (label === "limit") reported = "limit";
     if (dropped !== undefined) {
       reported = "expired";
     } else {
@@ -413,7 +480,7 @@ export function createWorker(opts: WorkerOptions): Worker {
     }
   }
 
-  async function pollLoop(i: number): Promise<void> {
+  async function pollLoop(i: number, first: PollReply | undefined): Promise<void> {
     const state = slots[i]!;
     let failures = 0;
     while (running) {
@@ -423,7 +490,13 @@ export function createWorker(opts: WorkerOptions): Worker {
       }
       let r: PollReply;
       try {
-        r = await request<PollReply>("poll", { workflows, waitMs: pollWaitMs, worker: workerId }, { waitMs: pollWaitMs }); // prettier-ignore
+        if (first !== undefined) {
+          // The item start()'s first poll was handed.
+          r = first;
+          first = undefined;
+        } else {
+          r = await request<PollReply>("poll", { workflows, waitMs: pollWaitMs, worker: workerId }, { waitMs: pollWaitMs }); // prettier-ignore
+        }
         failures = 0;
         state.alive = running;
       } catch (e) {
@@ -441,9 +514,20 @@ export function createWorker(opts: WorkerOptions): Worker {
         state.alive = false;
         state.restarts += 1;
         state.lastError = String(e);
-        if (e instanceof InvalidRequestError) logger.error("durable: the engine refused this worker's poll", { error: e.message }); // prettier-ignore
-        else if (failures === 1 || failures % 20 === 0) logger.warn("durable: poll failed; retrying", { error: String(e) }); // prettier-ignore
-        if (running) await delay(pollBackoffMs(failures));
+        if (e instanceof LimitError) {
+          // Refused at a limit (the engine's F46): never a broker blip. Loud, and polled again
+          // only after the limit could have cleared.
+          logLimit(e, "poll", { workflows: workflows.map((w) => w.name) });
+          if (running) await nap(limitBackoffMs(e));
+          continue;
+        }
+        if (e instanceof InvalidRequestError) {
+          logger.error("durable: the engine refused this worker's poll", { error: e.message });
+        } else {
+          const n = pollWarn.hit();
+          if (n > 0) logger.warn("durable: poll failed; retrying", { error: String(e), failures: n, everyMs: POLL_WARN_EVERY_MS }); // prettier-ignore
+        }
+        if (running) await nap(pollBackoffMs(failures));
         continue;
       }
       if (r.none === true) continue;
@@ -471,23 +555,45 @@ export function createWorker(opts: WorkerOptions): Worker {
     async start(): Promise<void> {
       if (running) return;
       if (opts.nc.isClosed()) throw new ConnectionClosedError("createWorker: the NATS connection is closed"); // prettier-ignore
+      // A refusal at a limit (but `rate`, which clears within a second) rejects start(): a
+      // process must not run without work silently (the engine's F46).
+      const refused = (e: unknown, where: string): e is LimitError => {
+        if (!(e instanceof LimitError) || e.limit === "rate") return false;
+        logger.error(`durable: the engine refused this worker's ${where} at a limit (${e.code} ${e.limit}); start() rejects`, { code: e.code, limit: e.limit, workflows: workflows.map((w) => w.name), error: e.message }); // prettier-ignore
+        return true;
+      };
+      let reachable = true;
       try {
         await request("info", {});
       } catch (e) {
-        if (e instanceof ConnectionClosedError) throw e;
+        if (e instanceof ConnectionClosedError || refused(e, "info")) throw e;
+        reachable = false;
         // Not fatal: the polls retry until an engine answers, as a library worker rides out an outage.
         if (e instanceof EngineError) logger.warn("durable: no engine answered info; polling until one does", { prefix, error: e.message }); // prettier-ignore
+      }
+      // The first poll checks once (`waitMs: 0`) whether the engine serves these workflows to this
+      // worker; an item it is handed goes to the first slot.
+      let first: PollReply | undefined;
+      if (reachable) {
+        try {
+          const r = await request<PollReply>("poll", { workflows, waitMs: 0, worker: workerId }, { waitMs: 0 }); // prettier-ignore
+          if (r.none !== true) first = r;
+        } catch (e) {
+          if (e instanceof ConnectionClosedError || refused(e, "first poll")) throw e;
+          // Anything else the slots meet again and retry, as before.
+        }
       }
       running = true;
       slots.length = 0;
       for (let i = 0; i < concurrency; i++) {
         slots.push({ stream: `${prefix}.api.v1.poll`, durable: `slot-${i}`, alive: true, restarts: 0 }); // prettier-ignore
-        void pollLoop(i);
+        void pollLoop(i, i === 0 ? first : undefined);
       }
     },
     async stop(): Promise<void> {
       const wasRunning = running;
       running = false;
+      for (const wake of [...napping]) wake();
       for (const s of slots) s.alive = false;
       // Withdraw this worker's polls still waiting in the engine (API.md "Withdrawing polls"):
       // every instance answers them `none` at once and never hands them an item. An item handed in
