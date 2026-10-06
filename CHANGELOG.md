@@ -2,7 +2,7 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.1.0] — unreleased
+## [0.1.0] — 2026-10-06
 
 The first published version of the thin TypeScript SDK, continuing the frozen library's `0.7.0-alpha` line.
 
