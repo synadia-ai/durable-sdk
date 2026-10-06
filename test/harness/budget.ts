@@ -1,4 +1,4 @@
-// The bandwidth term of a large-value test's budget (README "Against an existing server"). The
+// The bandwidth term of a large-value test's budget (docs/DEVELOPING.md "Against an existing server"). The
 // round-trip factor (existing.ts `rttFactor`) scales a test's waits with the link's latency; a
 // test that moves values over the inline limit also waits for their bytes, which over a WAN take
 // longer than its round trips: the dev NGS run of 2026-10-04 moved one test's ~42 MiB in 81 s at a

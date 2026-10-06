@@ -170,7 +170,7 @@ The unit suites need nothing. The integration suites (`tests/integration/`) spaw
 DE_NATS_URL=nats://127.0.0.1:14222 uv run pytest tests/integration -rs   # 78 passed, 22 skipped, ~60 s
 ```
 
-The dev NGS run's command lines and the measured times of both languages (a local server, the delay proxy, dev NGS) are in the root README's table ([Against an existing server](../README.md#against-an-existing-server); F33).
+The dev NGS run's command lines and the measured times of both languages (a local server, the delay proxy, dev NGS) are in `docs/DEVELOPING.md`'s table ([Against an existing server](../docs/DEVELOPING.md#against-an-existing-server); F33).
 
 ### As a tenant
 
