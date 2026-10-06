@@ -2,7 +2,9 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.7.0-alpha] — unreleased
+## [0.1.0] — unreleased
+
+The first published version of the thin SDK, continuing the frozen library's `0.7.0-alpha` line.
 
 - **The engine's floor** (`docs/findings.md` F45; the engine's F53, F57), both languages: `worker.start()` reads `info.capabilities` and rejects (raises) `UnsupportedEngineError` (an `EngineError`, `code` `unsupported`, with `engine`, `commit`, `capabilities`, `missing`; exported from both packages) when the engine does not announce `withdrawn-remembered`, naming the prefix, the engine's `engine` and `commit`, and the engine this SDK needs (its #13, `16cb3da`, or later). Never the version: every build so far says `0.2.0-dev`. A start that found no engine checks at the first answered poll, and a refusal there stops the worker, logged at error. `start()` sends its `waitMs` 0 poll whether or not `info` answered, which closes F53's restart gap from the SDK's side. **`stop()` sends one `cancelPoll`**: `WITHDRAW_AGAIN_MS` / `WITHDRAW_AGAIN_S` and the 250 ms repeat are gone, and what `stop()` guarantees is unchanged. `engine.pin` `16cb3da` (the engine's #13). New: `engine-floor` / `test_engine_floor` integration suites (4 each), 5 unit tests each; the README's "Which engine" line; `docs/FABRIC.md` names the floor. `test_network`'s lost-ack test now fails naming whether the run fell to the engine's lapse.
 

@@ -1,6 +1,6 @@
 {
   "name": "@synadia-ai/durable",
-  "version": "0.7.0-alpha",
+  "version": "0.1.0",
   "description": "The thin durable execution SDK: the replay core of @synadia-ai/durable in your process, durable-engine behind it.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -33,7 +33,17 @@
   },
   "license": "Apache-2.0",
   "author": "Synadia Communications",
-  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/synadia-ai/durable-sdk.git"
+  },
+  "homepage": "https://github.com/synadia-ai/durable-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/synadia-ai/durable-sdk/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",

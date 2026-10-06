@@ -6,20 +6,20 @@ Private until published. Created 2026-10-03 on the Synadia Agent Fabric's decisi
 
 **It runs in two places, with the same code:**
 
-| Where                           | The engine                                                        | Start here                          |
-| ------------------------------- | ----------------------------------------------------------------- | ----------------------------------- |
-| **standalone**                  | yours, next to your NATS, with a licence                          | the [Quickstart](#quickstart) below |
-| **on the Synadia Agent Fabric** | ours, in the DE account; your tenant reaches it through an import | [`docs/FABRIC.md`](docs/FABRIC.md)  |
+| Where                           | The engine                                                        | Start here                                                                             |
+| ------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| **standalone**                  | yours, next to your NATS, with a licence                          | the [Quickstart](#quickstart) below                                                    |
+| **on the Synadia Agent Fabric** | ours, in the DE account; your tenant reaches it through an import | [`docs/FABRIC.md`](https://github.com/synadia-ai/durable-sdk/blob/main/docs/FABRIC.md) |
 
 - **The public API** is the library's: `defineWorkflow`, `createClient`, `createWorker`, `ctx.run/sleep/await/call/startCall/race/now/random/uuid/key/continueAsNew/onCancel`. The library's integration suites are this repo's acceptance suites, run against the engine.
 - **The only dependency** is `@nats-io/nats-core`: every call is one request to `{prefix}.api.v1.<op>` (`../durable-engine/docs/API.md`). There are no consumers, streams or buckets here, and no JetStream client.
-- **Documentation** is this README, [`docs/FABRIC.md`](docs/FABRIC.md) (on the fabric), the [examples](examples/), [`docs/findings.md`](docs/findings.md) (what building it found) and [`docs/ORIGIN.md`](docs/ORIGIN.md) (which file came from where), kept minimal on purpose. The engine's operator has the engine's `docs/QUICKSTART.md` and `docs/OPERATIONS.md`; the protocol stays in the frozen library (`../synadia-durable-execution/docs/PROTOCOL.md`).
+- **Documentation** is this README, [`docs/FABRIC.md`](https://github.com/synadia-ai/durable-sdk/blob/main/docs/FABRIC.md) (on the fabric), the [examples](https://github.com/synadia-ai/durable-sdk/tree/main/examples), [`docs/findings.md`](https://github.com/synadia-ai/durable-sdk/blob/main/docs/findings.md) (what building it found) and [`docs/ORIGIN.md`](https://github.com/synadia-ai/durable-sdk/blob/main/docs/ORIGIN.md) (which file came from where), kept minimal on purpose. The engine's operator has the engine's `docs/QUICKSTART.md` and `docs/OPERATIONS.md`; the protocol stays in the frozen library (`../synadia-durable-execution/docs/PROTOCOL.md`).
 
-**Status:** the TypeScript SDK, `0.7.0-alpha` (board row P2-19a), and the Python SDK in [`python/`](python/), `0.7.0a0` (P2-19b), with its own [README](python/README.md).
+**Status:** the TypeScript SDK, `0.1.0` (board row P2-19a), and the Python SDK in [`python/`](https://github.com/synadia-ai/durable-sdk/tree/main/python), `0.7.0a0` (P2-19b), with its own [README](https://github.com/synadia-ai/durable-sdk/blob/main/python/README.md).
 
 ## Quickstart
 
-A local NATS, the engine next to it with a test licence, and the `charge` example. You need `nats-server` ≥ 2.14 on `PATH`, Go ≥ 1.26 (to build the engine), Node ≥ 20 with `bun` or `npm`, and [`durable-engine`](https://github.com/synadia-ai/durable-engine) checked out beside this repo. From this repo's root:
+For those who have the engine's repo: it builds the engine from a checkout (without it, [Which engine](#which-engine) says how you get one). A local NATS, the engine next to it with a test licence, and the `charge` example. You need `nats-server` ≥ 2.14 on `PATH`, Go ≥ 1.26 (to build the engine), Node ≥ 20 with `bun` or `npm`, and [`durable-engine`](https://github.com/synadia-ai/durable-engine) checked out beside this repo. From this repo's root:
 
 ```sh
 nats-server -js &
@@ -32,7 +32,11 @@ NATS_URL=nats://127.0.0.1:4222 npm run example:charge
 
 The `git checkout` leaves the engine's checkout detached at the pin; `git checkout main` there afterwards. A standalone `serve` starts only with a valid licence (`--licence FILE` or `$DE_LICENCE`; the engine's `docs/QUICKSTART.md`, `docs/API.md` "The licence"); a test licence is accepted by a `-dev` build alone. The engine logs `licence … licensee=<you>`, provisions its seven resources at start and answers on `de.api.v1.*`. Check it with `nats req de.api.v1.info '{}'`. The example ends with `result: { status: 'shipped', orderId: 'ord-c-42', tracking: 'TRK-c-42' }` and `status: { state: 'completed', … }`. Stop the engine and the server with `kill %2 %1`.
 
-**Which engine:** this SDK needs the engine at or after its #13 (`16cb3da`, the pin), which announces `withdrawn-remembered` in `info.capabilities` (a worker withdrawn by `stop()` is remembered 5 s, so `stop()` sends one `cancelPoll`; the engine's F53, F57). `worker.start()` rejects with `UnsupportedEngineError` on an older one, naming the engine by its `engine` and `commit` as `info` gives them; a worker whose start found no engine checks at its first answered poll and stops there, logged at error (`health()` says stopped). The floor is read from `info.capabilities`, never from the version: every build so far says `0.2.0-dev` (`docs/findings.md` F45).
+### Which engine
+
+**How you get one:** on the Synadia Agent Fabric the tenant's engine is already there, the operator's, reached through your tenant's import ([`docs/FABRIC.md`](https://github.com/synadia-ai/durable-sdk/blob/main/docs/FABRIC.md)); you run none. Standalone the engine is not public: Synadia hands you its archive or image and a licence, and you run it next to your NATS (`serve --nats … --licence FILE`).
+
+**Which build:** this SDK needs the engine at or after its #13 (`16cb3da`, the pin), which announces `withdrawn-remembered` in `info.capabilities` (a worker withdrawn by `stop()` is remembered 5 s, so `stop()` sends one `cancelPoll`; the engine's F53, F57). `worker.start()` rejects with `UnsupportedEngineError` on an older one, naming the engine by its `engine` and `commit` as `info` gives them; a worker whose start found no engine checks at its first answered poll and stops there, logged at error (`health()` says stopped). The floor is read from `info.capabilities`, never from the version: every build so far says `0.2.0-dev` (`docs/findings.md` F45).
 
 The same workflow in a file of your own (`NATS_URL` as above):
 
@@ -64,19 +68,16 @@ try {
 
 ### Using it from your own project
 
-The package is unpublished (it publishes with the fabric SDK). Until then, build it and install it from the checkout:
-
 ```sh
-(cd ../durable-sdk && bun install && npm run build)          # dist/
-npm install ../durable-sdk @nats-io/transport-node           # in your project: a link to the checkout
-npx tsx order.ts                                             # the file above
+npm install @synadia-ai/durable @nats-io/transport-node
+npx tsx order.ts                                           # the file above
 ```
 
 `@nats-io/transport-node` is yours to pick; the SDK takes any `NatsConnection`.
 
 ## The examples
 
-Each runs with `npm run example:<name>` against the quickstart's `nats-server -js` and engine. [examples/README.md](examples/README.md) has each one's command line, and what changes on the fabric (the connection, never the workflow).
+Each runs with `npm run example:<name>` against the quickstart's `nats-server -js` and engine. [examples/README.md](https://github.com/synadia-ai/durable-sdk/blob/main/examples/README.md) has each one's command line, and what changes on the fabric (the connection, never the workflow).
 
 | Example        | Shows                                                                                                                |
 | -------------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -108,7 +109,7 @@ A refusal from the engine is a typed error, one per code of the engine's closed 
 | `tenant_limit`            | `LimitError` (`code`, `limit`: `bytes`, `runs`, `workflows`, `polls`, `rate`)              | **a refusal, never retried** (F40): a client's call rejects with it; `worker.start()` rejects with it when its first poll is refused (`rate` aside); a refused poll is logged at error naming the limit and polled again after 30 s (`rate`: 1 s) |
 | `licence_limit`           | `LimitError` (`limit`: `workflows`, `workers`, `runs`, `runsPerDay`, `tenants`, `expired`) | the same; inside an execution (a `child` at `runs`, an `append` at `bytes`) the item goes back (`done retry`), logged at error                                                                                                                    |
 
-A closed connection is `ConnectionClosedError`. An engine older than this SDK's floor (no `withdrawn-remembered` in `info.capabilities`) is `UnsupportedEngineError` (`code` `unsupported`, this SDK's, with `engine`, `commit`, `capabilities`, `missing`), never retried ([Which engine](#quickstart)). A code the SDK does not know (an engine newer than it) stays `EngineUnavailableError`, logged at warn. A worker whose polls fail (no engine, a slow link) says `poll failed; retrying` once a minute, with the count of failures since (F41).
+A closed connection is `ConnectionClosedError`. An engine older than this SDK's floor (no `withdrawn-remembered` in `info.capabilities`) is `UnsupportedEngineError` (`code` `unsupported`, this SDK's, with `engine`, `commit`, `capabilities`, `missing`), never retried ([Which engine](#which-engine)). A code the SDK does not know (an engine newer than it) stays `EngineUnavailableError`, logged at warn. A worker whose polls fail (no engine, a slow link) says `poll failed; retrying` once a minute, with the count of failures since (F41).
 
 **Sizes:** a value of any size the blob store holds; one larger than a request (`request_max`, about `max_payload` − 16 KiB) costs a `put` round trip per part of about 6 MiB on an 8 MiB server (`docs/findings.md` F1, F26). After `result()`, `status()` can read the previous state for a round trip of the worker's (F27).
 
@@ -116,16 +117,16 @@ A closed connection is `ConnectionClosedError`. An engine older than this SDK's 
 
 The user's half of running it; the engine's operator has the other (the engine's `docs/OPERATIONS.md`). The library's `docs/OPERATIONS.md` held both; what is the engine's now is named where it went.
 
-| Concern                            | What to do                                                                                                                   | Mechanism                                                                                                                                                                                                                         |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| the connection                     | connect with `withReconnectDefaults({ servers, … })`                                                                         | `@nats-io` gives up after 10 reconnect attempts (~20 s) and closes the connection for good; the helper sets the limit to −1 and never overrides an option you set                                                                 |
-| a connection closed for good       | restart the process; point a readiness probe at `worker.health()`                                                            | a waiting `result()` rejects with `ConnectionClosedError` (the run is unaffected); the worker reports `running: false`, `connectionClosed: true`                                                                                  |
-| no engine, or a slow link          | nothing                                                                                                                      | `worker.start()` warns `no engine answered info; polling until one does`, and the first answered poll checks the engine's floor (F45); a failing poll says `poll failed; retrying` once a minute with a count (F41)               |
-| a crash mid-step                   | make a step's effect idempotent, keyed by `ctx.key()`                                                                        | a finished step is journaled and never re-run; a step in flight runs again on the next worker (at-least-once)                                                                                                                     |
-| a step longer than the ack wait    | nothing, up to the engine's `--max-work` (5 min by default)                                                                  | the worker `extend`s the lease every third of the ack wait; past `--max-work` the item redelivers. Raising it is the engine operator's flag                                                                                       |
-| how soon a dead worker's run moves | the engine's `--ack-wait` (30 s by default)                                                                                  | the item redelivers once the lease lapses                                                                                                                                                                                         |
-| plaintext values in the journal    | `payloadCodec: aesGcmPayloadCodec(key)` on **every** worker and client of the prefix (32 bytes, from your secret store)      | it transforms the payload slot only; the engine and the console see a run's shape and never a value. Not retroactive, one-way in practice, and the key's rotation is yours (the library's `docs/OPERATIONS.md` "Payload privacy") |
-| who may start, signal or cancel    | the account's authorization (standalone), or your tenant's users ([on the fabric](docs/FABRIC.md#standalone-and-the-fabric)) | every call is a request on `{prefix}.api.v1.<op>`                                                                                                                                                                                 |
+| Concern                            | What to do                                                                                                                                                                       | Mechanism                                                                                                                                                                                                                         |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the connection                     | connect with `withReconnectDefaults({ servers, … })`                                                                                                                             | `@nats-io` gives up after 10 reconnect attempts (~20 s) and closes the connection for good; the helper sets the limit to −1 and never overrides an option you set                                                                 |
+| a connection closed for good       | restart the process; point a readiness probe at `worker.health()`                                                                                                                | a waiting `result()` rejects with `ConnectionClosedError` (the run is unaffected); the worker reports `running: false`, `connectionClosed: true`                                                                                  |
+| no engine, or a slow link          | nothing                                                                                                                                                                          | `worker.start()` warns `no engine answered info; polling until one does`, and the first answered poll checks the engine's floor (F45); a failing poll says `poll failed; retrying` once a minute with a count (F41)               |
+| a crash mid-step                   | make a step's effect idempotent, keyed by `ctx.key()`                                                                                                                            | a finished step is journaled and never re-run; a step in flight runs again on the next worker (at-least-once)                                                                                                                     |
+| a step longer than the ack wait    | nothing, up to the engine's `--max-work` (5 min by default)                                                                                                                      | the worker `extend`s the lease every third of the ack wait; past `--max-work` the item redelivers. Raising it is the engine operator's flag                                                                                       |
+| how soon a dead worker's run moves | the engine's `--ack-wait` (30 s by default)                                                                                                                                      | the item redelivers once the lease lapses                                                                                                                                                                                         |
+| plaintext values in the journal    | `payloadCodec: aesGcmPayloadCodec(key)` on **every** worker and client of the prefix (32 bytes, from your secret store)                                                          | it transforms the payload slot only; the engine and the console see a run's shape and never a value. Not retroactive, one-way in practice, and the key's rotation is yours (the library's `docs/OPERATIONS.md` "Payload privacy") |
+| who may start, signal or cancel    | the account's authorization (standalone), or your tenant's users ([on the fabric](https://github.com/synadia-ai/durable-sdk/blob/main/docs/FABRIC.md#standalone-and-the-fabric)) | every call is a request on `{prefix}.api.v1.<op>`                                                                                                                                                                                 |
 
 ## Testing
 
