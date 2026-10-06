@@ -2,7 +2,11 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.1.0] — unreleased
+## [0.1.1] — 2026-10-06
+
+- **The README is a user's:** the Quickstart runs the engine Synadia delivers (the archive's `durable-engine` binary or the container image, with your licence file) and a workflow in a project of your own installed from npm, with no engine checkout and no build; "Which engine", "Errors" and "Running a worker" say what a user needs and nothing more. How the SDK works with the engine moved to `docs/DEVELOPING.md`. No code changed.
+
+## [0.1.0] — 2026-10-06
 
 The first published version of the thin TypeScript SDK, continuing the frozen library's `0.7.0-alpha` line.
 

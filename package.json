@@ -1,6 +1,6 @@
 {
   "name": "@synadia-ai/durable",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The thin durable execution SDK: the replay core of @synadia-ai/durable in your process, durable-engine behind it.",
   "type": "module",
   "main": "./dist/index.cjs",
