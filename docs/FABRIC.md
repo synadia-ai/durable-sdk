@@ -6,11 +6,11 @@ Walked on 2026-10-05 at `engine.pin` `97a1778`, on a local three-account server 
 
 ## What you need
 
-| You need                                            | What it is                                                                                                                             | Who makes it                                            |
-| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| a connection to **your own tenant**                 | any user of the tenant's account, with its creds file                                                                                  | you, from the tenant's users                            |
-| the tenant's **service import** of the engine's API | `de.api.>`, imported from the DE account with `share: true`                                                                            | the console's onboarding (decision 61), once per tenant |
-| this SDK                                            | `@synadia-ai/durable` or `synadia-durable`, unpublished: [Using it from your own project](../README.md#using-it-from-your-own-project) |                                                         |
+| You need                                            | What it is                                                                                                                                                                   | Who makes it                                            |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| a connection to **your own tenant**                 | any user of the tenant's account, with its creds file                                                                                                                        | you, from the tenant's users                            |
+| the tenant's **service import** of the engine's API | `de.api.>`, imported from the DE account with `share: true`                                                                                                                  | the console's onboarding (decision 61), once per tenant |
+| this SDK                                            | `npm install @synadia-ai/durable` (TypeScript); `synadia-durable` (Python) unpublished: [Using it from your own project](../python/README.md#using-it-from-your-own-project) |                                                         |
 
 **Where these come from:** your tenant's console. Its onboarding made the import; its Account page mints a user and gives you the creds file and the fabric's NATS URL (the fabric's onboarding guide; on staging the URL is `tls://connect.ngs.synadia-test.com:4222`). Nothing in this SDK provisions any of it.
 
@@ -191,4 +191,4 @@ nats --server nats://127.0.0.1:14322 --user de --password de stream subjects DE_
 nats --server nats://127.0.0.1:14322 --user de --password de stream get DE_JOURNAL 1      # …,"by":"a-client"}
 ```
 
-The integration suites run the same way as a tenant (`DE_TENANT`; the root README's "As a tenant", `docs/findings.md` F38), and `limits` proves a `tenant_limit` refusal end to end (F40).
+The integration suites run the same way as a tenant (`DE_TENANT`; `docs/DEVELOPING.md`'s "As a tenant", `docs/findings.md` F38), and `limits` proves a `tenant_limit` refusal end to end (F40).

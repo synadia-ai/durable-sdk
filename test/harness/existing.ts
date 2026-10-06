@@ -470,7 +470,7 @@ export async function deletePrefixStreams(nc: NatsConnection, prefix: string): P
   return deleted;
 }
 
-/** The throughput the run's large values meet, measured once at the start (README "Against an
+/** The throughput the run's large values meet, measured once at the start (docs/DEVELOPING.md "Against an
  * existing server"): `bytes` of random data up through the engine's `put` and back down through its
  * `get`, on the tests' own link, so the engine's own hops to the store are in it. */
 export interface Throughput {
