@@ -3,7 +3,9 @@
 // fails this suite rather than reaching a caller as `unavailable` (the engine's F46; F40). The two
 // limit codes are `LimitError`, retried by no call: a client's call rejects with it, a worker's
 // start() rejects when its first poll is refused, a refused poll is logged at error and backs off,
-// and a worker's failing polls say so once a minute (F41).
+// and a worker's failing polls say so once a minute (F41). An engine below the floor
+// (`info.capabilities` without `withdrawn-remembered`) is refused at start(), or at the first
+// answered poll when start() found none, and stop() withdraws once (F45).
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -12,7 +14,13 @@ import { fileURLToPath } from "node:url";
 import { type NatsConnection, NoRespondersError } from "@nats-io/nats-core";
 import { describe, expect, it } from "vitest";
 import { createClient } from "../../src/engine/client.js";
-import { ENGINE_ERROR_CODES, EngineUnavailableError, LimitError } from "../../src/engine/errors.js";
+import {
+  ENGINE_ERROR_CODES,
+  EngineError,
+  EngineUnavailableError,
+  LimitError,
+  UnsupportedEngineError,
+} from "../../src/engine/errors.js";
 import { createTransport } from "../../src/engine/transport.js";
 import { createWorker, EveryLog, limitBackoffMs } from "../../src/engine/worker.js";
 import { defineWorkflow } from "../../src/core/workflow.js";
@@ -61,6 +69,9 @@ const refusal = (code: string, extra: object = {}): object => ({
 });
 
 const wf = defineWorkflow("lim", () => Promise.resolve("ok"));
+
+/** An engine at the floor's `info` (its #13 and later). */
+const INFO = { engine: "0.2.0-dev", commit: "16cb3da", capabilities: ["withdrawn-remembered"] };
 
 /** The codes of the engine's table at engine.pin, or undefined without an engine checkout. */
 function enginesCodes(): string[] | undefined {
@@ -146,7 +157,7 @@ describe("no client call retries a limit", () => {
 
 describe("a worker refused at a limit is loud, never quiet", () => {
   it("start() rejects when its first poll is refused, and runs nothing", async () => {
-    const { nc, ops } = fakeNc((op) => (op === "poll" ? refusal("licence_limit", { limit: "workflows" }) : {})); // prettier-ignore
+    const { nc, ops } = fakeNc((op) => (op === "poll" ? refusal("licence_limit", { limit: "workflows" }) : INFO)); // prettier-ignore
     const log = recorder();
     const w = createWorker({ nc, workflows: [wf], logger: log });
     await expect(w.start()).rejects.toMatchObject({ name: "LimitError", code: "licence_limit", limit: "workflows" }); // prettier-ignore
@@ -164,7 +175,7 @@ describe("a worker refused at a limit is loud, never quiet", () => {
 
   it("rate, which clears within a second, does not reject start()", async () => {
     let polls = 0;
-    const { nc } = fakeNc((op) => (op === "poll" && ++polls === 1 ? refusal("tenant_limit", { limit: "rate" }) : op === "poll" ? sleep(20).then(() => ({ none: true })) : {})); // prettier-ignore
+    const { nc } = fakeNc((op) => (op === "poll" && ++polls === 1 ? refusal("tenant_limit", { limit: "rate" }) : op === "poll" ? sleep(20).then(() => ({ none: true })) : INFO)); // prettier-ignore
     const w = createWorker({ nc, workflows: [wf], concurrency: 1 });
     await w.start();
     expect(w.health().running).toBe(true);
@@ -174,7 +185,7 @@ describe("a worker refused at a limit is loud, never quiet", () => {
   it("a poll refused later is logged at error once per back-off, naming the limit, and not polled again meanwhile", async () => {
     let polls = 0;
     const { nc, ops } = fakeNc((op) => {
-      if (op !== "poll") return {};
+      if (op !== "poll") return INFO;
       polls += 1;
       return polls === 1 ? { none: true } : refusal("licence_limit", { limit: "workers" });
     });
@@ -210,7 +221,7 @@ describe("a worker's failing polls say so once a minute, with a count (F41)", ()
   });
 
   it("every slot failing for a while is one warning", async () => {
-    const { nc, ops } = fakeNc((op) => (op === "poll" ? new NoRespondersError("de.api.v1.poll") : {})); // prettier-ignore
+    const { nc, ops } = fakeNc((op) => (op === "poll" ? new NoRespondersError("de.api.v1.poll") : INFO)); // prettier-ignore
     const log = recorder();
     const w = createWorker({ nc, workflows: [wf], concurrency: 4, logger: log });
     await w.start();
@@ -220,5 +231,89 @@ describe("a worker's failing polls say so once a minute, with a count (F41)", ()
     const warns = log.lines.filter((l) => l.msg.includes("poll failed; retrying"));
     expect(warns).toHaveLength(1);
     expect(warns[0]!.fields).toMatchObject({ failures: 1, everyMs: 60_000 });
+  });
+});
+
+describe("the engine's floor: info.capabilities, never the version (F45)", () => {
+  it("start() rejects an engine whose info has no capabilities, naming it by engine and commit", async () => {
+    const { nc, ops } = fakeNc((op) => (op === "info" ? { engine: "0.2.0-dev", commit: "5047d79" } : { none: true })); // prettier-ignore
+    const log = recorder();
+    const w = createWorker({ nc, workflows: [wf], prefix: "old", logger: log });
+    const e = (await w.start().catch((x: unknown) => x)) as UnsupportedEngineError;
+    expect(e).toBeInstanceOf(UnsupportedEngineError);
+    expect(e).toBeInstanceOf(EngineError);
+    expect(e).toMatchObject({ code: "unsupported", engine: "0.2.0-dev", commit: "5047d79", capabilities: undefined, missing: ["withdrawn-remembered"] }); // prettier-ignore
+    for (const s of ['"old"', "0.2.0-dev", "5047d79", "16cb3da", "withdrawn-remembered"]) expect(e.message).toContain(s); // prettier-ignore
+    expect(ops).toEqual(["info"]);
+    expect(w.health().running).toBe(false);
+    expect(log.lines.filter((l) => l.level === "error")).toHaveLength(1);
+  });
+
+  it("start() rejects an engine whose capabilities lack withdrawn-remembered", async () => {
+    const { nc } = fakeNc((op) => (op === "info" ? { engine: "0.2.0-dev", commit: "x", capabilities: ["something-else"] } : { none: true })); // prettier-ignore
+    await expect(createWorker({ nc, workflows: [wf] }).start()).rejects.toMatchObject({ name: "UnsupportedEngineError", missing: ["withdrawn-remembered"] }); // prettier-ignore
+  });
+
+  it("an engine that announces it starts", async () => {
+    const { nc, ops } = fakeNc((op) => (op === "info" ? INFO : sleep(20).then(() => ({ none: true })))); // prettier-ignore
+    const w = createWorker({ nc, workflows: [wf], concurrency: 1 });
+    await w.start();
+    expect(w.health().running).toBe(true);
+    await w.stop();
+    expect(ops.filter((o) => o === "info")).toEqual(["info"]); // checked once, at start()
+  });
+
+  it("start() found no engine: it still sends its waitMs 0 poll, and the first answered poll checks the floor and stops the worker", async () => {
+    let up = false;
+    const bodies: Array<Record<string, unknown>> = [];
+    const { nc, ops } = fakeNc((op, body) => {
+      if (op === "poll") bodies.push(body);
+      if (!up) return new NoRespondersError(`de.api.v1.${op}`);
+      if (op === "info") return { engine: "0.2.0-dev", commit: "5047d79" };
+      if (op === "poll") return body.cancelPoll === true ? { none: true } : sleep(10).then(() => ({ runId: "r1", lease: "L", workflow: "lim", version: 1, attempt: 1, journal: [], ackWaitMs: 30_000, workDeadlineMs: 0 })); // prettier-ignore
+      return {};
+    });
+    const log = recorder();
+    const w = createWorker({ nc, workflows: [wf], concurrency: 3, logger: log });
+    await w.start(); // no engine: not fatal
+    expect(ops.slice(0, 2)).toEqual(["info", "poll"]);
+    expect(bodies[0]).toMatchObject({ waitMs: 0 });
+    expect(w.health().running).toBe(true);
+    up = true;
+    for (let i = 0; i < 100 && w.health().running; i++) await sleep(20);
+    expect(w.health().running).toBe(false);
+    await sleep(50);
+    expect(ops.filter((o) => o === "info")).toHaveLength(2); // start()'s, and one for every slot
+    expect(ops.filter((o) => o === "done").length).toBeGreaterThan(0); // the items it was handed go back
+    const errors = log.lines.filter((l) => l.level === "error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.msg).toContain("5047d79");
+    expect(errors[0]!.msg).toContain("this worker stops");
+    await w.stop();
+  });
+
+  it("stop() withdraws once, and returns when the engine answers the polls", async () => {
+    const waiting: Array<() => void> = [];
+    let cancels = 0;
+    const { nc } = fakeNc((op, body) => {
+      if (op === "info") return INFO;
+      if (op !== "poll") return {};
+      if (body.cancelPoll === true) {
+        cancels += 1;
+        for (const r of waiting.splice(0)) r();
+        return { none: true };
+      }
+      if (body.waitMs === 0) return { none: true };
+      return new Promise((r) => waiting.push(() => r({ none: true })));
+    });
+    const w = createWorker({ nc, workflows: [wf], concurrency: 4 });
+    await w.start();
+    await sleep(20);
+    expect(waiting).toHaveLength(4);
+    const t0 = Date.now();
+    await w.stop();
+    expect(Date.now() - t0).toBeLessThan(500);
+    await sleep(300); // no repeat afterwards either
+    expect(cancels).toBe(1);
   });
 });

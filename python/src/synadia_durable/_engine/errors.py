@@ -6,17 +6,21 @@ A refusal is ``{"error": {"code", "message"}}`` from a closed set (``durable-eng
 where the library already has the class: ``fenced`` → :class:`FencedError`, ``too_large`` →
 :class:`PayloadTooLargeError`, ``blob_gone`` → :class:`BlobMissingError` (or
 :class:`BlobIntegrityError` when the bytes are not the digest's). ``tenant_limit`` and
-``licence_limit`` are refusals of their own (:class:`LimitError`), never retried.
+``licence_limit`` are refusals of their own (:class:`LimitError`), never retried. One is this
+SDK's alone, no engine's code: :class:`UnsupportedEngineError`, an engine older than the floor
+(:data:`ENGINE_FLOOR`), read from ``info.capabilities``.
 """
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from synadia_durable.errors import DurableError, FencedError
 
 __all__ = [
     "ENGINE_ERROR_CODES",
+    "ENGINE_FLOOR_CAPABILITIES",
+    "ENGINE_FLOOR_SINCE",
     "EngineError",
     "EngineErrorCode",
     "EngineFencedError",
@@ -25,6 +29,8 @@ __all__ = [
     "LeaseExpiredError",
     "LimitError",
     "RunNotFoundError",
+    "UnsupportedEngineError",
+    "check_engine_floor",
 ]
 
 #: The closed set of refusal codes of API v1.
@@ -63,11 +69,14 @@ ENGINE_ERROR_CODES: dict[str, str] = {
 class EngineError(DurableError):
     """A refusal (or a failure to reach the engine) on one op."""
 
-    def __init__(self, op: str, code: EngineErrorCode, message: str) -> None:
+    def __init__(
+        self, op: str, code: EngineErrorCode | Literal["unsupported"], message: str
+    ) -> None:
         super().__init__(message)
         self.op = op
-        #: The API's code, or ``unavailable`` for no responders and a request timeout.
-        self.code: EngineErrorCode = code
+        #: The API's code, or ``unavailable`` for no responders and a request timeout;
+        #: ``unsupported`` (this SDK's, never the engine's) for an engine older than the floor.
+        self.code: EngineErrorCode | Literal["unsupported"] = code
 
 
 class LeaseExpiredError(EngineError):
@@ -126,6 +135,55 @@ class LimitError(EngineError):
         super().__init__(op, code, message)
         #: Which limit, as the engine names it (``""`` if a refusal named none).
         self.limit = limit
+
+
+#: What this SDK needs of the engine, read from ``info.capabilities`` (``durable-engine``
+#: ``docs/API.md`` ``info``, its F57), never from ``info.engine``: the repo has no tag, so every
+#: build says ``0.2.0-dev``. ``withdrawn-remembered`` (its F53): a worker withdrawn by
+#: ``cancelPoll`` is remembered 5 s on every instance, so ``stop()`` sends one ``cancelPoll``.
+ENGINE_FLOOR_CAPABILITIES: tuple[str, ...] = ("withdrawn-remembered",)
+#: The engine that first announces them.
+ENGINE_FLOOR_SINCE = "the engine's #13 (16cb3da)"
+
+
+class UnsupportedEngineError(EngineError):
+    """The engine that answered ``info`` is older than this SDK's floor
+    (:data:`ENGINE_FLOOR_CAPABILITIES`): its ``capabilities`` are absent or lack one this SDK
+    needs. ``worker.start()`` raises it; a worker whose start found no engine checks at its first
+    answered poll, and stops, logged at error. ``engine`` and ``commit`` are as ``info`` gave them
+    (``""`` when absent). Not retried: the engine must be upgraded."""
+
+    def __init__(self, prefix: str, info: dict[str, Any]) -> None:
+        engine = info.get("engine")
+        commit = info.get("commit")
+        raw = info.get("capabilities")
+        caps = [c for c in raw if isinstance(c, str)] if isinstance(raw, list) else None
+        missing = [c for c in ENGINE_FLOOR_CAPABILITIES if c not in (caps or [])]
+        #: ``info.engine``, the build's version (``0.2.0-dev`` for every build so far).
+        self.engine = engine if isinstance(engine, str) else ""
+        #: ``info.commit``, the build's commit.
+        self.commit = commit if isinstance(commit, str) else ""
+        #: ``info.capabilities``, or ``None`` when the reply had none.
+        self.capabilities = caps
+        #: The capabilities this SDK needs that the engine lacks.
+        self.missing = missing
+        lacks = "announces no capabilities" if caps is None else f"lacks {', '.join(missing)}"
+        super().__init__(
+            "info",
+            "unsupported",
+            f'the engine on prefix "{prefix}" (engine {self.engine or "?"}, commit '
+            f"{self.commit or '?'}) {lacks}: this SDK needs the engine at or after "
+            f"{ENGINE_FLOOR_SINCE}, which announces {', '.join(ENGINE_FLOOR_CAPABILITIES)} in "
+            "info.capabilities",
+        )
+
+
+def check_engine_floor(prefix: str, info: dict[str, Any]) -> UnsupportedEngineError | None:
+    """The engine's ``info`` reply meets the floor (``None``), or the error that says why not."""
+    caps = info.get("capabilities")
+    if isinstance(caps, list) and all(c in caps for c in ENGINE_FLOOR_CAPABILITIES):
+        return None
+    return UnsupportedEngineError(prefix, info)
 
 
 class RunNotFoundError(EngineError, LookupError):

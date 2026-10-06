@@ -32,6 +32,8 @@ NATS_URL=nats://127.0.0.1:4222 npm run example:charge
 
 The `git checkout` leaves the engine's checkout detached at the pin; `git checkout main` there afterwards. A standalone `serve` starts only with a valid licence (`--licence FILE` or `$DE_LICENCE`; the engine's `docs/QUICKSTART.md`, `docs/API.md` "The licence"); a test licence is accepted by a `-dev` build alone. The engine logs `licence … licensee=<you>`, provisions its seven resources at start and answers on `de.api.v1.*`. Check it with `nats req de.api.v1.info '{}'`. The example ends with `result: { status: 'shipped', orderId: 'ord-c-42', tracking: 'TRK-c-42' }` and `status: { state: 'completed', … }`. Stop the engine and the server with `kill %2 %1`.
 
+**Which engine:** this SDK needs the engine at or after its #13 (`16cb3da`, the pin), which announces `withdrawn-remembered` in `info.capabilities` (a worker withdrawn by `stop()` is remembered 5 s, so `stop()` sends one `cancelPoll`; the engine's F53, F57). `worker.start()` rejects with `UnsupportedEngineError` on an older one, naming the engine by its `engine` and `commit` as `info` gives them; a worker whose start found no engine checks at its first answered poll and stops there, logged at error (`health()` says stopped). The floor is read from `info.capabilities`, never from the version: every build so far says `0.2.0-dev` (`docs/findings.md` F45).
+
 The same workflow in a file of your own (`NATS_URL` as above):
 
 ```ts
@@ -106,7 +108,7 @@ A refusal from the engine is a typed error, one per code of the engine's closed 
 | `tenant_limit`            | `LimitError` (`code`, `limit`: `bytes`, `runs`, `workflows`, `polls`, `rate`)              | **a refusal, never retried** (F40): a client's call rejects with it; `worker.start()` rejects with it when its first poll is refused (`rate` aside); a refused poll is logged at error naming the limit and polled again after 30 s (`rate`: 1 s) |
 | `licence_limit`           | `LimitError` (`limit`: `workflows`, `workers`, `runs`, `runsPerDay`, `tenants`, `expired`) | the same; inside an execution (a `child` at `runs`, an `append` at `bytes`) the item goes back (`done retry`), logged at error                                                                                                                    |
 
-A closed connection is `ConnectionClosedError`. A code the SDK does not know (an engine newer than it) stays `EngineUnavailableError`, logged at warn. A worker whose polls fail (no engine, a slow link) says `poll failed; retrying` once a minute, with the count of failures since (F41).
+A closed connection is `ConnectionClosedError`. An engine older than this SDK's floor (no `withdrawn-remembered` in `info.capabilities`) is `UnsupportedEngineError` (`code` `unsupported`, this SDK's, with `engine`, `commit`, `capabilities`, `missing`), never retried ([Which engine](#quickstart)). A code the SDK does not know (an engine newer than it) stays `EngineUnavailableError`, logged at warn. A worker whose polls fail (no engine, a slow link) says `poll failed; retrying` once a minute, with the count of failures since (F41).
 
 **Sizes:** a value of any size the blob store holds; one larger than a request (`request_max`, about `max_payload` − 16 KiB) costs a `put` round trip per part of about 6 MiB on an 8 MiB server (`docs/findings.md` F1, F26). After `result()`, `status()` can read the previous state for a round trip of the worker's (F27).
 
@@ -118,7 +120,7 @@ The user's half of running it; the engine's operator has the other (the engine's
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | the connection                     | connect with `withReconnectDefaults({ servers, … })`                                                                         | `@nats-io` gives up after 10 reconnect attempts (~20 s) and closes the connection for good; the helper sets the limit to −1 and never overrides an option you set                                                                 |
 | a connection closed for good       | restart the process; point a readiness probe at `worker.health()`                                                            | a waiting `result()` rejects with `ConnectionClosedError` (the run is unaffected); the worker reports `running: false`, `connectionClosed: true`                                                                                  |
-| no engine, or a slow link          | nothing                                                                                                                      | `worker.start()` warns `no engine answered info; polling until one does`; a failing poll says `poll failed; retrying` once a minute with a count (F41)                                                                            |
+| no engine, or a slow link          | nothing                                                                                                                      | `worker.start()` warns `no engine answered info; polling until one does`, and the first answered poll checks the engine's floor (F45); a failing poll says `poll failed; retrying` once a minute with a count (F41)               |
 | a crash mid-step                   | make a step's effect idempotent, keyed by `ctx.key()`                                                                        | a finished step is journaled and never re-run; a step in flight runs again on the next worker (at-least-once)                                                                                                                     |
 | a step longer than the ack wait    | nothing, up to the engine's `--max-work` (5 min by default)                                                                  | the worker `extend`s the lease every third of the ack wait; past `--max-work` the item redelivers. Raising it is the engine operator's flag                                                                                       |
 | how soon a dead worker's run moves | the engine's `--ack-wait` (30 s by default)                                                                                  | the item redelivers once the lease lapses                                                                                                                                                                                         |
@@ -161,9 +163,9 @@ Locally, against a server started by hand:
 ```sh
 nats-server -js -a 127.0.0.1 -p 14222 -sd /tmp/de-js &
 export DE_NATS_URL=nats://127.0.0.1:14222      # a generated prefix each run, deleted at the end
-npm run test:integration                        # 121 passed, 23 skipped, ~65 s
+npm run test:integration                        # 125 passed, 23 skipped, ~69 s
 DE_TEST_RTT_MS=150 npm run test:integration     # every round trip 150 ms, the engine's too
-(cd python && uv run pytest tests/integration -rs)   # 74 passed, 22 skipped, ~56 s
+(cd python && uv run pytest tests/integration -rs)   # 78 passed, 22 skipped, ~60 s
 ```
 
 **The dev NGS run** (the coordinator's, on Mario's word; nothing here runs it):

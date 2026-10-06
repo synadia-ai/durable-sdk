@@ -4,6 +4,8 @@
 // library already has the class: `fenced` → FencedError, `too_large` → PayloadTooLargeError,
 // `blob_gone` → BlobMissingError (or BlobIntegrityError when the bytes are not the digest's).
 // `tenant_limit` and `licence_limit` are refusals of their own (`LimitError`), never retried.
+// One is this SDK's alone, no engine's code: `UnsupportedEngineError`, an engine older than the
+// floor (`ENGINE_FLOOR`), read from `info.capabilities`.
 
 import { DurableError, FencedError } from "../errors.js";
 
@@ -42,9 +44,17 @@ export const ENGINE_ERROR_CODES: Readonly<Record<EngineErrorCode, string>> = {
 /** A refusal (or a failure to reach the engine) on one op. */
 export class EngineError extends DurableError {
   readonly op: string;
-  /** The API's code, or `"unavailable"` for no responders and a request timeout. */
-  readonly code: EngineErrorCode;
-  constructor(op: string, code: EngineErrorCode, message: string, options?: ErrorOptions) {
+  /**
+   * The API's code, or `"unavailable"` for no responders and a request timeout; `"unsupported"`
+   * (this SDK's, never the engine's) for an engine older than the floor.
+   */
+  readonly code: EngineErrorCode | "unsupported";
+  constructor(
+    op: string,
+    code: EngineErrorCode | "unsupported",
+    message: string,
+    options?: ErrorOptions,
+  ) {
     super(message, options);
     this.name = "EngineError";
     this.op = op;
@@ -119,6 +129,68 @@ export class LimitError extends EngineError {
     this.name = "LimitError";
     this.limit = limit;
   }
+}
+
+/**
+ * What this SDK needs of the engine, read from `info.capabilities` (durable-engine docs/API.md
+ * `info`, its F57), never from `info.engine`: the repo has no tag, so every build says `0.2.0-dev`.
+ * `withdrawn-remembered` (its F53): a worker withdrawn by `cancelPoll` is remembered 5 s on every
+ * instance, so stop() sends one `cancelPoll`. The engine announces it from its #13 (`16cb3da`).
+ */
+export const ENGINE_FLOOR = {
+  capabilities: ["withdrawn-remembered"],
+  since: "the engine's #13 (16cb3da)",
+} as const;
+
+/**
+ * The engine that answered `info` is older than this SDK's floor (`ENGINE_FLOOR`): its
+ * `capabilities` are absent or lack one this SDK needs. `worker.start()` rejects with it; a worker
+ * whose start found no engine checks at its first answered poll, and stops, logged at error.
+ * `engine` and `commit` are as `info` gave them (`""` when absent). Not retried: the engine must
+ * be upgraded.
+ */
+export class UnsupportedEngineError extends EngineError {
+  declare readonly code: "unsupported";
+  /** `info.engine`, the build's version (`0.2.0-dev` for every build so far, so not the floor). */
+  readonly engine: string;
+  /** `info.commit`, the build's commit. */
+  readonly commit: string;
+  /** `info.capabilities`, or `undefined` when the reply had none. */
+  readonly capabilities: readonly string[] | undefined;
+  /** The capabilities this SDK needs that the engine lacks. */
+  readonly missing: readonly string[];
+  constructor(
+    prefix: string,
+    info: { engine?: unknown; commit?: unknown; capabilities?: unknown },
+  ) {
+    const engine = typeof info.engine === "string" ? info.engine : "";
+    const commit = typeof info.commit === "string" ? info.commit : "";
+    const caps = Array.isArray(info.capabilities) ? info.capabilities.filter((c): c is string => typeof c === "string") : undefined; // prettier-ignore
+    const missing = ENGINE_FLOOR.capabilities.filter((c) => !(caps ?? []).includes(c));
+    super(
+      "info",
+      "unsupported",
+      `the engine on prefix "${prefix}" (engine ${engine || "?"}, commit ${commit || "?"}) ` +
+        `${caps === undefined ? "announces no capabilities" : `lacks ${missing.join(", ")}`}: ` +
+        `this SDK needs the engine at or after ${ENGINE_FLOOR.since}, which announces ` +
+        `${ENGINE_FLOOR.capabilities.join(", ")} in info.capabilities`,
+    );
+    this.name = "UnsupportedEngineError";
+    this.engine = engine;
+    this.commit = commit;
+    this.capabilities = caps;
+    this.missing = missing;
+  }
+}
+
+/** The engine's `info` reply meets the floor, or the error that says why not. */
+export function checkEngineFloor(
+  prefix: string,
+  info: { engine?: unknown; commit?: unknown; capabilities?: unknown },
+): UnsupportedEngineError | undefined {
+  const caps = Array.isArray(info.capabilities) ? (info.capabilities as unknown[]) : undefined;
+  if (caps !== undefined && ENGINE_FLOOR.capabilities.every((c) => caps.includes(c))) return undefined; // prettier-ignore
+  return new UnsupportedEngineError(prefix, info);
 }
 
 /** `signal` or `cancel` of a run that was never started (`not_found`). */

@@ -2,7 +2,7 @@
 
 How a workflow author runs this SDK on the Synadia Agent Fabric, in either language. The SDK is the same one as standalone, and so is the code; the connection differs, and the limits. This page is the user's side. The operator's side (the engine in the DE account, its tenants' limits, onboarding) is the engine's `docs/OPERATIONS.md` and the console's. The contract under both is the engine's `docs/API.md`, "Tenancy", at `engine.pin`.
 
-Walked on 2026-10-05 at `engine.pin` `97a1778`, on a local three-account server with the engine's fabric build in tenancy mode ([Walk it locally](#walk-it-locally)), not on the fabric itself.
+Walked on 2026-10-05 at `engine.pin` `97a1778`, on a local three-account server with the engine's fabric build in tenancy mode ([Walk it locally](#walk-it-locally)), not on the fabric itself. That pin is below this SDK's floor now: the SDK needs the engine at or after its #13 (`16cb3da`), which announces `withdrawn-remembered` in `info.capabilities`, and `worker.start()` rejects an older one with `UnsupportedEngineError` (the root README's "Which engine", `docs/findings.md` F45). The walk builds the engine at `engine.pin`, which is `16cb3da`; it was not walked again at it. On the fabric the engine is the operator's: an `UnsupportedEngineError` there means the fabric's engine is older than this SDK, theirs to upgrade.
 
 ## What you need
 
@@ -130,7 +130,7 @@ Every refusal on the fabric, with the engine's code (`docs/API.md` "Errors"; mir
 | `expired`                 | the item's lease lapsed                                                                                                          | `LeaseExpiredError`                                              | nothing: the item redelivers                                                                                                                                                                                   |
 | `unavailable`, `internal` | the engine or the broker, transient; also no responders (no import, or no engine) and a timeout                                  | `EngineUnavailableError`                                         | `result()` asks again and a worker polls again (`worker.start()` warns `no engine answered info; polling until one does`); a client's other call raises it. No responders that last mean the import is missing |
 
-`ConnectionClosedError` is the connection's, not the engine's.
+`ConnectionClosedError` is the connection's, not the engine's. `UnsupportedEngineError` is this SDK's, not a refusal: the engine that answered `info` is older than the SDK's floor (no `withdrawn-remembered` in `info.capabilities`); `worker.start()` rejects with it, naming the engine's `engine` and `commit`.
 
 ## Standalone and the fabric
 
