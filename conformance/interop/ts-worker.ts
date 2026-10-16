@@ -2,7 +2,8 @@
 //
 // The Python suite spawns this (`python/tests/integration/test_interop.py`), then drives it with a
 // PYTHON client: start, result, status, signal, cancel. Nothing is shared between the two sides
-// except the NATS streams and docs/PROTOCOL.md — which is the entire point.
+// except the NATS streams and the protocol (durable-engine docs/protocol/PROTOCOL.md) — which is
+// the entire point.
 //
 //   NATS_URL=… DE_PREFIX=… npx tsx conformance/interop/ts-worker.ts
 //

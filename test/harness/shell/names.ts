@@ -1,5 +1,5 @@
 // @synadia-ai/durable — resource + subject naming (prefix configurable, default "de").
-// See DESIGN.md §5. runIds and workflow names must be single NATS subject tokens (no "." " " "*" ">").
+// See durable-engine docs/protocol/PROTOCOL.md §4. runIds and workflow names must be single NATS subject tokens (no "." " " "*" ">").
 
 import { expect, inject } from "vitest";
 import { getCurrentTest } from "vitest/suite";

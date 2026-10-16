@@ -1,6 +1,6 @@
 # Findings
 
-What building the thin TypeScript SDK found against the engine's API (`../durable-engine/docs/API.md` at `d8c0d73`, which `engine.pin` names), the frozen library (`../synadia-durable-execution` at `7456c75`) and the brief (`synadia-agent-fabric/local/briefs/2026-10-03-durable-sdk-ts.md`). Where the brief and `API.md` differ, `API.md` won and the difference is here. Nothing in the engine or the library was changed; each gap in them is an **ask**.
+What building the thin TypeScript SDK found against the engine's API (`../durable-engine/docs/API.md` at `d8c0d73`, which `engine.pin` names), the frozen library (`synadia-durable-execution` at `7456c75`, retired on 2026-10-16; the protocol's text is now the engine's `docs/protocol/`) and the brief (`synadia-agent-fabric/local/briefs/2026-10-03-durable-sdk-ts.md`). Where the brief and `API.md` differ, `API.md` won and the difference is here. Nothing in the engine or the library was changed; each gap in them is an **ask**.
 
 **Date:** 2026-10-03 · **Engine:** `d8c0d73` (`0.2.0-dev`) · **Library:** `7456c75` · **Server:** nats-server 2.14.6 · **Node:** 25.9 · **Python:** 3.14.7, nats-py 2.15.0
 **Follow-up:** 2026-10-04 · **Engine:** `1efd2ec` (its PR #3, which answered F1, F2, F5 to F9 as its own F18 to F25) · the brief `2026-10-04-durable-sdk-followup.md`
