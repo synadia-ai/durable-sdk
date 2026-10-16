@@ -1,16 +1,18 @@
 # Origin
 
-Which file came from where. The library is `@synadia-ai/durable`, `../synadia-durable-execution` (GitHub `synadia-ai/durable-ts`), **frozen at `7456c75`**: copied from, never edited, never imported at run time. Its `docs/PROTOCOL.md` (normative), `docs/IMPLEMENTATION-GUIDE.md` and `docs/DESIGN.md` stay there and are cited by path. The engine is `../durable-engine` at the commit `engine.pin` names (`a7c5010` since the 2026-10-05 follow-up, the engine's PR #8, the licence; `d3e741d` after the fourth 2026-10-04 follow-up, the engine's PR #7, tenancy; `ee81460` after the third, `blob_gone`; `57ae3c9` after the second, the existing-server mode; `1efd2ec` after the first; `d8c0d73` before); its `docs/API.md` is the contract `src/engine/` is built from.
+Which file came from where, as history. **The library is retired** (2026-10-16; the engine's F77): `@synadia-ai/durable`, `synadia-durable-execution` (GitHub `synadia-ai/durable-ts`) at `7456c75`, copied from on 2026-10-03 and never imported at run time. Nothing depends on it now. The core is this repo's own and is no longer diffed against the library. The protocol's specification is the engine's, `durable-engine` `docs/protocol/`: `PROTOCOL.md` (normative, made true for the engine), with `IMPLEMENTATION-GUIDE.md` and `DESIGN.md` kept there as history with their deviations; the comments here cite it by section ("PROTOCOL §8"). The engine is `durable-engine` at the commit `engine.pin` names; its `docs/API.md` is the contract `src/engine/` is built from. At the copy the pin was `d8c0d73`, then `1efd2ec`, `57ae3c9`, `ee81460`, `d3e741d` (the four 2026-10-04 follow-ups) and `a7c5010` (2026-10-05, the licence); the later pins are in [`HISTORY.md`](HISTORY.md).
 
-**The pages' home** (P2-23): the user's pages are this repo's, [`README.md`](../README.md), [`python/README.md`](../python/README.md) (its twin), [`FABRIC.md`](FABRIC.md) (on the fabric) and the two examples READMEs; the user's half of the library's `docs/OPERATIONS.md` is the READMEs' "Running a worker", its operator's half the engine's `docs/OPERATIONS.md`.
+**The pages' home** (P2-23): the user's pages are this repo's, [`README.md`](../README.md), [`python/README.md`](../python/README.md) (its twin), [`FABRIC.md`](FABRIC.md) (on the fabric) and the two examples READMEs; the user's half of what the library's `docs/OPERATIONS.md` held went to the READMEs' "Running a worker", its operator's half to the engine's `docs/OPERATIONS.md`.
 
-Every path below is the same in this repo and in the library unless a second path is given, so a diff against `7456c75` stays readable:
+Every path below is the same in this repo and in the library unless a second path is given. On 2026-10-03 each row was checked with a diff like this one; it is history, and nothing in the repo runs it:
 
 ```sh
-git -C ../synadia-durable-execution show 7456c75:src/core/ctx.ts | diff - src/core/ctx.ts   # empty
+git -C ../synadia-durable-execution show 7456c75:src/core/ctx.ts | diff - src/core/ctx.ts   # empty on 2026-10-03
 ```
 
-## Copied unchanged from `7456c75` (the diff is empty)
+**Edited since the copy**, each where a finding or [`HISTORY.md`](HISTORY.md) says so: among the rows below `src/errors.ts`, `src/types.ts`, the five `examples/*.ts`, `conformance/interop/ts-worker.ts`, `test/harness/server-profiles.json`, Python's `errors.py` and `types.py`; and on 2026-10-16 every comment that cited the library's `docs/` (now the engine's `docs/protocol/` by section).
+
+## Copied unchanged from `7456c75` (as copied on 2026-10-03; edited since where a finding says so)
 
 | Area                            | Files                                                                                                                                                                                                  |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -65,13 +67,13 @@ git -C ../synadia-durable-execution show 7456c75:src/core/ctx.ts | diff - src/co
 
 ## Python (`python/`)
 
-The library's `python/` at `7456c75`, the same rule: copied unchanged where the diff is empty, every edit named. Paths are relative to `python/` in both repos:
+The library's `python/` at `7456c75`, the same rule at the copy: copied unchanged where the diff was empty, every edit named. Paths are relative to `python/` in both repos. The check, history as above:
 
 ```sh
-git -C ../synadia-durable-execution show 7456c75:python/src/synadia_durable/core/ctx.py | diff - python/src/synadia_durable/core/ctx.py   # empty
+git -C ../synadia-durable-execution show 7456c75:python/src/synadia_durable/core/ctx.py | diff - python/src/synadia_durable/core/ctx.py   # empty on 2026-10-03
 ```
 
-### Copied unchanged from `7456c75` (the diff is empty)
+### Copied unchanged from `7456c75` (as copied on 2026-10-03; edited since where a finding says so)
 
 | Area                              | Files                                                                                                                                                                                               |
 | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
