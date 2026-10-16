@@ -1,6 +1,6 @@
 [project]
 name = "synadia-durable"
-version = "0.7.0a0"
+version = "0.2.0"
 description = "The thin durable execution SDK: the replay core of synadia-durable in your process, durable-engine behind it."
 readme = "README.md"
 license = "Apache-2.0"

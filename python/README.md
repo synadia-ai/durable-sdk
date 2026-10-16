@@ -13,7 +13,7 @@ The thin durable execution SDK for Python, the twin of the TypeScript one at the
 - **The only dependency is `nats-py`**, used for core request/reply alone: every call is one request to `{prefix}.api.v1.<op>` (the engine's `API.md`, the document delivered with the engine). There are no consumers, streams or buckets here, and no JetStream client. `cryptography` is the optional `crypto` extra, for `aes_gcm_payload_codec`.
 - **Documentation** is this README, [`../docs/FABRIC.md`](../docs/FABRIC.md) (on the fabric), the [examples](examples/README.md), [`../docs/findings.md`](../docs/findings.md) (what building it found; F15 onwards are Python's) and [`../docs/ORIGIN.md`](../docs/ORIGIN.md) (which file came from where). The engine's operator has the documents delivered with the engine, `QUICKSTART.md` and `API.md`; the protocol's specification is the engine's.
 
-**Status:** `0.7.0a0` (the PEP 440 form of the TypeScript SDK's `0.7.0-alpha`; board row P2-19b). Unpublished.
+**Status:** `0.2.0`, the TypeScript SDK's twin. Unpublished.
 
 ## Quickstart
 
