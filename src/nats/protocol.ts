@@ -1,6 +1,6 @@
 // @synadia-ai/durable — putting a work item on the queue (DE_WORK). One durable queue drives
 // dispatch, resumes, timer/signal wakes, and child-done deliveries; the item's SHAPE is the core's
-// (`core/work-item.ts`, re-exported here). See DESIGN.md §5.
+// (`core/work-item.ts`, re-exported here). See PROTOCOL §6.
 //
 // Work items ride the same max_payload as everything else, so the two payload-bearing kinds
 // (signal data, child-done outcome) shrink to blob refs when oversized — the SAME content-addressed

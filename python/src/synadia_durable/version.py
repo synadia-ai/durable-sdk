@@ -5,7 +5,7 @@
 VERSION = "0.7.0a0"
 
 #: Wire-format version of the on-stream journal layout. Shared with every other SDK: this is the
-#: protocol's number, NOT this package's (see ``docs/PROTOCOL.md`` §1.2).
+#: protocol's number, NOT this package's (see PROTOCOL §1.2).
 WIRE_VERSION = 1
 
 #: Wire version stamped ONLY on entries whose payload slot is offloaded to the blob store (a

@@ -7,7 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`engine.pin` → `91ac210`** (durable-engine #18 to #21): one durable pair per prefix (`{prefix}~worker`, `{prefix}~timer`) in both modes, a work item with no journal dropped by age (`--no-journal-max-age`), eight resources per prefix (`KV_{P}_TENANTS` holds the set of workflow names the licence counts), signals journaled at send and deduplicated by `id`. The harness follows (`docs/findings.md` F46).
 - **`client.signal` takes an `id`:** TypeScript `client.signal(runId, name, data, { id })`, Python `await client.signal(run_id, name, data, id=...)`. Without one the SDK generates a UUID, so every signal carries an id. The id is checked with the token rule (`[A-Za-z0-9_-]+`) before any request. A caller that retries a signal after `EngineUnavailableError`, a timeout or its own restart passes the id of the first try, and the engine journals it once.
 - **`ctx.attempt` is documented as the delivery count** of the current frontier: it counts every delivery, an item handed back between engine instances too, so it is not a count of failures.
-- **`ProvisionQuotaError`'s text says eight resources** (three streams, four KV buckets, one object store; ~5.2 GiB at the 1 GiB default).
+- **`ProvisionQuotaError`'s text says eight resources** (three streams, four KV buckets, one object store; ~5.2 GiB at the 1 GiB default), and it and `ConsumerLimitError` no longer cite document headings you do not have. Neither is raised by this SDK.
+- **Docs:** the comments shipped in the package cite the durable execution protocol by section ("PROTOCOL §8") and name the engine's `API.md`, the document delivered with the engine, instead of file paths. No behaviour changed.
 
 ## [0.1.1] — 2026-10-06
 

@@ -1,5 +1,5 @@
 // @synadia-ai/durable — the on-queue work-item shape (DE_WORK). One durable queue drives dispatch,
-// resumes, timer/signal wakes, and child-done deliveries. See DESIGN.md §5, PROTOCOL §6.1.
+// resumes, timer/signal wakes, and child-done deliveries. See PROTOCOL §6.1.
 //
 // The SHAPE lives in the pure core because the core is what turns an item into journal entries
 // (`inbound.ts`); what puts one on a queue — and shrinks its payload to a blob ref on the way — is

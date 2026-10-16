@@ -1,7 +1,7 @@
 """synadia-durable — the engine's API subjects. Mirrors ``src/engine/names.ts``.
 
-The SDK knows the prefix and one subject pattern, ``{prefix}.api.v1.<op>`` (``durable-engine``
-``docs/API.md`` "Transport"); the streams, buckets and consumers behind it are the engine's, and
+The SDK knows the prefix and one subject pattern, ``{prefix}.api.v1.<op>`` (the engine's
+``API.md`` "Transport"); the streams, buckets and consumers behind it are the engine's, and
 their names appear nowhere in this package.
 """
 

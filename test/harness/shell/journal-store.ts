@@ -2,7 +2,7 @@
 // expect.lastSubjectSequence (CAS) + msgID (dedup); a 10071 rejection becomes a FencedError. load()
 // reads the run's per-run subject in order with a batched DIRECT GET — one request, no consumer —
 // verified complete against the leader's per-subject count. This is the shell over the
-// one-primitive core (DESIGN.md §0).
+// one-primitive core (durable-engine docs/protocol/PROTOCOL.md §2).
 
 import { type JetStreamClient, type JetStreamManager } from "@nats-io/jetstream";
 import {

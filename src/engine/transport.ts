@@ -1,5 +1,5 @@
 // @synadia-ai/durable — the one way this package speaks to the engine: a JSON request on
-// `{prefix}.api.v1.<op>` and its parsed reply (durable-engine docs/API.md "Transport", "Encoding",
+// `{prefix}.api.v1.<op>` and its parsed reply (the engine's API.md "Transport", "Encoding",
 // "Errors"). A refusal `{error: {code, message}}` becomes a typed error here and nowhere else.
 //
 // No broker error code exists in this package. A fence is a reply (`fenced`), whatever the journal's

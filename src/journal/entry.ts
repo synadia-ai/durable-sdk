@@ -1,5 +1,5 @@
 // @synadia-ai/durable — the on-stream journal wire layout (language-neutral, frozen at v:1).
-// See DESIGN.md §3. One ordered log per run on subject `de.journal.{runId}`.
+// See PROTOCOL §5. One ordered log per run on subject `de.journal.{runId}`.
 //
 // `seq` is the COMMAND position (monotonic per run, 0,1,2,…). A two-phase step shares one `seq`
 // across its `step-begin` and `step-end`. `signal` and `resolve` entries do not consume a command
@@ -176,7 +176,7 @@ export interface ContinuedEntry extends BaseEntry {
   /** The chain's logical (generation-0) runId. */
   base: string;
   /** The next generation's workflow version. Optional/additive: absent on pre-versioning entries, which
-   *  coalesce to the current generation's version (= same version) on re-drive. See DESIGN-versioning.md. */
+   *  coalesce to the current generation's version (= same version) on re-drive. See PROTOCOL §15. */
   version?: number;
 }
 
@@ -222,7 +222,7 @@ export function stamp<E extends Omit<JournalEntry, "v" | "ts">>(
   return { ...body, v: WIRE_VERSION, ts: nowMs };
 }
 
-/** Per-entry NATS msgID conventions (dedup) — see DESIGN.md §3 table. */
+/** Per-entry NATS msgID conventions (dedup) — see PROTOCOL Appendix B. */
 export const msgId = {
   start: (run: string): string => `${run}:start`,
   stepBegin: (run: string, seq: number): string => `${run}:${seq}:b`,

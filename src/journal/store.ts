@@ -5,7 +5,7 @@
 //   - **CAS dominates dedup** (verified vs real NATS — primitives.test.ts): a stale `expectLastSeq`
 //     fences even when the `msgID` is a duplicate, so a concurrent zombie cannot slip a write past the
 //     fence. A duplicate `msgID` resolves as a duplicate ONLY when the CAS still matches (true no-op).
-// This is the single primitive the whole design rests on (DESIGN.md §0).
+// This is the single primitive the whole design rests on (PROTOCOL §2).
 
 import { FencedError, PayloadTooLargeError, SerializationError } from "../errors.js";
 import { type BlobStore, encodePayload, offloadEntry, resolveEntry } from "./blobs.js";

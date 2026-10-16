@@ -1,6 +1,6 @@
 # Examples
 
-Runnable, self-contained workflows for `synadia-durable`, the library's examples on the thin SDK. Each one is a small `@workflow` plus a worker/client harness you can read top to bottom. The files are the library's at `7456c75`, unchanged; their header comments predate the engine, so the commands below are the ones to use. TypeScript's are in [`../../examples/`](../../examples/README.md).
+Runnable, self-contained workflows for `synadia-durable`, the library's examples on the thin SDK. Each one is a small `@workflow` plus a worker/client harness you can read top to bottom. The files were copied from the library at `7456c75` and edited since; their header comments predate the engine, so the commands below are the ones to use. TypeScript's are in [`../../examples/`](../../examples/README.md).
 
 | Example                              | Shows                                                                                                                                                                                     |
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -41,6 +41,6 @@ The workflows run unchanged on the fabric; the prefix is `de` on both. **The con
 
 ## The rest
 
-The rest of the library's examples (the AI, scale and journal-dump demos) stay in the library. The `durable_agent` example is left out: its front door registers it as a Synadia agent through the fabric's agent SDK (`synadia-ai-agent-service`), which this repo does not depend on (`docs/findings.md` F18); the fabric SDK's reference agents carry a durable agent of their own (its `docs/durable.md`).
+The rest of the library's examples (the AI, scale and journal-dump demos) stayed in the library, which is retired (history). The `durable_agent` example is left out: its front door registers it as a Synadia agent through the fabric's agent SDK (`synadia-ai-agent-service`), which this repo does not depend on (`docs/findings.md` F18); the fabric SDK's reference agents carry a durable agent of their own (its `docs/durable.md`).
 
-On the fabric every example takes `NATS_CREDS=<your creds file>` next to `NATS_URL` (since 2026-10-05; Python needs `nkeys`): the code does not change, the connection does ([`docs/FABRIC.md`](../docs/FABRIC.md)).
+On the fabric every example takes `NATS_CREDS=<your creds file>` next to `NATS_URL` (since 2026-10-05; Python needs `nkeys`): the code does not change, the connection does ([`docs/FABRIC.md`](../../docs/FABRIC.md)).

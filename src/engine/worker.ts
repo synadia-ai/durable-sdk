@@ -1,4 +1,4 @@
-// @synadia-ai/durable — the worker: "The worker's loop" of durable-engine docs/API.md, in
+// @synadia-ai/durable — the worker: "The worker's loop" of the engine's API.md, in
 // TypeScript. One `poll` per concurrency slot names every registered workflow with its versions;
 // for each item the journal is paged in with `load` while `more`, reversed through the payload codec,
 // and replayed by the library's `executeRun` with its three seams as requests under the item's

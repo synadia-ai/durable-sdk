@@ -10,7 +10,6 @@
 //   # then:  cd apps/ui && NATS_URL=nats://127.0.0.1:4222 bun run server   → :8088
 //
 // Seeds two runs: `trip-booked` (all three steps succeed) and `trip-rolledback` (no rooms → unwind).
-// See docs/walkthroughs/saga.md.
 
 import { readFileSync } from "node:fs";
 import { connect, credsAuthenticator } from "@nats-io/transport-node";

@@ -11,7 +11,7 @@
 //
 // In phase 2 you'll see the two completed steps are *replayed* (their functions never run again — no
 // log) while only `attach` executes. The final result stitches together values produced in two
-// different processes, each side effect having fired exactly once. See docs/walkthroughs/crash-replay.md.
+// different processes, each side effect having fired exactly once.
 
 import { readFileSync } from "node:fs";
 import { connect, credsAuthenticator } from "@nats-io/transport-node";

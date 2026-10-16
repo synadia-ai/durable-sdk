@@ -1,6 +1,6 @@
 // @synadia-ai/durable — the workflow registry: name → version → workflow. Pure (no NATS imports); a
 // worker builds one to dispatch each run to the EXACT (name, version) its journal recorded on `start`.
-// Version-pinned dispatch: a run always runs the code it began with. See docs/DESIGN-versioning.md.
+// Version-pinned dispatch: a run always runs the code it began with. See PROTOCOL §15.
 
 import { type AnyWorkflow } from "../types.js";
 

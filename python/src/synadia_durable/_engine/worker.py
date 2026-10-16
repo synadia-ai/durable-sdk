@@ -1,4 +1,4 @@
-"""synadia-durable — the worker: "The worker's loop" of ``durable-engine`` ``docs/API.md``, in
+"""synadia-durable — the worker: "The worker's loop" of the engine's ``API.md``, in
 Python. Mirrors ``src/engine/worker.ts``.
 
 One ``poll`` per concurrency slot names every registered workflow with its versions; for each item

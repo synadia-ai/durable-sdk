@@ -1,7 +1,8 @@
 // @synadia-ai/durable — the thin durable execution SDK: the library's replay core in your process,
 // durable-engine behind it (its request/reply API, `{prefix}.api.v1.<op>`).
 //
-// Public API (the library's at 7456c75, minus the shell's provision/deprovision/names):
+// Public API (copied from the retired library, edited since), minus the shell's
+// provision/deprovision/names:
 //   - {@link defineWorkflow}  — declare a durable workflow (a normal async function over ctx).
 //   - {@link createClient}    — start / observe / signal / cancel runs, through the engine.
 //   - {@link createWorker}    — register workflows and run the engine's poll/replay loop.
