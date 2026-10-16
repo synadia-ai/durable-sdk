@@ -177,8 +177,7 @@ class ConsumerLimitError(DurableError):
             f'"{durable}" — a worker binds one durable consumer per registered workflow name on '
             "this stream, so a prefix can carry at most as many workflow names as the account "
             "allows consumers per stream; nothing was started. Retire unused workflow names "
-            "(delete their durables) or spread names across prefixes or accounts (OPERATIONS.md, "
-            '"What the library leaves on the server")'
+            "(delete their durables) or spread names across prefixes or accounts"
         )
         self.stream = stream
         self.durable = durable
@@ -202,7 +201,7 @@ class ProvisionQuotaError(DurableError):
                 "— a prefix reserves its max_bytes on each of its eight resources (three streams, "
                 "four KV buckets, one object store; ~5.2 GiB at the 1 GiB default). Set "
                 "stream_max_bytes (a worker/client option) to what this prefix needs, or raise the "
-                'account\'s storage (OPERATIONS.md, "Sizing quick sheet"). Resources created before '
+                "account's storage. Resources created before "
                 "the refusal are kept (provisioning never deletes) and re-provisioning with the "
                 "corrected sizing reconciles them"
             )
@@ -210,7 +209,7 @@ class ProvisionQuotaError(DurableError):
             message = (
                 f"{resource}: the account's stream limit is reached — a prefix is eight streams "
                 "(three streams, four KV buckets, one object store). Retire a prefix (deprovision) "
-                'or raise the limit (OPERATIONS.md, "What the library leaves on the server"). '
+                "or raise the limit. "
                 "Resources created before the refusal are kept and re-provisioning completes them"
             )
         super().__init__(message)

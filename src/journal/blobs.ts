@@ -10,7 +10,7 @@
 // ref landed — silent corruption. Content-addressing makes that structurally impossible: divergent
 // racers write different objects and the journal CAS picks the surviving ref; identical racers
 // share one object. Corollary: a fenced writer MUST NOT delete its blob (the winner may reference
-// the very same object). Orphans are inert and are GC'd with the run (docs/OPERATIONS.md).
+// the very same object). Orphans are inert and are GC'd with the run (the engine's journal GC).
 
 import {
   BlobIntegrityError,

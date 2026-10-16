@@ -119,7 +119,7 @@ export class PayloadTooLargeError extends SerializationError {
  * disabled on this reader while the journal carries refs). This is an OPERATIONAL error, not a
  * workflow failure, and it is potentially recoverable (restore the bucket from backup, re-enable
  * offload) — so the worker PARKS the run (NAK-with-backoff, loud) instead of writing a terminal.
- * The runbook: restore the blob, or `client.cancel` the run. See docs/OPERATIONS.md.
+ * The runbook: the engine's operator restores the blob, or `client.cancel` the run.
  */
 export class BlobMissingError extends DurableError {
   readonly runId: string;
@@ -209,7 +209,7 @@ export class ConsumerLimitError extends DurableError {
         `worker binds one durable consumer per registered workflow name on this stream, so a prefix ` +
         `can carry at most as many workflow names as the account allows consumers per stream; ` +
         `nothing was started. Retire unused workflow names (delete their durables) or spread names ` +
-        `across prefixes or accounts (OPERATIONS.md, "What the library leaves on the server")`,
+        `across prefixes or accounts`,
       options,
     );
     this.name = "ConsumerLimitError";
@@ -236,12 +236,12 @@ export class ProvisionQuotaError extends DurableError {
         ? `${resource}: the account has insufficient storage to reserve max_bytes=${String(maxBytes)} — ` +
             `a prefix reserves its max_bytes on each of its eight resources (three streams, four KV ` +
             `buckets, one object store; ~5.2 GiB at the 1 GiB default). Set streamMaxBytes (a worker/` +
-            `client option) to what this prefix needs, or raise the account's storage ` +
-            `(OPERATIONS.md, "Sizing quick sheet"). Resources created before the refusal are kept ` +
+            `client option) to what this prefix needs, or raise the account's storage. ` +
+            `Resources created before the refusal are kept ` +
             `(provisioning never deletes) and re-provisioning with the corrected sizing reconciles them`
         : `${resource}: the account's stream limit is reached — a prefix is eight streams (three ` +
             `streams, four KV buckets, one object store). Retire a prefix (deprovision) or raise the ` +
-            `limit (OPERATIONS.md, "What the library leaves on the server"). Resources created before ` +
+            `limit. Resources created before ` +
             `the refusal are kept and re-provisioning completes them`,
       options,
     );
