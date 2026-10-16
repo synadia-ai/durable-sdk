@@ -14,8 +14,6 @@
 //   - {@link NotImplementedError} — reserved for a not-yet-wired feature (no thrower in v0.1).
 //   - {@link DurableTimeoutError} — a bounded wait elapsed (e.g. ctx.await timeoutMs).
 //   - {@link ConnectionClosedError} — the NATS connection closed for good under a wait (the run is unaffected).
-//   - {@link ConsumerLimitError} — the account's per-stream consumer cap refused a worker's durable (start fails whole).
-//   - {@link ProvisionQuotaError} — the account's storage or stream quota refused one of a prefix's eight resources.
 
 export class DurableError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -191,66 +189,6 @@ export class PayloadCodecError extends DurableError {
 }
 
 /** Reserved: a not-yet-wired feature was reached. No thrower in v0.1 — the `ctx` surface is complete. */
-/**
- * Raised from `worker.start()` when the server refused to create one of the worker's durable
- * consumers because the ACCOUNT's per-stream consumer limit is reached (JetStream code 10026,
- * "maximum consumers limit reached" — a managed service caps consumers per stream; 250 on NGS's
- * R1 tier). A worker binds one durable per registered workflow NAME on `DE_WORK` and one on
- * `DE_TIMERS`, so the number of workflow names a prefix can carry is exactly that limit. The
- * worker starts NOTHING in this case: it binds every consumer before it consumes from any, because
- * a worker running k−1 of its k names looks healthy from outside and is deaf to one workflow.
- */
-export class ConsumerLimitError extends DurableError {
-  readonly stream: string;
-  readonly durable: string;
-  constructor(stream: string, durable: string, options?: ErrorOptions) {
-    super(
-      `${stream}: the account's per-stream consumer limit was reached creating "${durable}" — a ` +
-        `worker binds one durable consumer per registered workflow name on this stream, so a prefix ` +
-        `can carry at most as many workflow names as the account allows consumers per stream; ` +
-        `nothing was started. Retire unused workflow names (delete their durables) or spread names ` +
-        `across prefixes or accounts`,
-      options,
-    );
-    this.name = "ConsumerLimitError";
-    this.stream = stream;
-    this.durable = durable;
-  }
-}
-
-/**
- * Raised from `provision()` — so from `worker.start()` and `client.start()` — when the ACCOUNT
- * refused to create one of a prefix's eight resources: its storage cannot reserve the resource's
- * `max_bytes` (JetStream code 10047; a prefix reserves max_bytes on each of its three streams,
- * four KV buckets and object store — ~5.2 GiB at the 1 GiB default), or its stream count is
- * reached (10027; a prefix is eight streams, and NGS's R1 tier allows 16). The server's own text
- * says neither what was being reserved nor what to change; this names the resource, the bytes and
- * the option.
- */
-export class ProvisionQuotaError extends DurableError {
-  readonly resource: string;
-  readonly code: number;
-  constructor(resource: string, code: number, maxBytes: number, options?: ErrorOptions) {
-    super(
-      code === 10047
-        ? `${resource}: the account has insufficient storage to reserve max_bytes=${String(maxBytes)} — ` +
-            `a prefix reserves its max_bytes on each of its eight resources (three streams, four KV ` +
-            `buckets, one object store; ~5.2 GiB at the 1 GiB default). Set streamMaxBytes (a worker/` +
-            `client option) to what this prefix needs, or raise the account's storage. ` +
-            `Resources created before the refusal are kept ` +
-            `(provisioning never deletes) and re-provisioning with the corrected sizing reconciles them`
-        : `${resource}: the account's stream limit is reached — a prefix is eight streams (three ` +
-            `streams, four KV buckets, one object store). Retire a prefix (deprovision) or raise the ` +
-            `limit. Resources created before ` +
-            `the refusal are kept and re-provisioning completes them`,
-      options,
-    );
-    this.name = "ProvisionQuotaError";
-    this.resource = resource;
-    this.code = code;
-  }
-}
-
 export class NotImplementedError extends DurableError {
   constructor(feature: string) {
     super(`${feature} is not implemented yet`);

@@ -74,8 +74,6 @@ export {
   ConnectionClosedError,
   DurableTimeoutError,
   CancelledError,
-  ConsumerLimitError,
-  ProvisionQuotaError,
 } from "./errors.js";
 export {
   EngineError,
