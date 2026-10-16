@@ -33,14 +33,6 @@
   },
   "license": "Apache-2.0",
   "author": "Synadia Communications",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/synadia-ai/durable-sdk.git"
-  },
-  "homepage": "https://github.com/synadia-ai/durable-sdk#readme",
-  "bugs": {
-    "url": "https://github.com/synadia-ai/durable-sdk/issues"
-  },
   "publishConfig": {
     "access": "public"
   },

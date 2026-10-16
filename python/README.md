@@ -1,6 +1,6 @@
 # `synadia-durable` (Python)
 
-The thin durable execution SDK for Python, the twin of the TypeScript one at the root of this repo. It keeps the replay core of the retired library `synadia-durable`, copied from it and edited since: workflows as ordinary functions over a `ctx`, every side-effecting or nondeterministic step journaled and replayed after a crash, the determinism guards, the out-of-band halts. Behind the core's seams sits a request/reply client for [`durable-engine`](https://github.com/synadia-ai/durable-engine), which owns the streams. A customer's workflow functions run in the customer's process; nothing runs without the engine.
+The thin durable execution SDK for Python, the twin of the TypeScript one at the root of this repo. It keeps the replay core of the retired library `synadia-durable`, copied from it and edited since: workflows as ordinary functions over a `ctx`, every side-effecting or nondeterministic step journaled and replayed after a crash, the determinism guards, the out-of-band halts. Behind the core's seams sits a request/reply client for the engine, `durable-engine`, which owns the streams. A customer's workflow functions run in the customer's process; nothing runs without the engine.
 
 **It runs in two places, with the same code:**
 
@@ -17,7 +17,7 @@ The thin durable execution SDK for Python, the twin of the TypeScript one at the
 
 ## Quickstart
 
-A local NATS, the engine next to it with a test licence, and the `charge` example. You need `nats-server` ≥ 2.14 on `PATH`, Go ≥ 1.26 (to build the engine), Python ≥ 3.11 with [`uv`](https://docs.astral.sh/uv/), and [`durable-engine`](https://github.com/synadia-ai/durable-engine) checked out beside this repo. From this repo's root:
+A local NATS, the engine next to it with a test licence, and the `charge` example. You need `nats-server` ≥ 2.14 on `PATH`, Go ≥ 1.26 (to build the engine), Python ≥ 3.11 with [`uv`](https://docs.astral.sh/uv/), and the engine's repository, `durable-engine`, checked out beside this one. From this repo's root:
 
 ```sh
 nats-server -js &

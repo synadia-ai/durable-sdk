@@ -24,4 +24,4 @@ The first published version of the thin TypeScript SDK, continuing the frozen li
 - **Typed engine errors:** one class per refusal code of the engine's API (`InvalidRequestError`, `LeaseExpiredError`, `RunNotFoundError`, `EngineUnavailableError`, `LimitError` for `tenant_limit` and `licence_limit`, `EngineFencedError`), all `EngineError`s.
 - **`aesGcmPayloadCodec`:** payloads encrypted before they leave the process; the engine sees a run's shape and never a value.
 
-The development before this version: [`docs/HISTORY.md`](https://github.com/synadia-ai/durable-sdk/blob/main/docs/HISTORY.md).
+The development before this version: the repository's `docs/HISTORY.md`.

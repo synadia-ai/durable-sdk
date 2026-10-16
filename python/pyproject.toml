@@ -23,9 +23,6 @@ classifiers = [
 # PayloadCodec for encryption at rest — needs one, so it is an opt-in extra.
 crypto = ["cryptography>=42"]
 
-[project.urls]
-Homepage = "https://github.com/synadia-ai/durable-sdk"
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
