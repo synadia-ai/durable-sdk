@@ -134,7 +134,9 @@ def run_engine(
                 blobs += more_blobs
                 if more_blobs == 0:
                     break
-            existing.say(f"the run's end: {blobs} blobs of its {len(existing.RUN_IDS)} runs deleted")
+            existing.say(
+                f"the run's end: {blobs} blobs of its {len(existing.RUN_IDS)} runs deleted"
+            )
             asyncio.run(_report(ex, run, metrics))
         finally:
             if ex.delete_at_end:

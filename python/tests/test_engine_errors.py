@@ -204,7 +204,9 @@ async def test_the_signal_id_is_sent_as_given_or_as_a_generated_uuid() -> None:
     await c.signal("r1", "go", 1)
     await c.signal("r1", "go", 1)
     assert bodies[0]["id"] == "mine-1"
-    assert re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", bodies[1]["id"])
+    assert re.fullmatch(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", bodies[1]["id"]
+    )
     assert bodies[2]["id"] != bodies[1]["id"]
 
 
@@ -212,7 +214,7 @@ async def test_the_signal_id_is_sent_as_given_or_as_a_generated_uuid() -> None:
 async def test_an_invalid_signal_id_is_refused_before_any_request(bad: str) -> None:
     nc = FakeNc(lambda *_: {"ok": True})
     c = create_client(nc)  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="^signal id must be ASCII alphanumeric"):
+    with pytest.raises(ValueError, match=r"^signal id must be ASCII alphanumeric"):
         await c.signal("r1", "go", 1, id=bad)
     assert nc.ops == []
 

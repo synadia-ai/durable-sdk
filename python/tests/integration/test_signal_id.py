@@ -118,7 +118,7 @@ async def test_an_invalid_id_is_refused_before_any_request(nc: Any, prefix: str,
     sub = await nc.subscribe(f"{prefix}.api.v1.signal", cb=seen)
     await nc.flush()
     try:
-        with pytest.raises(ValueError, match="^signal id must be ASCII alphanumeric"):
+        with pytest.raises(ValueError, match=r"^signal id must be ASCII alphanumeric"):
             await client.signal("some-run", "go", 1, id=bad)
         await nc.flush()
         assert sent == []
