@@ -179,7 +179,8 @@ async def test_a_work_item_for_a_run_with_no_journal_retries_then_drops(
         # nak'd with its backoff (250 ms doubling) while the item is younger than
         # --no-journal-max-age, 3 s here, then termed (by age since its F75, F77, not on the fifth
         # delivery). The item never reaches the worker: the outcomes are the engine's ack counts
-        # (retries listed before the drop) and the log line is the engine's (F10; the TS twin).
+        # (built from counters in label order, so the order of the outcomes is not observable) and
+        # the log line is the engine's (F10; the TS twin).
         labels = ["retry-no-journal", "dropped-no-journal"]
 
         async def dropped() -> bool:
@@ -187,8 +188,9 @@ async def test_a_work_item_for_a_run_with_no_journal_retries_then_drops(
 
         await _until(dropped, 30.0, "the ghost item to be dropped")
         outcomes = await _engine_outcomes(nc, prefix, labels)
-        # The backoff gives about four retries within the 3 s (250 + 500 + 1000 ms, then 2 s):
-        # expect 4, assert at least one.
+        # At least one retry and the drop: dropping on the first delivery is the bug this guards.
+        # The order is not observable through counts. The backoff gives about four retries within
+        # the 3 s (250 + 500 + 1000 ms, then 2 s): expect 4, assert at least one.
         assert outcomes.count("retry-no-journal") >= 1, outcomes
         assert outcomes[-1] == "dropped-no-journal"
         assert await _engine_saw(prefix, "no journal for this run after retries")
