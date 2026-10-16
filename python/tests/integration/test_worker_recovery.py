@@ -158,7 +158,15 @@ async def test_a_work_item_for_a_run_with_no_journal_retries_then_drops(
 
     wf = define_workflow("pyrec_ghost", body)
     sink, logs = _Sink(), _Logs()
-    worker = create_worker(nc, [wf], prefix=prefix, metrics=sink, logger=logs, **SIZED)
+    worker = create_worker(
+        nc,
+        [wf],
+        prefix=prefix,
+        metrics=sink,
+        logger=logs,
+        no_journal_max_age_ms=3_000,
+        **SIZED,
+    )
     await worker.start()
     try:
         item: WorkItem = {"runId": "pyrec-ghost-nobody", "kind": "resume"}
@@ -167,10 +175,11 @@ async def test_a_work_item_for_a_run_with_no_journal_retries_then_drops(
             encode_json(item),
             headers={"Nats-Msg-Id": "pyghost-1"},
         )
-        # durable-sdk: re-expressed through the engine. The no-journal policy (nak with backoff,
-        # term on the fifth delivery) is the engine's, and the item never reaches the worker: the
-        # outcomes are the engine's ack counts (retries listed before the drop, which the engine
-        # guarantees by counting deliveries) and the log line is the engine's (F10; the TS twin).
+        # durable-sdk: re-expressed through the engine. The no-journal policy is the engine's:
+        # nak'd with its backoff (250 ms doubling) while the item is younger than
+        # --no-journal-max-age, 3 s here, then termed (by age since its F75, F77, not on the fifth
+        # delivery). The item never reaches the worker: the outcomes are the engine's ack counts
+        # (retries listed before the drop) and the log line is the engine's (F10; the TS twin).
         labels = ["retry-no-journal", "dropped-no-journal"]
 
         async def dropped() -> bool:
@@ -178,7 +187,9 @@ async def test_a_work_item_for_a_run_with_no_journal_retries_then_drops(
 
         await _until(dropped, 30.0, "the ghost item to be dropped")
         outcomes = await _engine_outcomes(nc, prefix, labels)
-        assert outcomes.count("retry-no-journal") >= 4, outcomes
+        # The backoff gives about four retries within the 3 s (250 + 500 + 1000 ms, then 2 s):
+        # expect 4, assert at least one.
+        assert outcomes.count("retry-no-journal") >= 1, outcomes
         assert outcomes[-1] == "dropped-no-journal"
         assert await _engine_saw(prefix, "no journal for this run after retries")
         # durable-sdk: assertion added, as the TS twin's — the item never reached the worker.

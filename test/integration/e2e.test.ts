@@ -549,8 +549,10 @@ describe.skipIf(!natsUrl)("end-to-end (worker + client, real nats-server)", () =
 
   it("a work item for a run with NO journal retries briefly, then is dropped — worker stays healthy", async () => {
     // A no-start read is either a transient read hiccup (must NOT be dropped — a timer wake is
-    // one-shot) or a genuinely gone journal (must not redeliver forever). Policy: NAK-with-backoff,
-    // term after bounded redeliveries. The forged item must drain and never wedge the consumer.
+    // one-shot) or a genuinely gone journal (must not redeliver forever). Policy: NAK-with-backoff
+    // while the item is younger than the engine's --no-journal-max-age, then term (by age, not by
+    // a count: the engine's F75, F77; 3 s here). The forged item must drain and never wedge the
+    // consumer.
     const n = names("e2eghost");
     const ghost = defineWorkflow("ghost_wf", (ctx, input: { x: number }) =>
       ctx.run("s1", () => input.x + 1),
@@ -560,6 +562,7 @@ describe.skipIf(!natsUrl)("end-to-end (worker + client, real nats-server)", () =
       workflows: [ghost],
       prefix: "e2eghost",
       streamMaxBytes: 64 * 1024 * 1024,
+      noJournalMaxAgeMs: 3_000,
     });
     await worker.start();
     try {
@@ -569,12 +572,13 @@ describe.skipIf(!natsUrl)("end-to-end (worker + client, real nats-server)", () =
         n.workSubject("ghost_wf"),
         new TextEncoder().encode(JSON.stringify({ runId: "ghost-no-journal", kind: "start" })),
       );
-      // Drains after the bounded NAK-with-backoff cycle (250+500+1000+2000ms, then term).
-      // durable-sdk: the engine binds the durable when the worker's first poll reaches it (pull on
-      // demand, engine 57ae3c9), which can be after start() returns: absent is not drained yet.
+      // Drains once the item is 3 s old (nak'd with the 250 ms doubling backoff until then, then
+      // termed). durable-sdk: the engine binds the prefix's pair, `{prefix}~worker` on the work
+      // stream for every workflow name (its F77), when the worker's first poll reaches it, which
+      // can be after start() returns: absent is not drained yet.
       await waitUntil(async () => {
         const ci = await jsm.consumers
-          .info(n.workStream, "de-worker-ghost_wf")
+          .info(n.workStream, `${n.prefix}~worker`)
           .catch((e: unknown) => {
             if (e instanceof Error && /consumer not found/i.test(e.message)) return undefined;
             throw e;
