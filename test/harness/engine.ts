@@ -166,6 +166,7 @@ function flagsOf(o: EngineFlags): EngineFlags {
   if (o.maintenanceIntervalMs !== undefined) f.maintenanceIntervalMs = o.maintenanceIntervalMs;
   if (o.reconcileGraceMs !== undefined) f.reconcileGraceMs = o.reconcileGraceMs;
   if (o.offloadThreshold !== undefined) f.offloadThreshold = o.offloadThreshold;
+  if (o.noJournalMaxAgeMs !== undefined) f.noJournalMaxAgeMs = o.noJournalMaxAgeMs;
   return f;
 }
 

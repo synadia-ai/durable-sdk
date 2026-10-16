@@ -16,6 +16,11 @@ export interface EngineFlags {
   reconcileGraceMs?: number;
   /** `serve --offload-threshold` (the engine's F22): a test that wants the engine to offload small values. */
   offloadThreshold?: number;
+  /**
+   * `serve --no-journal-max-age` (the engine's F75, F77): a work item whose run has no journal is
+   * nak'd with the backoff until it is this old, then dropped; the ghost tests set a short one.
+   */
+  noJournalMaxAgeMs?: number;
 }
 
 export function flagArgs(f: EngineFlags): string[] {
@@ -28,6 +33,7 @@ export function flagArgs(f: EngineFlags): string[] {
   if (f.maintenanceIntervalMs !== undefined) out.push("--maintenance-interval", `${f.maintenanceIntervalMs}ms`); // prettier-ignore
   if (f.reconcileGraceMs !== undefined) out.push("--reconcile-grace", `${f.reconcileGraceMs}ms`);
   if (f.offloadThreshold !== undefined) out.push("--offload-threshold", String(f.offloadThreshold));
+  if (f.noJournalMaxAgeMs !== undefined) out.push("--no-journal-max-age", `${f.noJournalMaxAgeMs}ms`); // prettier-ignore
   return out;
 }
 

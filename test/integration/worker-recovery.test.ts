@@ -41,7 +41,7 @@ const MIB = 1024 * 1024;
 
 // Two prefixes: one shared by the well-behaved tests, one for the test that DELETES a stream out
 // from under a running worker. Each is sized small on purpose — a prefix reserves its max_bytes
-// across six streams against the harness's budget (see test/harness/nats-server.ts).
+// on each of its eight resources against the harness's budget (see test/harness/nats-server.ts).
 const REC = "wrec";
 const BROKEN = "wrecx";
 // Sized to hold the oversized failure message twice over (the child's entry and the parent's copy).

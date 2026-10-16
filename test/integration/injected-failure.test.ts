@@ -4,7 +4,7 @@
 // moves on; the body keeps running), then a passing test while those workers would keep writing:
 // the dev NGS run's shape (a failed test's worker polled on for minutes). The run is expected to
 // report the two as failed and to leave nothing behind on the prefix: no message in any of its
-// seven, no durable.
+// eight, no durable but the engine's pair (it goes with the streams at the run's end).
 // The Python twin is python/tests/integration/test_injected_failure.py.
 
 import { describe, inject, it } from "vitest";

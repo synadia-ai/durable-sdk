@@ -12,7 +12,7 @@ After EVERY integration test, two things:
 1. The leftover check, attributed: any consumer without a durable name fails the test that made
    it, by name. The end-of-run check still exists; this one says WHO.
 2. The owner of the test's streams: every stream on the server is deleted. The server runs under an
-   account profile whose stream cap is 16 — a prefix is seven — so a test's provisioning must be
+   account profile whose stream cap is 16 — a prefix is eight, so two — so a test's provisioning must be
    gone before the next test starts. Deleting everything rather than the prefixes a test declared
    means an undeclared prefix cannot accumulate either.
 
@@ -49,7 +49,11 @@ def engine_bin() -> Iterator[str]:
         pytest.skip(f"durable-engine unavailable ({e})")
     print(f"\nengine: {binary} (engine.pin {engine.engine_pin()})", file=sys.stderr)
     given = os.environ.get("DE_LICENCE", "")
-    licence = given or engine.mint_test_licence(binary)
+    # No limit on workflow names (``-workflows 0``): since the engine's F77 standalone keeps the
+    # set of names in ``{P}_TENANTS`` (7 days' retention) and the licence counts it at every poll;
+    # the set persists across tests, so the tool's default of 100 would refuse polls mid-run (the
+    # existing-server run puts every test's names on one prefix). The engine's cap of 1000 stays.
+    licence = given or engine.mint_test_licence(binary, workflows=0)
     print(
         f"licence: DE_LICENCE {licence}"
         if given
@@ -72,11 +76,11 @@ def run_engine(
     nats_url: str,
 ) -> Iterator[None]:
     """The mode for an existing server (existing.py): the ONE engine of the run, started here with
-    ``--nats <url> [--creds <file>] --prefix <prefix>`` (it provisions the seven, or fails loud with
+    ``--nats <url> [--creds <file>] --prefix <prefix>`` (it provisions the eight, or fails loud with
     the engine's own message: an account tier too small is the operator's to fix), stopped at the
     end; under ``DE_ENGINE_URL`` an engine already serving the prefix, never started or stopped.
     At the end: the prefix's leftovers and the engine's /metrics, printed and kept in
-    ``.de-run/<prefix>/``, and ``DE_CLEANUP=delete`` deletes the seven of the prefix alone."""
+    ``.de-run/<prefix>/``, and ``DE_CLEANUP=delete`` deletes the eight of the prefix alone."""
     ex = existing.EXISTING
     if ex is None:
         yield
@@ -116,24 +120,21 @@ def run_engine(
         try:
             asyncio.run(run.stop())
             engine.configure_run(None)
-            # The engine stopped, nothing re-creates a durable or writes a blob: what a test that
-            # failed or timed out left after its own cleanup goes now (docs/findings.md F33).
-            blobs, durables = asyncio.run(_sweep(ex))
-            # Under DE_ENGINE_URL the engine still runs: a poll a late-stopped worker had in
-            # flight can bind a durable after the sweep. Again after a pause, until a round finds
-            # nothing (docs/findings.md F38).
+            # The engine stopped, nothing writes a blob: what a test that failed or timed out left
+            # after its own cleanup goes now (docs/findings.md F33). The pair stays: it is the
+            # engine's, and goes with the prefix's streams (existing.purge_since).
+            blobs = asyncio.run(_sweep(ex))
+            # Under DE_ENGINE_URL the engine still runs: a late-stopped worker's step can put a
+            # blob after the sweep. Again after a pause, until a round finds nothing (F38).
             for _ in range(3 if run.external else 0):
                 import time
 
                 time.sleep(existing.scaled(2.0))
-                more_blobs, more_durables = asyncio.run(_sweep(ex))
-                blobs, durables = blobs + more_blobs, durables + more_durables
-                if more_blobs + more_durables == 0:
+                more_blobs = asyncio.run(_sweep(ex))
+                blobs += more_blobs
+                if more_blobs == 0:
                     break
-            existing.say(
-                f"the run's end: {blobs} blobs of its {len(existing.RUN_IDS)} runs and "
-                f"{durables} durables deleted"
-            )
+            existing.say(f"the run's end: {blobs} blobs of its {len(existing.RUN_IDS)} runs deleted")
             asyncio.run(_report(ex, run, metrics))
         finally:
             if ex.delete_at_end:
@@ -185,10 +186,10 @@ async def _snapshot(ex: existing.ExistingServer) -> existing.Snapshot:
         await nc.close()
 
 
-async def _sweep(ex: existing.ExistingServer) -> tuple[int, int]:
+async def _sweep(ex: existing.ExistingServer) -> int:
     nc = await existing.connect_admin()
     try:
-        return await existing.sweep_run(nc, ex.prefix, existing.AT_START)
+        return await existing.sweep_run(nc, ex.prefix)
     finally:
         await nc.close()
 

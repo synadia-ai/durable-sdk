@@ -15,7 +15,7 @@
 //   - {@link DurableTimeoutError} — a bounded wait elapsed (e.g. ctx.await timeoutMs).
 //   - {@link ConnectionClosedError} — the NATS connection closed for good under a wait (the run is unaffected).
 //   - {@link ConsumerLimitError} — the account's per-stream consumer cap refused a worker's durable (start fails whole).
-//   - {@link ProvisionQuotaError} — the account's storage or stream quota refused one of a prefix's seven resources.
+//   - {@link ProvisionQuotaError} — the account's storage or stream quota refused one of a prefix's eight resources.
 
 export class DurableError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -220,10 +220,10 @@ export class ConsumerLimitError extends DurableError {
 
 /**
  * Raised from `provision()` — so from `worker.start()` and `client.start()` — when the ACCOUNT
- * refused to create one of a prefix's seven resources: its storage cannot reserve the resource's
+ * refused to create one of a prefix's eight resources: its storage cannot reserve the resource's
  * `max_bytes` (JetStream code 10047; a prefix reserves max_bytes on each of its three streams,
- * three KV buckets and object store — ~5.1 GiB at the 1 GiB default), or its stream count is
- * reached (10027; a prefix is seven streams, and NGS's R1 tier allows 16). The server's own text
+ * four KV buckets and object store — ~5.2 GiB at the 1 GiB default), or its stream count is
+ * reached (10027; a prefix is eight streams, and NGS's R1 tier allows 16). The server's own text
  * says neither what was being reserved nor what to change; this names the resource, the bytes and
  * the option.
  */
@@ -234,13 +234,13 @@ export class ProvisionQuotaError extends DurableError {
     super(
       code === 10047
         ? `${resource}: the account has insufficient storage to reserve max_bytes=${String(maxBytes)} — ` +
-            `a prefix reserves its max_bytes on each of its seven resources (three streams, three KV ` +
-            `buckets, one object store; ~5.1 GiB at the 1 GiB default). Set streamMaxBytes (a worker/` +
+            `a prefix reserves its max_bytes on each of its eight resources (three streams, four KV ` +
+            `buckets, one object store; ~5.2 GiB at the 1 GiB default). Set streamMaxBytes (a worker/` +
             `client option) to what this prefix needs, or raise the account's storage ` +
             `(OPERATIONS.md, "Sizing quick sheet"). Resources created before the refusal are kept ` +
             `(provisioning never deletes) and re-provisioning with the corrected sizing reconciles them`
-        : `${resource}: the account's stream limit is reached — a prefix is seven streams (three ` +
-            `streams, three KV buckets, one object store). Retire a prefix (deprovision) or raise the ` +
+        : `${resource}: the account's stream limit is reached — a prefix is eight streams (three ` +
+            `streams, four KV buckets, one object store). Retire a prefix (deprovision) or raise the ` +
             `limit (OPERATIONS.md, "What the library leaves on the server"). Resources created before ` +
             `the refusal are kept and re-provisioning completes them`,
       options,

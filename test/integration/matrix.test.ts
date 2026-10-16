@@ -7,7 +7,7 @@
 // feature only in isolation is how a bug survives — the 0.6.1 lost-event bug and this session's
 // continue-as-new adopt bug were both invisible until two workers touched the same run.
 //
-// One prefix, sized small: a prefix reserves its max_bytes across six streams (test/harness).
+// One prefix, sized small: a prefix reserves its max_bytes on each of its eight resources (test/harness).
 
 import { jetstream, jetstreamManager } from "@nats-io/jetstream";
 import { type NatsConnection } from "@nats-io/transport-node";

@@ -9,7 +9,7 @@
 import { createServer, type Server } from "node:http";
 import { EngineProcess, type EngineFlags, type EngineExtras } from "./engine-process.js";
 
-/** Flags as the run's engine takes them: `streamMaxBytes` dropped (the prefix's seven are sized
+/** Flags as the run's engine takes them: `streamMaxBytes` dropped (the prefix's eight are sized
  * once, by the operator or the first provisioning, never resized by a test against a server the
  * run does not own), the rest in a stable order. */
 export function runFlags(f: EngineFlags): EngineFlags {
@@ -21,6 +21,7 @@ export function runFlags(f: EngineFlags): EngineFlags {
   if (f.maintenanceIntervalMs !== undefined) out.maintenanceIntervalMs = f.maintenanceIntervalMs;
   if (f.reconcileGraceMs !== undefined) out.reconcileGraceMs = f.reconcileGraceMs;
   if (f.offloadThreshold !== undefined) out.offloadThreshold = f.offloadThreshold;
+  if (f.noJournalMaxAgeMs !== undefined) out.noJournalMaxAgeMs = f.noJournalMaxAgeMs;
   return out;
 }
 

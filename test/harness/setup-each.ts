@@ -4,7 +4,7 @@
 // 1. The leftover check, attributed: any consumer without a durable name fails the test that made
 //    it, by name (leftovers.ts). The end-of-run check still exists; this one says WHO.
 // 2. The owner of the test's streams: every stream on the server is deleted. The server runs under
-//    an account profile (nats-server.ts) whose stream cap is 16 — a prefix is seven — so a test's
+//    an account profile (nats-server.ts) whose stream cap is 16 — a prefix is eight, so two prefixes — so a test's
 //    provisioning must be gone before the next test starts. Deleting everything rather than the
 //    prefixes a test declared means an undeclared prefix cannot accumulate either. Tests that
 //    reuse a prefix name across cases simply re-provision (provisioning is idempotent, and a

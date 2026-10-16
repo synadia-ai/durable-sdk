@@ -194,6 +194,9 @@ class EngineFlags:
     maintenance_interval_ms: int | None = None
     reconcile_grace_ms: int | None = None
     offload_threshold: int | None = None
+    #: ``serve --no-journal-max-age`` (the engine's F75, F77): a work item whose run has no journal
+    #: is nak'd with the backoff until it is this old, then dropped; the ghost tests set a short one.
+    no_journal_max_age_ms: int | None = None
 
     def args(self) -> list[str]:
         out: list[str] = []
@@ -213,6 +216,8 @@ class EngineFlags:
             out += ["--reconcile-grace", f"{self.reconcile_grace_ms}ms"]
         if self.offload_threshold is not None:
             out += ["--offload-threshold", str(self.offload_threshold)]
+        if self.no_journal_max_age_ms is not None:
+            out += ["--no-journal-max-age", f"{self.no_journal_max_age_ms}ms"]
         return out
 
 
@@ -224,7 +229,16 @@ _FLAG_NAMES = (
     "lease_ttl_ms",
     "maintenance_interval_ms",
     "reconcile_grace_ms",
+    "no_journal_max_age_ms",
 )
+
+#: Engine flags the SDK's ``create_worker`` / ``create_client`` do not take (keyword-only, so an
+#: unknown one raises ``TypeError``): the harness reads them and drops them before the SDK's call.
+_HARNESS_ONLY = ("no_journal_max_age_ms",)
+
+
+def _sdk_opts(opts: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in opts.items() if k not in _HARNESS_ONLY}
 
 
 def flags_of(opts: dict[str, Any]) -> EngineFlags:
@@ -506,7 +520,7 @@ async def provision(_nc: Any, names: Any, opts: Any = None) -> None:
 
 
 def run_flags(flags: EngineFlags) -> EngineFlags:
-    """Flags as the run's engine takes them: ``stream_max_bytes`` dropped (the prefix's seven are
+    """Flags as the run's engine takes them: ``stream_max_bytes`` dropped (the prefix's eight are
     sized once, by the operator or the first provisioning, never resized by a test against a server
     the run does not own)."""
     return dataclasses.replace(flags, stream_max_bytes=None)
@@ -703,7 +717,9 @@ def create_worker(nc: Any, workflows: list[Workflow[Any, Any]], **opts: Any) -> 
     if "prefix" in opts or existing.in_mode():
         opts = {**opts, "prefix": prefix}
     names = tuple(sorted({wf.name for wf in workflows}))
-    return EngineWorker(sdk_create_worker(nc, workflows, **opts), prefix, flags_of(opts), names)
+    return EngineWorker(
+        sdk_create_worker(nc, workflows, **_sdk_opts(opts)), prefix, flags_of(opts), names
+    )
 
 
 async def end_test_workers(nc: Any) -> None:
@@ -791,7 +807,7 @@ def create_client(nc: Any, **opts: Any) -> EngineClient:
     prefix = existing.map_prefix(opts.get("prefix", "de"))
     if "prefix" in opts or existing.in_mode():
         opts = {**opts, "prefix": prefix}
-    return EngineClient(sdk_create_client(nc, **opts), prefix, flags_of(opts))
+    return EngineClient(sdk_create_client(nc, **_sdk_opts(opts)), prefix, flags_of(opts))
 
 
 __all__ = [
