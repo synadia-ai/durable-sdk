@@ -1,6 +1,6 @@
 [project]
 name = "synadia-durable"
-version = "0.7.0a0"
+version = "0.2.0"
 description = "The thin durable execution SDK: the replay core of synadia-durable in your process, durable-engine behind it."
 readme = "README.md"
 license = "Apache-2.0"
@@ -22,9 +22,6 @@ classifiers = [
 # The core library has no crypto dependency. `aes_gcm_payload_codec` — the ready-made
 # PayloadCodec for encryption at rest — needs one, so it is an opt-in extra.
 crypto = ["cryptography>=42"]
-
-[project.urls]
-Homepage = "https://github.com/synadia-ai/durable-sdk"
 
 [build-system]
 requires = ["hatchling"]

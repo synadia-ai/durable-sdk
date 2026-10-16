@@ -1,7 +1,7 @@
 // @synadia-ai/durable — package version metadata.
 
 /** Must match `package.json`'s version — pinned by a unit test, because it silently drifted twice. */
-export const VERSION = "0.1.1";
+export const VERSION = "0.2.0";
 
 /** Wire-format version of the on-stream journal layout (see PROTOCOL §1.2). */
 export const WIRE_VERSION = 1;

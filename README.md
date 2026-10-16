@@ -4,7 +4,7 @@ Durable execution for TypeScript on NATS. Workflows are ordinary async functions
 
 ## Quickstart
 
-A workflow on your laptop: NATS with JetStream, the engine next to it, and a workflow in a project of your own. You need `nats-server` ≥ 2.14 on `PATH` and Node ≥ 20, and from Synadia **the engine for your platform** (the archive `durable-engine_<version>_<os>_<arch>.tar.gz`, or the container image) and **a licence file**. On the Synadia Agent Fabric you need neither: the engine is already there ([`docs/FABRIC.md`](https://github.com/synadia-ai/durable-sdk/blob/main/docs/FABRIC.md)).
+A workflow on your laptop: NATS with JetStream, the engine next to it, and a workflow in a project of your own. You need `nats-server` ≥ 2.14 on `PATH` and Node ≥ 20, and from Synadia **the engine for your platform** (the archive `durable-engine_<version>_<os>_<arch>.tar.gz`, or the container image) and **a licence file**. On the Synadia Agent Fabric you need neither: the engine is already there (the repository's `docs/FABRIC.md`).
 
 ```sh
 nats-server -js &                                                    # 1. NATS with JetStream, on 127.0.0.1:4222
@@ -54,11 +54,11 @@ It prints `{ status: 'paid', orderId: 'ord-c-42' }`. The engine logs `licence �
 
 ## Which engine
 
-**How you get one:** on the Synadia Agent Fabric the tenant's engine is already there, the operator's, reached through your tenant's import ([`docs/FABRIC.md`](https://github.com/synadia-ai/durable-sdk/blob/main/docs/FABRIC.md)); you run none. Standalone, Synadia hands you the engine's archive or image and a licence, and you run it next to your NATS, as in the Quickstart.
+**How you get one:** on the Synadia Agent Fabric the tenant's engine is already there, the operator's, reached through your tenant's import (the repository's `docs/FABRIC.md`); you run none. Standalone, Synadia hands you the engine's archive or image and a licence, and you run it next to your NATS, as in the Quickstart.
 
 ## The examples
 
-Each runs with `npm run example:<name>` from a clone of this repository, against the Quickstart's `nats-server -js` and engine. [examples/README.md](https://github.com/synadia-ai/durable-sdk/blob/main/examples/README.md) has each one's command line, and what changes on the fabric (the connection, never the workflow).
+Each runs with `npm run example:<name>` from a clone of this repository, against the Quickstart's `nats-server -js` and engine. The repository's `examples/README.md` has each one's command line, and what changes on the fabric (the connection, never the workflow).
 
 | Example        | Shows                                                                                                                |
 | -------------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -92,4 +92,4 @@ A refusal from the engine is a typed error, exported from the package:
 
 ## Contributing
 
-How the SDK works with the engine, the test suites and the interop worker: [`docs/DEVELOPING.md`](https://github.com/synadia-ai/durable-sdk/blob/main/docs/DEVELOPING.md).
+How the SDK works with the engine, the test suites and the interop worker: the repository's `docs/DEVELOPING.md`.

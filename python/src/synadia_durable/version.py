@@ -2,7 +2,7 @@
 
 #: Must match ``pyproject.toml``'s version — pinned by a unit test, because the TypeScript twin
 #: silently drifted twice.
-VERSION = "0.7.0a0"
+VERSION = "0.2.0"
 
 #: Wire-format version of the on-stream journal layout. Shared with every other SDK: this is the
 #: protocol's number, NOT this package's (see PROTOCOL §1.2).

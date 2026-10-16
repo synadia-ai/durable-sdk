@@ -1,6 +1,6 @@
 # `synadia-durable` (Python)
 
-The thin durable execution SDK for Python, the twin of the TypeScript one at the root of this repo. It keeps the replay core of the retired library `synadia-durable`, copied from it and edited since: workflows as ordinary functions over a `ctx`, every side-effecting or nondeterministic step journaled and replayed after a crash, the determinism guards, the out-of-band halts. Behind the core's seams sits a request/reply client for [`durable-engine`](https://github.com/synadia-ai/durable-engine), which owns the streams. A customer's workflow functions run in the customer's process; nothing runs without the engine.
+The thin durable execution SDK for Python, the twin of the TypeScript one at the root of this repo. It keeps the replay core of the retired library `synadia-durable`, copied from it and edited since: workflows as ordinary functions over a `ctx`, every side-effecting or nondeterministic step journaled and replayed after a crash, the determinism guards, the out-of-band halts. Behind the core's seams sits a request/reply client for the engine, `durable-engine`, which owns the streams. A customer's workflow functions run in the customer's process; nothing runs without the engine.
 
 **It runs in two places, with the same code:**
 
@@ -13,11 +13,11 @@ The thin durable execution SDK for Python, the twin of the TypeScript one at the
 - **The only dependency is `nats-py`**, used for core request/reply alone: every call is one request to `{prefix}.api.v1.<op>` (the engine's `API.md`, the document delivered with the engine). There are no consumers, streams or buckets here, and no JetStream client. `cryptography` is the optional `crypto` extra, for `aes_gcm_payload_codec`.
 - **Documentation** is this README, [`../docs/FABRIC.md`](../docs/FABRIC.md) (on the fabric), the [examples](examples/README.md), [`../docs/findings.md`](../docs/findings.md) (what building it found; F15 onwards are Python's) and [`../docs/ORIGIN.md`](../docs/ORIGIN.md) (which file came from where). The engine's operator has the documents delivered with the engine, `QUICKSTART.md` and `API.md`; the protocol's specification is the engine's.
 
-**Status:** `0.7.0a0` (the PEP 440 form of the TypeScript SDK's `0.7.0-alpha`; board row P2-19b). Unpublished.
+**Status:** `0.2.0`, the TypeScript SDK's twin. Unpublished.
 
 ## Quickstart
 
-A local NATS, the engine next to it with a test licence, and the `charge` example. You need `nats-server` ≥ 2.14 on `PATH`, Go ≥ 1.26 (to build the engine), Python ≥ 3.11 with [`uv`](https://docs.astral.sh/uv/), and [`durable-engine`](https://github.com/synadia-ai/durable-engine) checked out beside this repo. From this repo's root:
+A local NATS, the engine next to it with a test licence, and the `charge` example. You need `nats-server` ≥ 2.14 on `PATH`, Go ≥ 1.26 (to build the engine), Python ≥ 3.11 with [`uv`](https://docs.astral.sh/uv/), and the engine's repository, `durable-engine`, checked out beside this one. From this repo's root:
 
 ```sh
 nats-server -js &

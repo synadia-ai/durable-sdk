@@ -22,7 +22,6 @@ __all__ = [
     "BlobMissingError",
     "CancelledError",
     "ConnectionClosedError",
-    "ConsumerLimitError",
     "DurableError",
     "DurableTimeoutError",
     "FencedError",
@@ -30,7 +29,6 @@ __all__ = [
     "NotImplementedFeatureError",
     "PayloadCodecError",
     "PayloadTooLargeError",
-    "ProvisionQuotaError",
     "SerializationError",
     "StepNestingError",
     "WorkflowFailure",
@@ -157,64 +155,6 @@ class BlobIntegrityError(DurableError):
         self.run_id = run_id
         self.seq = seq
         self.blob_name = blob_name
-
-
-class ConsumerLimitError(DurableError):
-    """``worker.start()`` could not bind one of its durable consumers: the ACCOUNT's per-stream
-    consumer limit is reached (JetStream code 10026, "maximum consumers limit reached" — a managed
-    service caps consumers per stream; 250 on NGS's R1 tier).
-
-    A worker binds one durable per registered workflow NAME on ``DE_WORK`` and one on
-    ``DE_TIMERS``, so the number of workflow names a prefix can carry is exactly that limit. The
-    worker starts NOTHING in this case: it binds every consumer before it consumes from any,
-    because a worker running k−1 of its k names looks healthy from outside and is deaf to one
-    workflow. Mirrors ``ConsumerLimitError`` in ``src/errors.ts``.
-    """
-
-    def __init__(self, stream: str, durable: str) -> None:
-        super().__init__(
-            f"{stream}: the account's per-stream consumer limit was reached creating "
-            f'"{durable}" — a worker binds one durable consumer per registered workflow name on '
-            "this stream, so a prefix can carry at most as many workflow names as the account "
-            "allows consumers per stream; nothing was started. Retire unused workflow names "
-            "(delete their durables) or spread names across prefixes or accounts"
-        )
-        self.stream = stream
-        self.durable = durable
-
-
-class ProvisionQuotaError(DurableError):
-    """``provision()`` — so ``worker.start()`` and ``client.start()`` — was refused by the ACCOUNT
-    while creating one of a prefix's eight resources: its storage cannot reserve the resource's
-    ``max_bytes`` (JetStream code 10047; a prefix reserves max_bytes on each of its three streams,
-    four KV buckets and object store — ~5.2 GiB at the 1 GiB default), or its stream count is
-    reached (10027; a prefix is eight streams, and NGS's R1 tier allows 16).
-
-    The server's own text says neither what was being reserved nor what to change; this names the
-    resource, the bytes and the option. Mirrors ``ProvisionQuotaError`` in ``src/errors.ts``.
-    """
-
-    def __init__(self, resource: str, code: int, max_bytes: int) -> None:
-        if code == 10047:
-            message = (
-                f"{resource}: the account has insufficient storage to reserve max_bytes={max_bytes} "
-                "— a prefix reserves its max_bytes on each of its eight resources (three streams, "
-                "four KV buckets, one object store; ~5.2 GiB at the 1 GiB default). Set "
-                "stream_max_bytes (a worker/client option) to what this prefix needs, or raise the "
-                "account's storage. Resources created before "
-                "the refusal are kept (provisioning never deletes) and re-provisioning with the "
-                "corrected sizing reconciles them"
-            )
-        else:
-            message = (
-                f"{resource}: the account's stream limit is reached — a prefix is eight streams "
-                "(three streams, four KV buckets, one object store). Retire a prefix (deprovision) "
-                "or raise the limit. "
-                "Resources created before the refusal are kept and re-provisioning completes them"
-            )
-        super().__init__(message)
-        self.resource = resource
-        self.code = code
 
 
 class NotImplementedFeatureError(DurableError):
