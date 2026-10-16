@@ -1,5 +1,5 @@
 // @synadia-ai/durable — public types (pure; no runtime imports).
-// See DESIGN.md §2 for the rationale behind each surface.
+// The original design's §2 gives the rationale behind each surface.
 
 /** A workflow is a normal async function over a deterministic context. */
 export type WorkflowFn<I, O> = (ctx: Ctx, input: I) => Promise<O>;
@@ -77,7 +77,7 @@ export interface Ctx {
   random(): Promise<number>;
   uuid(): Promise<string>;
 
-  /** Durable timer — suspend until `ms` have elapsed (native JetStream scheduling). See DESIGN.md §7. */
+  /** Durable timer — suspend until `ms` have elapsed (native JetStream scheduling). See PROTOCOL §7. */
   sleep(name: string, ms: number): Promise<void>;
 
   /**
@@ -117,7 +117,7 @@ export interface Ctx {
    *
    * `opts.version` migrates the chain onto a different registered version of this workflow — the
    * in-flight migration lever for versioned deploys. It defaults to the current generation's version,
-   * so a looping continue-as-new never silently jumps versions on redeploy. See DESIGN-versioning.md.
+   * so a looping continue-as-new never silently jumps versions on redeploy. See PROTOCOL §15.
    */
   continueAsNew(input: unknown, opts?: { version?: number }): Promise<never>;
 

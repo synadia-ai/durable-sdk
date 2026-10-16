@@ -1,4 +1,4 @@
-"""synadia-durable — the two payload forms of ``durable-engine`` ``docs/API.md`` "Payloads".
+"""synadia-durable — the two payload forms of the engine's ``API.md`` "Payloads".
 Mirrors ``src/engine/payload.ts``.
 
 Without a payload codec every value travels inline (``input``, ``value``, ``data``, ``error``).

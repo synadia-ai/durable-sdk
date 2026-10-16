@@ -104,7 +104,7 @@ export class SerializationError extends DurableError {
  * bytes can never succeed — so it extends {@link SerializationError} and terminally fails the run,
  * instead of being classified as transient infrastructure and NAK-looping forever (which would also
  * head-of-line-block the workflow's work consumer). Large values need object-store offload
- * (documented future work; DESIGN.md §5).
+ * (PROTOCOL §5.6).
  */
 export class PayloadTooLargeError extends SerializationError {
   constructor(runId: string, message: string, options?: ErrorOptions) {

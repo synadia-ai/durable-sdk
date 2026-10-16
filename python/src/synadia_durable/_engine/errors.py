@@ -1,8 +1,8 @@
 """synadia-durable — the errors the engine's API adds to the library's. Mirrors
 ``src/engine/errors.ts``.
 
-A refusal is ``{"error": {"code", "message"}}`` from a closed set (``durable-engine``
-``docs/API.md`` "Errors"); the transport turns each code into one of these, or into a library error
+A refusal is ``{"error": {"code", "message"}}`` from a closed set (the engine's
+``API.md`` "Errors"); the transport turns each code into one of these, or into a library error
 where the library already has the class: ``fenced`` → :class:`FencedError`, ``too_large`` →
 :class:`PayloadTooLargeError`, ``blob_gone`` → :class:`BlobMissingError` (or
 :class:`BlobIntegrityError` when the bytes are not the digest's). ``tenant_limit`` and
@@ -47,7 +47,7 @@ EngineErrorCode = Literal[
     "licence_limit",
 ]
 
-#: The codes table of ``durable-engine`` ``docs/API.md`` "Errors", mirrored: each code and the class
+#: The codes table of the engine's ``API.md`` "Errors", mirrored: each code and the class
 #: a refusal with it becomes (``invalid`` on an ``append`` or a ``child`` is a
 #: :class:`SerializationError` instead). ``tests/test_engine_errors.py`` checks it against the table
 #: at ``engine.pin``, so a code the engine adds fails a test here rather than reaching a caller as
@@ -137,8 +137,8 @@ class LimitError(EngineError):
         self.limit = limit
 
 
-#: What this SDK needs of the engine, read from ``info.capabilities`` (``durable-engine``
-#: ``docs/API.md`` ``info``, its F57), never from ``info.engine``: the repo has no tag, so every
+#: What this SDK needs of the engine, read from ``info.capabilities`` (the engine's
+#: ``API.md`` ``info``, its F57), never from ``info.engine``: the repo has no tag, so every
 #: build says ``0.2.0-dev``. ``withdrawn-remembered`` (its F53): a worker withdrawn by
 #: ``cancelPoll`` is remembered 5 s on every instance, so ``stop()`` sends one ``cancelPoll``.
 ENGINE_FLOOR_CAPABILITIES: tuple[str, ...] = ("withdrawn-remembered",)

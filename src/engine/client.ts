@@ -1,5 +1,5 @@
 // @synadia-ai/durable — the client: start runs, observe them, signal and cancel them, through the
-// engine's five client ops (durable-engine docs/API.md: start, result, status, signal, cancel).
+// engine's five client ops (the engine's API.md: start, result, status, signal, cancel).
 // The library's Client and Handle, unchanged in shape; what was the shell's (the journal reads,
 // the status hint subscription, provisioning, offload) is the engine's now, but for a value too
 // large for one request or reply, which goes up in `put` parts and comes down in `get` parts
@@ -43,7 +43,7 @@ export interface Client {
   start<I, O>(workflow: Workflow<I, O>, input: I, opts?: StartOptions): Promise<Handle<O>>;
   get<O = unknown>(runId: string): Handle<O>;
   /**
-   * Send a signal to a run, for `ctx.await(name)` (PROTOCOL.md §8). The engine journals it before it
+   * Send a signal to a run, for `ctx.await(name)` (PROTOCOL §8). The engine journals it before it
    * answers, so two calls, each after the other's return, are journaled in that order.
    *
    * `opts.id` is the signal's idempotency key (`[A-Za-z0-9_-]+`, checked before any request); a
@@ -64,7 +64,7 @@ export interface Client {
    * executing; `ctx.onCancel` handlers then run (LIFO) and the run reaches the `cancelled` terminal,
    * cascading to in-flight children and forwarding across continue-as-new. Pure compute BETWEEN
    * commands is not preempted: a run that returns without crossing a stop point completes instead
-   * (completion wins). See PROTOCOL.md §11.7.
+   * (completion wins). See PROTOCOL §11.7.
    */
   cancel(runId: string, opts?: { reason?: string }): Promise<void>;
 }

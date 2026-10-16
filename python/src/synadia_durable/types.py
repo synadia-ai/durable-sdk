@@ -196,7 +196,7 @@ class Ctx(Protocol):
 
         Gather several to fan out children concurrently. ``ctx.call`` is ``await ctx.start_call``.
         Not ``async``: the command's position is assigned here, synchronously, which is what keeps a
-        fan-out's journal deterministic (see ``docs/DESIGN-python-sdk.md`` §3.2).
+        fan-out's journal deterministic.
         """
         ...
 

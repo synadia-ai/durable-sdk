@@ -1,4 +1,4 @@
-// @synadia-ai/durable — the SDK half of the chunked upload and download (durable-engine docs/API.md
+// @synadia-ai/durable — the SDK half of the chunked upload and download (the engine's API.md
 // "Sizes", `put`, `get`; the engine's findings F25, this repo's F1). A value whose request would
 // pass `request_max` goes up in `put` parts first and travels as the ref the engine answers; a ref
 // the engine hands back because a value would not fit a reply comes down in `get` parts, its digest

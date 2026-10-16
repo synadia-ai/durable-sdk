@@ -1,5 +1,5 @@
 // @synadia-ai/durable — the deterministic context + two-phase replay engine (pure; depends only on
-// the Journal interface). See DESIGN.md §4.
+// the Journal interface). See PROTOCOL §11.2.
 //
 // Suspension and fencing are surfaced OUT OF BAND via a halt promise the executor races against —
 // they are never thrown through user workflow code, so a user `try/catch` cannot swallow them.

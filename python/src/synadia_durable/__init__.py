@@ -4,11 +4,12 @@
 A workflow is an ordinary ``async`` function whose every nondeterministic or side-effecting
 operation goes through ``ctx`` and is journaled; on a crash the function re-runs from the top,
 journaled operations replay, and the first un-journaled one is the live frontier. The replay core is
-the library's (``synadia-durable`` at ``7456c75``), unchanged; behind its three seams and the
+copied from the retired library (``synadia-durable``), edited since; behind its three seams and the
 client's five calls sits a request/reply client for ``durable-engine``, which owns the streams.
 
-The wire contract is the library's ``docs/PROTOCOL.md`` and the engine's ``docs/API.md``, the same
-as the TypeScript SDK's, so runs, signals and sub-workflow calls cross the language boundary.
+The wire contract is the protocol's journal format and the engine's API (its ``API.md``, delivered
+with the engine), the same as the TypeScript SDK's, so runs, signals and sub-workflow calls cross
+the language boundary.
 """
 
 from synadia_durable._engine.client import Client, RunHandle, create_client

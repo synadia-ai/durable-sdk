@@ -6,8 +6,8 @@ Pure: depends only on the ``Journal`` / ``Scheduler`` / ``Children`` seams, neve
 **Suspension, fencing, infra-retry and continue-as-new are surfaced OUT OF BAND** — they resolve an
 internal halt future and return a coroutine that never completes, so they are never raised through
 user workflow code and a user ``try``/``except`` cannot swallow them. That property is the reason this
-module does not use exceptions for control flow, and it is the single hardest thing to port: see
-``docs/IMPLEMENTATION-GUIDE.md`` §7.
+module does not use exceptions for control flow, and it is the single hardest thing to port: the
+original implementation guide's §7.
 """
 
 from __future__ import annotations
@@ -122,7 +122,7 @@ class _DurableFuture:
       effect (timer / child) armed even before anything awaits the future.
 
     A JS promise is eager for free; a Python coroutine is inert until awaited, which is why this is
-    one of the port's deliberate divergences (``docs/DESIGN-python-sdk.md`` §3.2).
+    one of the port's deliberate divergences.
     """
 
     __slots__ = ("_ctx", "arm", "kind", "name", "seq")

@@ -1,5 +1,5 @@
 """synadia-durable — the client: start runs, observe them, signal and cancel them, through the
-engine's five client ops (``durable-engine`` ``docs/API.md``: start, result, status, signal,
+engine's five client ops (the engine's ``API.md``: start, result, status, signal,
 cancel). Mirrors ``src/engine/client.ts``.
 
 The library's ``Client`` and ``RunHandle``, unchanged in shape; what was the shell's (the journal

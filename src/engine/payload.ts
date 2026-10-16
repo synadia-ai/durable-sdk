@@ -1,4 +1,4 @@
-// @synadia-ai/durable — the two payload forms of durable-engine docs/API.md "Payloads". Without a
+// @synadia-ai/durable — the two payload forms of the engine's API.md "Payloads". Without a
 // payload codec every value travels inline (`input`, `value`, `data`, `error`). With one, the
 // engine never sees a plaintext payload:
 //   - an appended entry carries its slot exactly as the library's journal writes it: `encodePayload`
