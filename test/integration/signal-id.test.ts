@@ -12,12 +12,12 @@ import { jsonCodec } from "../../src/journal/codec.js";
 import { createClient, createWorker } from "../harness/engine.js";
 import { connect } from "../harness/existing.js";
 import { NatsJournal } from "../harness/shell/journal-store.js";
-import { names } from "../harness/shell/names.js";
+import { names, skipAsTenant } from "../harness/shell/names.js";
 
 let nc: NatsConnection;
 
 beforeAll(async () => {
-  nc = await connect({ servers: inject("natsUrl") });
+  nc = await connect({ servers: inject("natsUrl")! });
 });
 
 afterAll(async () => {
@@ -69,6 +69,7 @@ const rolls = defineWorkflow("sigid_rolls", async (ctx, input: { n: number }) =>
 
 describe("the signal id", () => {
   it("two signals with the same id journal one entry, and the run takes it once", async () => {
+    skipAsTenant(); // the test reads the journal itself (shell/names.ts)
     const worker = createWorker({ nc, workflows: [twice], prefix: PREFIX, streamMaxBytes: 64 * 1024 * 1024 }); // prettier-ignore
     await worker.start();
     try {
@@ -88,6 +89,7 @@ describe("the signal id", () => {
   });
 
   it("two signals without an id are two signals, each with a generated id", async () => {
+    skipAsTenant(); // the test reads the journal itself (shell/names.ts)
     const worker = createWorker({ nc, workflows: [twice], prefix: PREFIX, streamMaxBytes: 64 * 1024 * 1024 }); // prettier-ignore
     await worker.start();
     try {
@@ -112,8 +114,8 @@ describe("the signal id", () => {
     const client = createClient({ nc, prefix: PREFIX });
     // A subscriber of its own on the signal subject sees every request the client would send.
     const sent: string[] = [];
-    const probe = await connect({ servers: inject("natsUrl") });
-    const sub = probe.subscribe(`${names(PREFIX).prefix}.api.v1.signal`, { callback: (_e, m) => sent.push(m.subject) }); // prettier-ignore
+    const probe = await connect({ servers: inject("natsUrl")! });
+    const sub = probe.subscribe(`${names(PREFIX).prefix}.api.v1.signal`, { callback: (_e, m) => void sent.push(m.subject) }); // prettier-ignore
     await probe.flush();
     try {
       for (const id of ["", "has space", "a.b", "a~b", "line\n"]) {
@@ -128,6 +130,7 @@ describe("the signal id", () => {
   });
 
   it("a retry after a rollover is recognised in the run named: ok, nothing journaled in _g1", async () => {
+    skipAsTenant(); // the test reads the journal itself (shell/names.ts)
     const worker = createWorker({ nc, workflows: [rolls], prefix: PREFIX, streamMaxBytes: 64 * 1024 * 1024 }); // prettier-ignore
     await worker.start();
     try {

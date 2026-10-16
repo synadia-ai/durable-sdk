@@ -171,12 +171,15 @@ describe("the signal id (engine #19: signals deduplicated by id)", () => {
     expect(bodies[2]!.id).not.toBe(bodies[1]!.id);
   });
 
-  it.each(["", "has space", "a.b", "a~b", "line\n"])("%j is refused before any request", async (id) => {
-    const { nc, ops } = fakeNc(() => ({ ok: true }));
-    const c = createClient({ nc });
-    await expect(c.signal("r1", "go", 1, { id })).rejects.toThrow(/^signal id must be ASCII alphanumeric/); // prettier-ignore
-    expect(ops).toEqual([]);
-  });
+  it.each(["", "has space", "a.b", "a~b", "line\n"])(
+    "%j is refused before any request",
+    async (id) => {
+      const { nc, ops } = fakeNc(() => ({ ok: true }));
+      const c = createClient({ nc });
+      await expect(c.signal("r1", "go", 1, { id })).rejects.toThrow(/^signal id must be ASCII alphanumeric/); // prettier-ignore
+      expect(ops).toEqual([]);
+    },
+  );
 });
 
 describe("a worker refused at a limit is loud, never quiet", () => {
