@@ -55,6 +55,8 @@ npm run test:integration 2>&1 | tee ngs-ts.log
 (cd python && uv run pytest tests/integration -rs 2>&1 | tee ../ngs-py.log)
 ```
 
+**A prefix an older engine used keeps its per-name durables.** Before `engine.pin` `91ac210` the engine bound `de-worker-<wf>` and `de-timer-<wf>` per workflow name, and the harness deleted only those a test made; on the dev NGS the `de` prefix still holds those that were there before. `91ac210` binds one pair (`de~worker`, `de~timer`) and refuses the pair's bind beside a leftover per-name durable (JetStream 10100, the engine's F77; it names them). Remove them first, for example `nats consumer ls DE_WORK` and `nats consumer rm DE_WORK de-worker-<wf>` (and `DE_TIMERS`, `de-timer-<wf>`), on Mario's word: they are on the cloud.
+
 No `DE_TEST_RTT_MS` (the latency is real; a byte proxy cannot carry TLS anyway), and no `DE_CLEANUP=delete` (the eight are the tenant's; a given prefix is kept by default). Expect TypeScript 120 passed and 23 skipped, Python 73 passed and 22 skipped (the 3 and 2 skipped above the 20 are the injected failures). The time is the round trip's and, over a WAN, the offload suites': measured, not predicted (`docs/findings.md` F33):
 
 | Run                                                                                         | Round trip | Throughput (moved, up and down)                      | TypeScript (of it `offload` + `payload-codec`)   | Python (of it `test_offload` + `test_payload_codec_e2e`) |

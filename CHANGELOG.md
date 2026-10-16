@@ -2,6 +2,13 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+- **`engine.pin` → `91ac210`** (durable-engine #18 to #21): one durable pair per prefix (`{prefix}~worker`, `{prefix}~timer`) in both modes, a work item with no journal dropped by age (`--no-journal-max-age`), eight resources per prefix (`KV_{P}_TENANTS` holds the set of workflow names the licence counts), signals journaled at send and deduplicated by `id`. The harness follows (`docs/findings.md` F46).
+- **`client.signal` takes an `id`:** TypeScript `client.signal(runId, name, data, { id })`, Python `await client.signal(run_id, name, data, id=...)`. Without one the SDK generates a UUID, so every signal carries an id. The id is checked with the token rule (`[A-Za-z0-9_-]+`) before any request. A caller that retries a signal after `EngineUnavailableError`, a timeout or its own restart passes the id of the first try, and the engine journals it once.
+- **`ctx.attempt` is documented as the delivery count** of the current frontier: it counts every delivery, an item handed back between engine instances too, so it is not a count of failures.
+- **`ProvisionQuotaError`'s text says eight resources** (three streams, four KV buckets, one object store; ~5.2 GiB at the 1 GiB default).
+
 ## [0.1.1] — 2026-10-06
 
 - **The README is a user's:** the Quickstart runs the engine Synadia delivers (the archive's `durable-engine` binary or the container image, with your licence file) and a workflow in a project of your own installed from npm, with no engine checkout and no build; "Which engine", "Errors" and "Running a worker" say what a user needs and nothing more. How the SDK works with the engine moved to `docs/DEVELOPING.md`. No code changed.
