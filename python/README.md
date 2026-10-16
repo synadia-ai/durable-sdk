@@ -28,7 +28,7 @@ cd python && uv sync
 NATS_URL=nats://127.0.0.1:4222 uv run python examples/charge.py
 ```
 
-The `git checkout` leaves the engine's checkout detached at the pin; `git checkout main` there afterwards. A standalone `serve` starts only with a valid licence (`--licence FILE` or `$DE_LICENCE`; the engine's `docs/QUICKSTART.md`, `docs/API.md` "The licence"); a test licence is accepted by a `-dev` build alone. The engine logs `licence … licensee=<you>`, provisions its seven resources at start and answers on `de.api.v1.*`. Check it with `nats req de.api.v1.info '{}'`. The example ends with `result: {'status': 'shipped', 'order_id': 'ord-c-42', 'tracking': 'TRK-c-42'}` and `status: RunStatus(state='completed', …)`. Stop the engine and the server with `kill %2 %1`.
+The `git checkout` leaves the engine's checkout detached at the pin; `git checkout main` there afterwards. A standalone `serve` starts only with a valid licence (`--licence FILE` or `$DE_LICENCE`; the engine's `docs/QUICKSTART.md`, `docs/API.md` "The licence"); a test licence is accepted by a `-dev` build alone. The engine logs `licence … licensee=<you>`, provisions its eight resources at start and answers on `de.api.v1.*`. Check it with `nats req de.api.v1.info '{}'`. The example ends with `result: {'status': 'shipped', 'order_id': 'ord-c-42', 'tracking': 'TRK-c-42'}` and `status: RunStatus(state='completed', …)`. Stop the engine and the server with `kill %2 %1`.
 
 **Which engine:** this SDK needs the engine at or after its #13 (`16cb3da`; the pin is its #17, `a6fa5a0`), which announces `withdrawn-remembered` in `info.capabilities` (a worker withdrawn by `stop()` is remembered 5 s, so `stop()` sends one `cancelPoll`; the engine's F53, F57). `worker.start()` raises `UnsupportedEngineError` on an older one, naming the engine by its `engine` and `commit` as `info` gives them; a worker whose start found no engine checks at its first answered poll and stops there, logged at error (`health()` says stopped). The floor is read from `info.capabilities`, never from the version: every build so far says `0.2.0-dev` (`../docs/findings.md` F45).
 
@@ -71,6 +71,8 @@ async def main() -> None:
 
 asyncio.run(main())
 ```
+
+**A signal's id.** Every `client.signal` carries an id, a generated UUID unless you pass your own: `await client.signal(run_id, "payment", data, id="pay-c-42")` (`[A-Za-z0-9_-]+`, checked before any request). A retry passes the same id: if you send a signal again after an `EngineUnavailableError`, a timeout, or a restart of your own process, pass the id of the first try, and the engine answers `ok` and journals nothing more. Without an id each call is a new signal. The id is looked for in two journals only: the run the request names and the generation current when the request arrives. A signal journaled in any other generation (one that was current at the first try and has continued since) is not recognised, and is journaled again. The id dedups one signal: two signals with the same name and different ids are two signals.
 
 ### Using it from your own project
 
@@ -158,7 +160,7 @@ The unit suites need nothing. The integration suites (`tests/integration/`) spaw
 | `DE_NATS_CREDS`  | its creds file (the clients, the engine's `--creds`, the interop children's `NATS_CREDS`)                                                     |
 | `DE_PREFIX`      | the run's prefix (default a generated `de-<8 hex>`)                                                                                           |
 | `DE_ENGINE_URL`  | an engine already serving the prefix, by its `/metrics` address; then none is started, and a test needing other flags or a restart is skipped |
-| `DE_CLEANUP`     | `delete` or `keep` the prefix's seven at the end; by default a generated prefix is deleted and a `DE_PREFIX` one kept (F34)                   |
+| `DE_CLEANUP`     | `delete` or `keep` the prefix's eight at the end; by default a generated prefix is deleted and a `DE_PREFIX` one kept (F34)                   |
 | `DE_TEST_RTT_MS` | as before: the delay proxy in front of the server, for the tests **and the engine**                                                           |
 | `DE_TENANT`      | the tests run as this tenant of an engine in tenancy mode (`serve --tenancy`): below                                                          |
 | `DE_ADMIN_URL`   | where the harness reads the prefix's streams and consumers (default `DE_NATS_URL`); as a tenant, the engine's account                         |
@@ -174,7 +176,7 @@ The dev NGS run's command lines and the measured times of both languages (a loca
 
 ### As a tenant
 
-`DE_TENANT` runs the suites as a tenant of an engine in tenancy mode (`serve --tenancy`; the engine's `docs/API.md` "Tenancy"; `../docs/findings.md` F38). The tests connect as the tenant's user, which holds no stream, so the harness reads the engine's account through `DE_ADMIN_URL` / `DE_ADMIN_CREDS` and counts, purges and sweeps only the tenant's subjects, objects and durables, never another tenant's or the seven. It needs `DE_PREFIX` and `DE_ENGINE_URL`, and refuses `DE_CLEANUP=delete`. A test that reads the engine's stores itself is skipped as a tenant, saying so (17; 16 beyond the `DE_ENGINE_URL` skips). Locally, on the three-account server of the root README's [As a tenant](../README.md#as-a-tenant) (or [`../docs/FABRIC.md`](../docs/FABRIC.md#walk-it-locally)):
+`DE_TENANT` runs the suites as a tenant of an engine in tenancy mode (`serve --tenancy`; the engine's `docs/API.md` "Tenancy"; `../docs/findings.md` F38). The tests connect as the tenant's user, which holds no stream, so the harness reads the engine's account through `DE_ADMIN_URL` / `DE_ADMIN_CREDS` and counts and purges only the tenant's subjects and objects, and reports only its durables, never another tenant's or the eight. It needs `DE_PREFIX` and `DE_ENGINE_URL`, and refuses `DE_CLEANUP=delete`. A test that reads the engine's stores itself is skipped as a tenant, saying so (17; 16 beyond the `DE_ENGINE_URL` skips). Locally, on the three-account server of the root README's [As a tenant](../README.md#as-a-tenant) (or [`../docs/FABRIC.md`](../docs/FABRIC.md#walk-it-locally)):
 
 ```sh
 export DE_NATS_URL=nats://a-client:a-client@127.0.0.1:14322 DE_TENANT=A DE_PREFIX=de

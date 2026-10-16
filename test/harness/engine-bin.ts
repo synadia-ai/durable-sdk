@@ -133,9 +133,16 @@ export function mintTestLicence(
   return out;
 }
 
-/** The run's licence: the caller's `DE_LICENCE`, or a test licence minted once for the run. */
+/**
+ * The run's licence: the caller's `DE_LICENCE`, or a test licence minted once for the run, with no
+ * limit on workflow names (`-workflows 0`). Since the engine's F77 standalone keeps the set of
+ * names in `{P}_TENANTS` (key `workflows`, 7 days' retention) and the licence's `maxWorkflows`
+ * counts it at every poll; the set persists across tests, and the existing-server run puts about
+ * 150 names on one prefix, so the tool's default of 100 would refuse polls mid-run. The engine's
+ * own cap of 1000 names stays. A test's own mint (`limits.test.ts`) keeps its limits.
+ */
 export function runLicence(bin: string): { file: string; minted: boolean } {
   const given = process.env.DE_LICENCE;
   if (given !== undefined && given !== "") return { file: given, minted: false };
-  return { file: mintTestLicence(bin), minted: true };
+  return { file: mintTestLicence(bin, "durable-sdk-tests", { workflows: 0 }), minted: true };
 }

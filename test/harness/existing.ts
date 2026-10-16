@@ -8,7 +8,7 @@
 //   DE_PREFIX       the run's one prefix (default a generated `de-<run id>`)
 //   DE_ENGINE_URL   an engine that already serves the prefix, by its /metrics address
 //                   (`http://host:port`); without it the harness starts one for the run
-//   DE_CLEANUP      `delete` or `keep` the prefix's seven at the run's end; by default a generated
+//   DE_CLEANUP      `delete` or `keep` the prefix's eight at the run's end; by default a generated
 //                   prefix is deleted (only this run can have made it) and a DE_PREFIX one kept
 //   DE_TENANT       the tests run as this tenant of an engine in tenancy mode (`serve --tenancy`,
 //                   the engine's PR #7): the token the tenant's import places, `{prefix}.{tenant}.…`
@@ -21,11 +21,11 @@
 // measured round trip. A test that failed or timed out is cleaned like any other, and its runs'
 // blobs are deleted by name, after it and again at the run's end (docs/findings.md F33).
 //
-// As a tenant (DE_TENANT, docs/findings.md F36) the seven are the engine account's, shared by every
+// As a tenant (DE_TENANT, docs/findings.md F36) the eight are the engine account's, shared by every
 // tenant, and the tests reach the engine through an import: everything above is read through the
 // admin connection and counts the tenant's subjects (`{prefix}.{tenant}.…`, `$KV.<bucket>.{tenant}.…`),
 // objects (`{tenant}/…`) and durables (`{prefix}~{tenant}~…`) alone. Another tenant's are never
-// purged or deleted, and the seven never are.
+// purged or deleted, and the eight never are.
 
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -77,10 +77,10 @@ export function existingFromEnv(): ExistingServer | null {
   if (tenant !== undefined) {
     if (!/^[A-Za-z0-9_-]+$/.test(tenant)) throw new Error(`DE_TENANT="${tenant}": one subject token, no dots`); // prettier-ignore
     // The tenant's import names the prefix, and the engine in the other account serves it: the run
-    // cannot make it up, and the seven are every tenant's, never the run's to delete.
+    // cannot make it up, and the eight are every tenant's, never the run's to delete.
     if (given === "") throw new Error("DE_TENANT needs DE_PREFIX: the prefix the tenant's import and the engine use"); // prettier-ignore
     if (process.env.DE_ENGINE_URL === undefined || process.env.DE_ENGINE_URL === "") throw new Error("DE_TENANT needs DE_ENGINE_URL: the engine in tenancy mode runs in the engine's account, not the harness's"); // prettier-ignore
-    if (cleanup === "delete") throw new Error("DE_CLEANUP=delete with DE_TENANT: the seven are every tenant's"); // prettier-ignore
+    if (cleanup === "delete") throw new Error("DE_CLEANUP=delete with DE_TENANT: the eight are every tenant's"); // prettier-ignore
   }
   return {
     url,
@@ -175,7 +175,9 @@ export async function measureRtt(nc: NatsConnection): Promise<number> {
   return samples.sort((a, b) => a - b)[2]!;
 }
 
-/** The prefix's seven backing streams (KV buckets and the object store are streams). */
+/** The prefix's eight backing streams (KV buckets and the object store are streams). The engine's
+ * record of the workflow names, `KV_{P}_TENANTS` (provisioned standalone too since its F77), is
+ * last, so the indexes into the list ([0] the journal, [6] the blobs) are what they were. */
 export function prefixStreams(prefix: string): string[] {
   const up = prefix.toUpperCase();
   return [
@@ -186,8 +188,13 @@ export function prefixStreams(prefix: string): string[] {
     `KV_${up}_LEASES`,
     `KV_${up}_PARKED`,
     `OBJ_${up}_BLOBS`,
+    `KV_${up}_TENANTS`,
   ];
 }
+
+/** The engine's own record among the eight, never purged after a test (the per-test cleanup skips
+ * it): `KV_{P}_TENANTS` caches the set of workflow names and is written by CAS. */
+const engineRecord = (prefix: string): string => `KV_${prefix.toUpperCase()}_TENANTS`;
 
 export interface LeftoverConsumer {
   stream: string;
@@ -205,9 +212,11 @@ function filterOf(scope: Scope, stream: string): string {
   return `${scope.prefix}.${t}.>`;
 }
 
-/** A durable is the scope's: any standalone; as a tenant one named `{prefix}~{tenant}~…`. */
+/** A durable is the scope's: standalone the prefix's pair, `{prefix}~worker` and `{prefix}~timer`
+ * (the engine's F77); as a tenant one named `{prefix}~{tenant}~…` (its pair, F69). */
 export function durableOf(scope: Scope, name: string): boolean {
-  return scope.tenant === undefined || name.startsWith(`${scope.prefix}~${scope.tenant}~`);
+  if (scope.tenant === undefined) return name === `${scope.prefix}~worker` || name === `${scope.prefix}~timer`; // prettier-ignore
+  return name.startsWith(`${scope.prefix}~${scope.tenant}~`);
 }
 
 /** An ephemeral consumer is the scope's: any standalone; as a tenant one filtered on its subjects. */
@@ -381,42 +390,32 @@ export async function deleteRunBlobs(
 }
 
 /**
- * The run's end, after its engine stopped (nothing re-creates a durable or writes a blob then):
- * the blobs of every run the run's tests touched, by name, and every durable on the work and
- * timers streams that was not there when the run began. What a test that failed or timed out left
- * after its own cleanup is gone with them.
+ * The run's end, after its engine stopped (nothing writes a blob then): the blobs of every run the
+ * run's tests touched, by name. What a test that failed or timed out left after its own cleanup is
+ * gone with them. The durables are not touched: the engine's pair is its own (purgeSince).
  */
 export async function sweepRun(
   nc: NatsConnection,
   scope: Scope,
   runIds: Iterable<string>,
-  atStart: Snapshot,
-): Promise<{ blobs: number; durables: number }> {
-  const blobs = await deleteRunBlobs(nc, scope, runIds);
-  const jsm = await jetstreamManager(nc);
-  let durables = 0;
-  for (const stream of prefixStreams(scope.prefix).slice(1, 3)) {
-    const fresh = (await consumersOf(jsm, stream)).filter((c) => !atStart.consumers.has(c) && durableOf(scope, c.slice(stream.length + 1))); // prettier-ignore
-    for (const c of fresh) {
-      try {
-        await jsm.consumers.delete(stream, c.slice(stream.length + 1));
-        durables += 1;
-      } catch (e) {
-        if (jsErrorCode(e) !== 10014) throw e;
-      }
-    }
-  }
-  return { blobs, durables };
+): Promise<{ blobs: number }> {
+  return { blobs: await deleteRunBlobs(nc, scope, runIds) };
 }
 
 /**
  * The cleanup after a test: every subject of the prefix's streams that is new or grew since
  * `before` is purged — the journal, work and timer subjects of the test's runs, their KV keys
  * (`$KV.<bucket>.<runId>`) and their blobs' chunks and meta. Never a stream, never a subject
- * outside the prefix, never one the test did not touch. And the durables the engine made for the
- * test's workflow names (`de-worker-<wf>`, `de-timer-<wf>`): they would pile up past an account's
- * per-stream consumer cap over a suite of ~150 names; a durable that was there before stays.
- * Returns how many subjects were purged.
+ * outside the prefix, never one the test did not touch, never the engine's record of the names
+ * (`KV_{P}_TENANTS`: it caches the set and writes it by CAS). Returns how many subjects were purged.
+ *
+ * **No durable is deleted.** Until the engine's F77 it made two durables per workflow name, and
+ * the cleanup deleted the test's, which would otherwise have piled up past an account's per-stream
+ * consumer cap over the suites' ~150 names. Now the prefix has one pair (`{prefix}~worker`,
+ * `{prefix}~timer`; a tenant's `{prefix}~{tenant}~…`), bound once by the run's one engine at its
+ * first poll (so absent from the run's first snapshots): deleting it after a test would make the
+ * engine re-bind under its long pull (the 10012 store race and a 0.5 s backoff, the engine's
+ * `TestDurablesDeletedUnderTheEngine`). It goes only with the prefix's streams at the run's end.
  */
 export async function purgeSince(
   nc: NatsConnection,
@@ -426,6 +425,7 @@ export async function purgeSince(
   const jsm = await jetstreamManager(nc);
   let purged = 0;
   for (const stream of prefixStreams(scope.prefix)) {
+    if (stream === engineRecord(scope.prefix)) continue;
     const was = before.subjects.get(stream) ?? new Map<string, number>();
     const now = await subjectsOf(jsm, stream, filterOf(scope, stream));
     let touched = [...now].filter(([s, n]) => was.get(s) !== n).map(([s]) => s);
@@ -439,23 +439,11 @@ export async function purgeSince(
     await Promise.all(touched.map((filter) => jsm.streams.purge(stream, { filter })));
     purged += touched.length;
   }
-  for (const stream of prefixStreams(scope.prefix).slice(0, 3)) {
-    const fresh = (await consumersOf(jsm, stream)).filter((c) => !before.consumers.has(c) && durableOf(scope, c.slice(stream.length + 1))); // prettier-ignore
-    await Promise.all(
-      fresh.map(async (c) => {
-        try {
-          await jsm.consumers.delete(stream, c.slice(stream.length + 1));
-        } catch (e) {
-          if (jsErrorCode(e) !== 10014) throw e; // already gone
-        }
-      }),
-    );
-  }
   return purged;
 }
 
-/** `DE_CLEANUP=delete` (the default for a generated prefix): the prefix's seven, at the run's
- * end, and nothing else. */
+/** `DE_CLEANUP=delete` (the default for a generated prefix): the prefix's eight, at the run's
+ * end (the pair goes with its streams), and nothing else. */
 export async function deletePrefixStreams(nc: NatsConnection, prefix: string): Promise<string[]> {
   const jsm = await jetstreamManager(nc);
   const deleted: string[] = [];

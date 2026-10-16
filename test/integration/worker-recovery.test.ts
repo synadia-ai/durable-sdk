@@ -41,7 +41,7 @@ const MIB = 1024 * 1024;
 
 // Two prefixes: one shared by the well-behaved tests, one for the test that DELETES a stream out
 // from under a running worker. Each is sized small on purpose — a prefix reserves its max_bytes
-// across six streams against the harness's budget (see test/harness/nats-server.ts).
+// on each of its eight resources against the harness's budget (see test/harness/nats-server.ts).
 const REC = "wrec";
 const BROKEN = "wrecx";
 // Sized to hold the oversized failure message twice over (the child's entry and the parent's copy).
@@ -154,6 +154,7 @@ describe.skipIf(!natsUrl)("worker recovery paths (real nats-server)", () => {
       ...SIZED,
       metrics: sink,
       logger: logs,
+      noJournalMaxAgeMs: 3_000,
     });
     await worker.start();
     try {
@@ -162,19 +163,23 @@ describe.skipIf(!natsUrl)("worker recovery paths (real nats-server)", () => {
         msgID: "ghost-1",
       });
 
-      // durable-sdk: re-expressed through the engine. The no-journal policy (nak with backoff,
-      // term on the fifth delivery) is the engine's, and the item never reaches the worker: the
-      // outcomes are the engine's ack counts (`engineOutcomes`, retries listed before the drop,
-      // which the engine guarantees by counting deliveries) and the log line is the engine's.
+      // durable-sdk: re-expressed through the engine. The no-journal policy is the engine's: nak'd
+      // with its backoff (250 ms doubling) while the item is younger than --no-journal-max-age, 3 s
+      // here, then termed (by age since its F75, F77, not on the fifth delivery). The item never
+      // reaches the worker: the outcomes are the engine's ack counts (`engineOutcomes`, built from
+      // counters in label order, so the order of the outcomes is not observable) and the log line
+      // is the engine's.
       const ghost = (): Promise<string[]> => engineOutcomes(nc, REC, ["retry-no-journal", "dropped-no-journal"]); // prettier-ignore
       await waitUntil(
         async () => (await ghost()).includes("dropped-no-journal"),
         25_000,
         "the ghost item to be dropped",
       );
-      // The retries came FIRST — dropping on the first delivery is the bug this guards.
+      // At least one retry and the drop: dropping on the first delivery is the bug this guards.
+      // The order is not observable through counts. The backoff gives about four retries within
+      // the 3 s (250 + 500 + 1000 ms, then 2 s): expect 4, assert at least one.
       const outcomes = await ghost();
-      expect(outcomes.filter((o) => o === "retry-no-journal").length).toBeGreaterThanOrEqual(4);
+      expect(outcomes.filter((o) => o === "retry-no-journal").length).toBeGreaterThanOrEqual(1);
       expect(outcomes.at(-1)).toBe("dropped-no-journal");
       expect((await engineLog(REC)).some((l) => l.includes("no journal for this run after retries"))).toBe(true); // prettier-ignore
       expect(sink.outcomes("rec-ghost-nobody")).toEqual([]); // never handed to the worker

@@ -2,7 +2,8 @@
 the existing-server mode's cleanup (docs/findings.md F33): a test that raises with its worker still
 running and its runs' blobs written, and one whose ``result()`` times out while its worker is still
 putting blobs. The run is expected to report these two as failed and to leave nothing behind on the
-prefix: no message in any of its seven, no durable. The twin of
+prefix: no message in any of its eight, no durable but the engine's pair (it goes with the
+streams at the run's end). The twin of
 ``test/integration/injected-failure.test.ts``.
 """
 

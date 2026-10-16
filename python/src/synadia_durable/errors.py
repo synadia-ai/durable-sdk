@@ -186,10 +186,10 @@ class ConsumerLimitError(DurableError):
 
 class ProvisionQuotaError(DurableError):
     """``provision()`` — so ``worker.start()`` and ``client.start()`` — was refused by the ACCOUNT
-    while creating one of a prefix's seven resources: its storage cannot reserve the resource's
+    while creating one of a prefix's eight resources: its storage cannot reserve the resource's
     ``max_bytes`` (JetStream code 10047; a prefix reserves max_bytes on each of its three streams,
-    three KV buckets and object store — ~5.1 GiB at the 1 GiB default), or its stream count is
-    reached (10027; a prefix is seven streams, and NGS's R1 tier allows 16).
+    four KV buckets and object store — ~5.2 GiB at the 1 GiB default), or its stream count is
+    reached (10027; a prefix is eight streams, and NGS's R1 tier allows 16).
 
     The server's own text says neither what was being reserved nor what to change; this names the
     resource, the bytes and the option. Mirrors ``ProvisionQuotaError`` in ``src/errors.ts``.
@@ -199,8 +199,8 @@ class ProvisionQuotaError(DurableError):
         if code == 10047:
             message = (
                 f"{resource}: the account has insufficient storage to reserve max_bytes={max_bytes} "
-                "— a prefix reserves its max_bytes on each of its seven resources (three streams, "
-                "three KV buckets, one object store; ~5.1 GiB at the 1 GiB default). Set "
+                "— a prefix reserves its max_bytes on each of its eight resources (three streams, "
+                "four KV buckets, one object store; ~5.2 GiB at the 1 GiB default). Set "
                 "stream_max_bytes (a worker/client option) to what this prefix needs, or raise the "
                 'account\'s storage (OPERATIONS.md, "Sizing quick sheet"). Resources created before '
                 "the refusal are kept (provisioning never deletes) and re-provisioning with the "
@@ -208,8 +208,8 @@ class ProvisionQuotaError(DurableError):
             )
         else:
             message = (
-                f"{resource}: the account's stream limit is reached — a prefix is seven streams "
-                "(three streams, three KV buckets, one object store). Retire a prefix (deprovision) "
+                f"{resource}: the account's stream limit is reached — a prefix is eight streams "
+                "(three streams, four KV buckets, one object store). Retire a prefix (deprovision) "
                 'or raise the limit (OPERATIONS.md, "What the library leaves on the server"). '
                 "Resources created before the refusal are kept and re-provisioning completes them"
             )

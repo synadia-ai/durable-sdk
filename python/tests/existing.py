@@ -8,7 +8,7 @@ server the run does not own, instead of the ``nats-server`` the harness spawns. 
     DE_PREFIX       the run's one prefix (default a generated ``de-<run id>``)
     DE_ENGINE_URL   an engine that already serves the prefix, by its /metrics address
                     (``http://host:port``); without it the harness starts one for the run
-    DE_CLEANUP      ``delete`` or ``keep`` the prefix's seven at the run's end; by default a
+    DE_CLEANUP      ``delete`` or ``keep`` the prefix's eight at the run's end; by default a
                     generated prefix is deleted (only this run can have made it) and a DE_PREFIX
                     one kept
     DE_TENANT       the tests run as this tenant of an engine in tenancy mode (``serve --tenancy``,
@@ -22,10 +22,10 @@ the run, the leftovers check on the prefix's streams only, and every wait scaled
 round trip. A test that failed or timed out is cleaned like any other, and its runs' blobs are
 deleted by name, after it and again at the run's end (docs/findings.md F33).
 
-As a tenant (``DE_TENANT``) the seven are the engine account's, shared by every tenant: everything
+As a tenant (``DE_TENANT``) the eight are the engine account's, shared by every tenant: everything
 above is read through the admin connection and counts the tenant's subjects
 (``{prefix}.{tenant}.…``, ``$KV.<bucket>.{tenant}.…``), objects (``{tenant}/…``) and durables
-(``{prefix}~{tenant}~…``) alone; another tenant's are never purged or deleted, and the seven never
+(``{prefix}~{tenant}~…``) alone; another tenant's are never purged or deleted, and the eight never
 are.
 """
 
@@ -74,13 +74,13 @@ def _from_env() -> ExistingServer | None:
         if not re.fullmatch(r"[A-Za-z0-9_-]+", tenant):
             raise ValueError(f'DE_TENANT="{tenant}": one subject token, no dots')
         # The tenant's import names the prefix and the engine in the other account serves it: the
-        # run cannot make it up, and the seven are every tenant's, never the run's to delete.
+        # run cannot make it up, and the eight are every tenant's, never the run's to delete.
         if not given:
             raise ValueError("DE_TENANT needs DE_PREFIX: the prefix the tenant's import uses")
         if not os.environ.get("DE_ENGINE_URL"):
             raise ValueError("DE_TENANT needs DE_ENGINE_URL: the engine runs in its own account")
         if cleanup == "delete":
-            raise ValueError("DE_CLEANUP=delete with DE_TENANT: the seven are every tenant's")
+            raise ValueError("DE_CLEANUP=delete with DE_TENANT: the eight are every tenant's")
     admin_url = os.environ.get("DE_ADMIN_URL") or url
     admin_creds = os.environ.get("DE_ADMIN_CREDS") or (
         None if os.environ.get("DE_ADMIN_URL") else os.environ.get("DE_NATS_CREDS") or None
@@ -214,9 +214,13 @@ def _filter_of(prefix: str, stream: str) -> str:
 
 
 def durable_of(prefix: str, name: str) -> bool:
-    """A durable is the scope's: any standalone; as a tenant one named ``{prefix}~{tenant}~…``."""
+    """A durable is the scope's: standalone the prefix's pair, ``{prefix}~worker`` and
+    ``{prefix}~timer`` (the engine's F77); as a tenant one named ``{prefix}~{tenant}~…`` (its pair,
+    F69)."""
     t = tenant()
-    return t is None or name.startswith(f"{prefix}~{t}~")
+    if t is None:
+        return name in (f"{prefix}~worker", f"{prefix}~timer")
+    return name.startswith(f"{prefix}~{t}~")
 
 
 def _ephemeral_of(prefix: str, config: Any) -> bool:
@@ -270,7 +274,10 @@ def skip_in_mode(why: str) -> pytest.MarkDecorator:
 
 
 def prefix_streams(prefix: str) -> list[str]:
-    """The prefix's seven backing streams (KV buckets and the object store are streams)."""
+    """The prefix's eight backing streams (KV buckets and the object store are streams). The
+    engine's record of the workflow names, ``KV_{P}_TENANTS`` (provisioned standalone too since its
+    F77), is last, so the indexes into the list ([0] the journal, [:3] the three streams, [6] the
+    blobs) are what they were."""
     up = prefix.upper()
     return [
         f"{up}_JOURNAL",
@@ -280,7 +287,14 @@ def prefix_streams(prefix: str) -> list[str]:
         f"KV_{up}_LEASES",
         f"KV_{up}_PARKED",
         f"OBJ_{up}_BLOBS",
+        f"KV_{up}_TENANTS",
     ]
+
+
+def _engine_record(prefix: str) -> str:
+    """The engine's own record among the eight, never purged after a test: ``KV_{P}_TENANTS``
+    caches the set of workflow names and is written by CAS."""
+    return f"KV_{prefix.upper()}_TENANTS"
 
 
 async def _consumers(jsm: Any, stream: str) -> list[Any]:
@@ -349,15 +363,24 @@ async def purge_since(nc: Any, prefix: str, before: Snapshot) -> int:
     """The cleanup after a test: every subject of the prefix's streams that is new or grew since
     ``before`` is purged — the journal, work and timer subjects of the test's runs, their KV keys
     and their blobs' chunks and meta. Never a stream, never a subject outside the prefix, never one
-    the test did not touch. And the durables the engine made for the test's workflow names: they
-    would pile up past an account's per-stream consumer cap; one that was there before stays."""
-    import asyncio
+    the test did not touch, never the engine's record of the names (``KV_{P}_TENANTS``: it caches
+    the set and writes it by CAS).
 
-    from nats.js.errors import NotFoundError
+    **No durable is deleted.** Until the engine's F77 it made two durables per workflow name, and
+    the cleanup deleted the test's, which would otherwise have piled up past an account's
+    per-stream consumer cap over the suites' ~150 names. Now the prefix has one pair
+    (``{prefix}~worker``, ``{prefix}~timer``; a tenant's ``{prefix}~{tenant}~…``), bound once by the
+    run's one engine at its first poll (so absent from the run's first snapshots): deleting it
+    after a test would make the engine re-bind under its long pull (the 10012 store race and a
+    0.5 s backoff, the engine's ``TestDurablesDeletedUnderTheEngine``). It goes only with the
+    prefix's streams at the run's end."""
+    import asyncio
 
     jsm = nc.jsm()
     purged = 0
     for stream in prefix_streams(prefix):
+        if stream == _engine_record(prefix):
+            continue
         was = before.subjects.get(stream, {})
         now = await _subjects(jsm, stream, _filter_of(prefix, stream))
         touched = [s for s, n in now.items() if was.get(s) != n]
@@ -370,18 +393,6 @@ async def purge_since(nc: Any, prefix: str, before: Snapshot) -> int:
             touched = [s for s in touched if s in mine]
         await asyncio.gather(*(jsm.purge_stream(stream, subject=s) for s in touched))
         purged += len(touched)
-    for stream in prefix_streams(prefix)[:3]:
-        fresh = [
-            c.name
-            for c in await _consumers(jsm, stream)
-            if f"{stream}/{c.name}" not in before.consumers and durable_of(prefix, c.name)
-        ]
-
-        async def drop(stream: str, name: str) -> None:
-            with contextlib.suppress(NotFoundError):
-                await jsm.delete_consumer(stream, name)
-
-        await asyncio.gather(*(drop(stream, n) for n in fresh))
     return purged
 
 
@@ -463,29 +474,17 @@ async def delete_run_blobs(nc: Any, prefix: str, run_ids: set[str] | frozenset[s
     return len(doomed)
 
 
-async def sweep_run(nc: Any, prefix: str, at_start: frozenset[str]) -> tuple[int, int]:
-    """The run's end, after its engine stopped (nothing re-creates a durable or writes a blob
-    then): the blobs of every run the run's tests touched, by name, and every durable on the work
-    and timers streams that was not there when the run began. What a test that failed or timed out
-    left after its own cleanup is gone with them. Returns (blobs, durables) deleted."""
-    from nats.js.errors import NotFoundError
-
-    blobs = await delete_run_blobs(nc, prefix, RUN_IDS)
-    jsm = nc.jsm()
-    durables = 0
-    for stream in prefix_streams(prefix)[1:3]:
-        for c in await _consumers(jsm, stream):
-            if f"{stream}/{c.name}" in at_start or not durable_of(prefix, c.name):
-                continue
-            with contextlib.suppress(NotFoundError):
-                await jsm.delete_consumer(stream, c.name)
-                durables += 1
-    return blobs, durables
+async def sweep_run(nc: Any, prefix: str) -> int:
+    """The run's end, after its engine stopped (nothing writes a blob then): the blobs of every run
+    the run's tests touched, by name. What a test that failed or timed out left after its own
+    cleanup is gone with them. The durables are not touched: the engine's pair is its own
+    (``purge_since``). Returns the blobs deleted."""
+    return await delete_run_blobs(nc, prefix, RUN_IDS)
 
 
 async def delete_prefix_streams(nc: Any, prefix: str) -> list[str]:
-    """``DE_CLEANUP=delete`` (the default for a generated prefix): the prefix's seven, at the
-    run's end, and nothing else."""
+    """``DE_CLEANUP=delete`` (the default for a generated prefix): the prefix's eight, at the
+    run's end (the pair goes with its streams), and nothing else."""
     from nats.js.errors import NotFoundError
 
     jsm = nc.jsm()

@@ -187,6 +187,38 @@ async def test_start_signal_cancel_one_request_raised() -> None:
     assert [o for o in nc.ops if o != "info"] == ["start", "signal", "cancel"]  # info: the sizes
 
 
+# --- the signal id (engine #19: signals deduplicated by id) --------------------------------------
+
+
+async def test_the_signal_id_is_sent_as_given_or_as_a_generated_uuid() -> None:
+    bodies: list[dict[str, Any]] = []
+
+    def answer(op: str, body: dict[str, Any]) -> Any:
+        if op != "signal":
+            return INFO
+        bodies.append(body)
+        return {"ok": True, "id": body["id"]}
+
+    c = create_client(FakeNc(answer))  # type: ignore[arg-type]
+    await c.signal("r1", "go", 1, id="mine-1")
+    await c.signal("r1", "go", 1)
+    await c.signal("r1", "go", 1)
+    assert bodies[0]["id"] == "mine-1"
+    assert re.fullmatch(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", bodies[1]["id"]
+    )
+    assert bodies[2]["id"] != bodies[1]["id"]
+
+
+@pytest.mark.parametrize("bad", ["", "has space", "a.b", "a~b", "line\n"])
+async def test_an_invalid_signal_id_is_refused_before_any_request(bad: str) -> None:
+    nc = FakeNc(lambda *_: {"ok": True})
+    c = create_client(nc)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match=r"^signal id must be ASCII alphanumeric"):
+        await c.signal("r1", "go", 1, id=bad)
+    assert nc.ops == []
+
+
 async def test_result_raises_at_once_where_unavailable_is_asked_again() -> None:
     nc = FakeNc(lambda *_: _refusal("tenant_limit", limit="rate"))
     c = create_client(nc)  # type: ignore[arg-type]

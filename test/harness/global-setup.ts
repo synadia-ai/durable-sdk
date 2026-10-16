@@ -193,7 +193,7 @@ async function setupExisting(ctx: SetupContext, ex: ExistingServer): Promise<() 
         : `engine: DE_ENGINE_URL ${ex.engineUrl!} (not started by the harness)\n`),
   );
   if (engineBin !== null) {
-    // The run's engine provisions the seven of the prefix, or says why not (a tier too small).
+    // The run's engine provisions the eight of the prefix, or says why not (a tier too small).
     try {
       await run.ensure({});
     } catch (e) {
@@ -243,20 +243,19 @@ async function setupExisting(ctx: SetupContext, ex: ExistingServer): Promise<() 
       const metrics = await engineMetrics(ex, run);
       await run.stop();
       licence?.remove();
-      // The engine stopped, nothing re-creates a durable or writes a blob: what a test that failed
-      // or timed out left after its own cleanup goes now (docs/findings.md F33).
-      const swept = await sweepRun(nc, scope, run.runIds, atStart);
-      // Under DE_ENGINE_URL the engine still runs: a poll a late-stopped worker had in flight can
-      // bind a durable after the sweep (a tenant run left four so). Again after a pause, until a
-      // round finds nothing (docs/findings.md F38).
+      // The engine stopped, nothing writes a blob: what a test that failed or timed out left after
+      // its own cleanup goes now (docs/findings.md F33). The pair stays: it is the engine's, and
+      // goes with the prefix's streams (existing.ts purgeSince).
+      const swept = await sweepRun(nc, scope, run.runIds);
+      // Under DE_ENGINE_URL the engine still runs: a late-stopped worker's step can put a blob
+      // after the sweep. Again after a pause, until a round finds nothing (docs/findings.md F38).
       for (let round = 0; run.external && round < 3; round++) {
         await new Promise((r) => setTimeout(r, 2_000 * factor));
-        const again = await sweepRun(nc, scope, run.runIds, atStart);
+        const again = await sweepRun(nc, scope, run.runIds);
         swept.blobs += again.blobs;
-        swept.durables += again.durables;
-        if (again.blobs + again.durables === 0) break;
+        if (again.blobs === 0) break;
       }
-      console.warn(`the run's end: ${String(swept.blobs)} blobs of its ${String(run.runIds.size)} runs and ${String(swept.durables)} durables deleted`); // prettier-ignore
+      console.warn(`the run's end: ${String(swept.blobs)} blobs of its ${String(run.runIds.size)} runs deleted`); // prettier-ignore
       await report(nc, ex, run, metrics);
       if (ex.deleteAtEnd) {
         const gone = await deletePrefixStreams(nc, ex.prefix);

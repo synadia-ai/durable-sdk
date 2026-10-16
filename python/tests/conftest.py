@@ -351,7 +351,7 @@ def leftover_message(left: list[str], where: str) -> str:
 async def delete_all_streams(nc: Any) -> int:
     """Delete every stream on the server (KV buckets and object stores are streams too).
 
-    The owner of a test prefix's seven streams: the shared server is the suite's own, and under an
+    The owner of a test prefix's eight streams: the shared server is the suite's own, and under an
     account profile the stream cap is 16 — two prefixes — so what a test provisions must be gone
     before the next test starts, not at the end of the run.
     """

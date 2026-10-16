@@ -166,6 +166,7 @@ function flagsOf(o: EngineFlags): EngineFlags {
   if (o.maintenanceIntervalMs !== undefined) f.maintenanceIntervalMs = o.maintenanceIntervalMs;
   if (o.reconcileGraceMs !== undefined) f.reconcileGraceMs = o.reconcileGraceMs;
   if (o.offloadThreshold !== undefined) f.offloadThreshold = o.offloadThreshold;
+  if (o.noJournalMaxAgeMs !== undefined) f.noJournalMaxAgeMs = o.noJournalMaxAgeMs;
   return f;
 }
 
@@ -271,9 +272,9 @@ export function createClient(opts: ClientOptions & EngineFlags): Client {
       return wrap(await c.start(workflow, input, o));
     },
     get: (runId) => wrap(c.get(runId)),
-    async signal(runId, name, data) {
+    async signal(runId, name, data, o) {
       await ready();
-      return c.signal(runId, name, data);
+      return c.signal(runId, name, data, o);
     },
     async cancel(runId, o) {
       await ready();
