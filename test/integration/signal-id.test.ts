@@ -137,7 +137,9 @@ describe("the signal id", () => {
       const client = createClient({ nc, prefix: PREFIX });
       const h = await client.start(rolls, { n: 0 });
       await waitUntil(async () => (await h.status()).state === "suspended", 10_000, "generation 0 parked"); // prettier-ignore
-      await client.signal(h.runId, "go", "first", { id: "roll-1" }); // journaled in generation 0
+      // The first try is journaled in generation 0, the run the retry names too: one of the two
+      // journals the engine looks in (the other, the generation current at the retry, is _g1).
+      await client.signal(h.runId, "go", "first", { id: "roll-1" });
       const gen1 = `${h.runId}_g1`;
       await waitUntil(async () => (await client.get(gen1).status()).state === "suspended", 10_000, "generation 1 parked"); // prettier-ignore
       await client.signal(h.runId, "go", "first", { id: "roll-1" }); // the retry: answered ok

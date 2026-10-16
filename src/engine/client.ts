@@ -50,10 +50,11 @@ export interface Client {
    * UUID is generated when it is absent. **A retry passes the same id:** a caller that sends the
    * signal again after an `EngineUnavailableError`, a timeout, or a restart of its own process
    * passes the id of the first try, and the engine then answers `ok` and journals nothing more.
-   * Without an id each call is a new signal. The same id is recognised in the run named, or in the
-   * generation the request reaches when the run has continued (continue-as-new); a retry that
-   * reaches a generation two or more rollovers past the one that journaled it is journaled again
-   * there. The id dedups one signal: two signals with the same name and different ids are two.
+   * Without an id each call is a new signal. The id is looked for in two journals only: the run the
+   * request names and the generation current when the request arrives. A signal journaled in any
+   * other generation (one that was current at the first try and has continued since) is not
+   * recognised, and is journaled again. The id dedups one signal: two signals with the same name
+   * and different ids are two.
    */
   signal<T>(runId: string, name: string, data: T, opts?: { id?: string }): Promise<void>;
   /**

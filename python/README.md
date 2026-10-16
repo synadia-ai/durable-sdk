@@ -72,7 +72,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-**A signal's id.** Every `client.signal` carries an id, a generated UUID unless you pass your own: `await client.signal(run_id, "payment", data, id="pay-c-42")` (`[A-Za-z0-9_-]+`, checked before any request). A retry passes the same id: if you send a signal again after an `EngineUnavailableError`, a timeout, or a restart of your own process, pass the id of the first try, and the engine answers `ok` and journals nothing more. Without an id each call is a new signal. The engine recognises the id in the run named, or in the generation the request reaches when the run has continued (continue-as-new); a retry that reaches a generation two or more rollovers past the one that journaled it is journaled again there. The id dedups one signal: two signals with the same name and different ids are two signals.
+**A signal's id.** Every `client.signal` carries an id, a generated UUID unless you pass your own: `await client.signal(run_id, "payment", data, id="pay-c-42")` (`[A-Za-z0-9_-]+`, checked before any request). A retry passes the same id: if you send a signal again after an `EngineUnavailableError`, a timeout, or a restart of your own process, pass the id of the first try, and the engine answers `ok` and journals nothing more. Without an id each call is a new signal. The id is looked for in two journals only: the run the request names and the generation current when the request arrives. A signal journaled in any other generation (one that was current at the first try and has continued since) is not recognised, and is journaled again. The id dedups one signal: two signals with the same name and different ids are two signals.
 
 ### Using it from your own project
 

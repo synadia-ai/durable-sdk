@@ -136,7 +136,9 @@ async def test_a_retry_after_a_rollover_is_recognised_in_the_run_named(
         client = create_client(nc, prefix=prefix)
         h = await client.start(wf, {"n": 0})
         await _until(lambda: _suspended(client, h.run_id), 10.0, "generation 0 parked")
-        await client.signal(h.run_id, "go", "first", id="roll-1")  # journaled in generation 0
+        # The first try is journaled in generation 0, the run the retry names too: one of the two
+        # journals the engine looks in (the other, the generation current at the retry, is _g1).
+        await client.signal(h.run_id, "go", "first", id="roll-1")
         gen1 = f"{h.run_id}_g1"
         await _until(lambda: _suspended(client, gen1), 10.0, "generation 1 parked")
         await client.signal(h.run_id, "go", "first", id="roll-1")  # the retry: answered ok
