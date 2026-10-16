@@ -151,9 +151,11 @@ class Ctx(Protocol):
     run_id: str
     workflow: str
     version: int
-    #: Redelivery attempt of the current frontier (1 on first delivery). NOT journaled, so it is
-    #: inherently nondeterministic: fine for logging inside a step, a replay-divergence footgun if
-    #: workflow control flow branches on it.
+    #: The delivery count of the current frontier (1 on the first delivery). It counts every
+    #: delivery, including an item handed back between engine instances, so it is not a count of
+    #: failures. Not journaled: a crash resets it. Inherently nondeterministic, so a replay sees a
+    #: different value than the execution it replays: fine for logging inside a step, a
+    #: replay-divergence footgun if workflow control flow branches on it.
     attempt: int
 
     async def run(

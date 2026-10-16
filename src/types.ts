@@ -61,10 +61,11 @@ export interface Ctx {
   readonly workflow: string;
   readonly version: number;
   /**
-   * Redelivery attempt of the current frontier (1 on first delivery). Inherently NONDETERMINISTIC:
-   * it is not journaled, so a replay sees a different value than the execution it replays. Fine
-   * inside a step fn (logging, attempt-aware alerting); branching workflow control flow on it is a
-   * replay-divergence footgun.
+   * The delivery count of the current frontier (1 on the first delivery). It counts every delivery,
+   * including an item handed back between engine instances, so it is not a count of failures. Not
+   * journaled: a crash resets it. Inherently NONDETERMINISTIC, so a replay sees a different value
+   * than the execution it replays: fine inside a step fn (logging), a replay-divergence footgun if
+   * workflow control flow branches on it.
    */
   readonly attempt: number;
 
