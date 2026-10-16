@@ -218,11 +218,27 @@ class Client:
         """A handle to an existing run, without starting anything."""
         return RunHandle(self, run_id)
 
-    async def signal(self, run_id: str, name: str, data: Any) -> None:
-        """Deliver an external signal to a parked run (PROTOCOL §8). An unknown run raises
-        :class:`~synadia_durable._engine.errors.RunNotFoundError`, a :class:`LookupError`."""
+    async def signal(self, run_id: str, name: str, data: Any, *, id: str | None = None) -> None:
+        """Deliver an external signal to a run, for ``ctx.await(name)`` (PROTOCOL §8). The engine
+        journals it before it answers, so two calls, each after the other's return, are journaled
+        in that order. An unknown run raises
+        :class:`~synadia_durable._engine.errors.RunNotFoundError`, a :class:`LookupError`.
+
+        ``id`` is the signal's idempotency key (``[A-Za-z0-9_-]+``, checked before any request); a
+        UUID is generated when it is ``None``. **A retry passes the same id:** a caller that sends
+        the signal again after an ``EngineUnavailableError``, a timeout, or a restart of its own
+        process passes the id of the first try, and the engine then answers ``ok`` and journals
+        nothing more. Without an id each call is a new signal. The same id is recognised in the run
+        named, or in the generation the request reaches when the run has continued
+        (continue-as-new); a retry that reaches a generation two or more rollovers past the one
+        that journaled it is journaled again there. The id dedups one signal: two signals with the
+        same name and different ids are two.
+        """
         assert_token("runId", run_id)
-        body: dict[str, Any] = {"runId": run_id, "name": name}
+        if id is not None:
+            assert_token("signal id", id)
+        # An id always goes with the request, so a retry of this call can pass it.
+        body: dict[str, Any] = {"runId": run_id, "name": name, "id": id or str(uuid.uuid4())}
         body |= await fit_slot(
             "data", data, self._payload_codec, run_id, body, self._sizes, self._blobs
         )

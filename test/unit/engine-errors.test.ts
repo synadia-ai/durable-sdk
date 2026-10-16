@@ -155,6 +155,30 @@ describe("no client call retries a limit", () => {
   });
 });
 
+describe("the signal id (engine #19: signals deduplicated by id)", () => {
+  it("is sent as given, or as a generated UUID", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const { nc } = fakeNc((op, body) => {
+      if (op === "signal") bodies.push(body);
+      return op === "signal" ? { ok: true, id: body.id } : INFO;
+    });
+    const c = createClient({ nc });
+    await c.signal("r1", "go", 1, { id: "mine-1" });
+    await c.signal("r1", "go", 1);
+    await c.signal("r1", "go", 1);
+    expect(bodies[0]!.id).toBe("mine-1");
+    expect(bodies[1]!.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(bodies[2]!.id).not.toBe(bodies[1]!.id);
+  });
+
+  it.each(["", "has space", "a.b", "a~b", "line\n"])("%j is refused before any request", async (id) => {
+    const { nc, ops } = fakeNc(() => ({ ok: true }));
+    const c = createClient({ nc });
+    await expect(c.signal("r1", "go", 1, { id })).rejects.toThrow(/^signal id must be ASCII alphanumeric/); // prettier-ignore
+    expect(ops).toEqual([]);
+  });
+});
+
 describe("a worker refused at a limit is loud, never quiet", () => {
   it("start() rejects when its first poll is refused, and runs nothing", async () => {
     const { nc, ops } = fakeNc((op) => (op === "poll" ? refusal("licence_limit", { limit: "workflows" }) : INFO)); // prettier-ignore

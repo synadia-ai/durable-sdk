@@ -794,9 +794,9 @@ class EngineClient:
     def get(self, run_id: str) -> EngineHandle:
         return EngineHandle(self, self._c.get(run_id))
 
-    async def signal(self, run_id: str, name: str, data: Any) -> None:
+    async def signal(self, run_id: str, name: str, data: Any, *, id: str | None = None) -> None:
         await self.ready()
-        await self._c.signal(run_id, name, data)
+        await self._c.signal(run_id, name, data, id=id)
 
     async def cancel(self, run_id: str, reason: str | None = None) -> None:
         await self.ready()

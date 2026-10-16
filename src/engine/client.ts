@@ -42,7 +42,20 @@ const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 export interface Client {
   start<I, O>(workflow: Workflow<I, O>, input: I, opts?: StartOptions): Promise<Handle<O>>;
   get<O = unknown>(runId: string): Handle<O>;
-  signal<T>(runId: string, name: string, data: T): Promise<void>;
+  /**
+   * Send a signal to a run, for `ctx.await(name)` (PROTOCOL.md §8). The engine journals it before it
+   * answers, so two calls, each after the other's return, are journaled in that order.
+   *
+   * `opts.id` is the signal's idempotency key (`[A-Za-z0-9_-]+`, checked before any request); a
+   * UUID is generated when it is absent. **A retry passes the same id:** a caller that sends the
+   * signal again after an `EngineUnavailableError`, a timeout, or a restart of its own process
+   * passes the id of the first try, and the engine then answers `ok` and journals nothing more.
+   * Without an id each call is a new signal. The same id is recognised in the run named, or in the
+   * generation the request reaches when the run has continued (continue-as-new); a retry that
+   * reaches a generation two or more rollovers past the one that journaled it is journaled again
+   * there. The id dedups one signal: two signals with the same name and different ids are two.
+   */
+  signal<T>(runId: string, name: string, data: T, opts?: { id?: string }): Promise<void>;
   /**
    * Request cancellation of a run (idempotent; no-op on an already-terminal run). Cancellation is an
    * uncatchable hard-stop at the run's next COMMAND BOUNDARY: recorded commands still replay, but the
@@ -226,9 +239,12 @@ export function createClient(opts: ClientOptions): Client {
       return makeHandle<O>(runId);
     },
 
-    async signal<T>(runId: string, name: string, data: T): Promise<void> {
+    async signal<T>(runId: string, name: string, data: T, o?: { id?: string }): Promise<void> {
       assertToken("runId", runId);
-      await request("signal", { runId, name, ...(await fitSlot("data", data, codec, runId, { runId, name }, fit, blobs)) }); // prettier-ignore
+      if (o?.id !== undefined) assertToken("signal id", o.id);
+      // An id always goes with the request, so a retry of this call can pass it (Client.signal).
+      const id = o?.id ?? globalThis.crypto.randomUUID();
+      await request("signal", { runId, name, id, ...(await fitSlot("data", data, codec, runId, { runId, name, id }, fit, blobs)) }); // prettier-ignore
     },
 
     async cancel(runId: string, o?: { reason?: string }): Promise<void> {
