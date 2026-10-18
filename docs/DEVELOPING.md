@@ -43,7 +43,7 @@ DE_TEST_RTT_MS=150 npm run test:integration     # every round trip 150 ms, the e
 (cd python && uv run pytest tests/integration -rs)   # 78 passed, 22 skipped, ~60 s
 ```
 
-**The dev NGS run** (the coordinator's, on Mario's word; nothing here runs it):
+**The dev NGS run** (the coordinator's, on Mario's word; nothing here runs it). **Dead since 2026-10-17:** `tenant-a-dev` and the other dev accounts were deleted to give production their room; the recipe and the figures below are kept as a record:
 
 ```sh
 # at the PR's head, e.g. ../wt/durable-sdk; the engine built from a clean checkout of engine.pin
