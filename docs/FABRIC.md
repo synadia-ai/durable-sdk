@@ -12,7 +12,7 @@ Walked on 2026-10-05 with the engine at `97a1778`, `engine.pin` then, on a local
 | the tenant's **service import** of the engine's API | `de.api.>`, imported from the DE account with `share: true`                                                                                                                  | the console's onboarding, once per tenant |
 | this SDK                                            | `npm install @synadia-ai/durable` (TypeScript); `synadia-durable` (Python) unpublished: [Using it from your own project](../python/README.md#using-it-from-your-own-project) |                                           |
 
-**Where these come from:** your tenant's console. Its onboarding made the import; its Account page mints a user and gives you the creds file and the fabric's NATS URL (the fabric's onboarding guide; on staging the URL is `tls://connect.ngs.synadia-test.com:4222`). Nothing in this SDK provisions any of it.
+**Where these come from:** your tenant's console. Its onboarding made the import; its Account page mints a user and gives you the creds file and the fabric's NATS URL (the fabric's onboarding guide; on production NGS the URL is `tls://connect.ngs.global`, on staging `tls://connect.ngs.synadia-test.com:4222`). Nothing in this SDK provisions any of it.
 
 That is all. **No durable rights:** the user needs no right on a stream, a bucket or an object store, only to publish on `de.api.>`. **No provisioning and no sizing:** the engine's resources live in the DE account, and a worker's first poll binds the tenant's one durable pair there; the names it polls for join the tenant's set, kept a week past their last poll. **No licence:** `DE_LICENCE` and `--licence` are standalone's. The agent creates nothing.
 
