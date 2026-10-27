@@ -2,8 +2,8 @@
 //   ctx.run   (durable steps)        ctx.sleep (a durable timer, native scheduling)
 //   ctx.await (an external signal)   ctx.call  (a sub-workflow)
 // plus client.start / signal / result / status. (ctx.continueAsNew and ctx.await's
-// timeoutMs are also part of v0.1 — see durable-engine docs/protocol/PROTOCOL.md §11.4 and §8 —
-// but aren't exercised here.)
+// timeoutMs are also part of v0.1, in the engine's protocol specification, but aren't
+// exercised here.)
 //
 //   1. start a local nats-server:  nats-server -js
 //   2. run:                        NATS_URL=nats://127.0.0.1:4222 npm run example:charge   (on the fabric: NATS_URL=<the fabric> NATS_CREDS=<your creds file>)
@@ -95,7 +95,7 @@ async function main(): Promise<void> {
 
     // simulate the payment webhook firing a moment later. Over a slow link the signal may land
     // before the workflow reaches its `await`: the engine journals it and the run takes it on the
-    // next replay (durable-engine F51), so the 400 ms is for the narration, not for correctness.
+    // next replay, so the 400 ms is for the narration, not for correctness.
     await new Promise((r) => setTimeout(r, 400));
     console.log("approving payment via client.signal(...)");
     await client.signal(handle.runId, "payment", { approved: true });

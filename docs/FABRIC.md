@@ -1,8 +1,8 @@
 # On the fabric
 
-How a workflow author runs this SDK on the Synadia Agent Fabric, in either language. The SDK is the same one as standalone, and so is the code; the connection differs, and the limits. This page is the user's side. The operator's side (the engine in the DE account, its tenants' limits, onboarding) is the engine's `docs/OPERATIONS.md` and the console's. The contract under both is the engine's `docs/API.md`, "Tenancy", at `engine.pin`.
+How a workflow author runs this SDK on the Synadia Agent Fabric, in either language. The SDK is the same one as standalone, and so is the code; the connection differs, and the limits. This page is the user's side. The operator's side (the engine in the DE account, its tenants' limits, onboarding) is the fabric operator's. The contract under both is the engine's `API.md`, "Tenancy", the document shipped with the engine.
 
-Walked on 2026-10-05 with the engine at `97a1778`, `engine.pin` then, on a local three-account server with the engine's fabric build in tenancy mode ([Walk it locally](#walk-it-locally)), not on the fabric itself. It was not walked again since. `engine.pin` is `91ac210` now (the engine's #18 to #21, on staging since 2026-10-16). The floor is `withdrawn-remembered`, the engine's #13 (`16cb3da`): the SDK needs an engine that announces it in `info.capabilities`, and `worker.start()` rejects an older one with `UnsupportedEngineError` (`docs/DEVELOPING.md` "Errors", `docs/findings.md` F45). On the fabric the engine is the operator's: an `UnsupportedEngineError` there means the fabric's engine is older than this SDK, theirs to upgrade.
+`engine.pin` (`91ac210`) names the engine version this SDK was last tested against. The SDK's floor is an engine that announces `withdrawn-remembered` in `info.capabilities`: `worker.start()` rejects an older one with `UnsupportedEngineError` (`docs/DEVELOPING.md`, "Errors"). On the fabric the engine is the operator's: an `UnsupportedEngineError` there means the fabric's engine is older than this SDK, theirs to upgrade.
 
 ## What you need
 
@@ -12,7 +12,7 @@ Walked on 2026-10-05 with the engine at `97a1778`, `engine.pin` then, on a local
 | the tenant's **service import** of the engine's API | `de.api.>`, imported from the DE account with `share: true`                                                                                                                  | the console's onboarding, once per tenant |
 | this SDK                                            | `npm install @synadia-ai/durable` (TypeScript); `synadia-durable` (Python) unpublished: [Using it from your own project](../python/README.md#using-it-from-your-own-project) |                                           |
 
-**Where these come from:** your tenant's console. Its onboarding made the import; its Account page mints a user and gives you the creds file and the fabric's NATS URL (the fabric's onboarding guide; on production NGS the URL is `tls://connect.ngs.global`, on staging `tls://connect.ngs.synadia-test.com:4222`). Nothing in this SDK provisions any of it.
+**Where these come from:** your tenant's console. Its onboarding made the import; its Account page mints a user and gives you the creds file and the fabric's NATS URL (the fabric's onboarding guide; the URL is `tls://connect.ngs.global`). Nothing in this SDK provisions any of it.
 
 That is all. **No durable rights:** the user needs no right on a stream, a bucket or an object store, only to publish on `de.api.>`. **No provisioning and no sizing:** the engine's resources live in the DE account, and a worker's first poll binds the tenant's one durable pair there; the names it polls for join the tenant's set, kept a week past their last poll. **No licence:** `DE_LICENCE` and `--licence` are standalone's. The agent creates nothing.
 
@@ -52,7 +52,7 @@ from synadia_durable import create_client, create_worker, with_reconnect_default
 # inside your async main(), as in the README's quickstart
 nc = await nats.connect(
     "tls://connect.ngs.global",
-    user_credentials=os.environ["NATS_CREDS"],  # needs nkeys: pip install 'nats-py[nkeys]' (findings F30)
+    user_credentials=os.environ["NATS_CREDS"],  # needs nkeys: pip install 'nats-py[nkeys]'
     **with_reconnect_defaults(),
 )
 worker = create_worker(nc, [order])  # prefix "de", the default
@@ -65,16 +65,16 @@ finally:
     await nc.drain()
 ```
 
-`ctx.attempt` is the item's delivery count, not a count of failures: an item handed back between the engine's instances counts too (the engine's F70; `docs/DEVELOPING.md` "Signals and `attempt`").
+`ctx.attempt` is the item's delivery count, not a count of failures: an item handed back between the engine's instances counts too (`docs/DEVELOPING.md`, "Signals and `attempt`").
 
-The URL is the fabric's; NGS is shown. The examples in [`examples/`](../examples/README.md) and [`python/examples/`](../python/examples/README.md) read `NATS_URL` and, when it is set, `NATS_CREDS`, so they run on the fabric unchanged: `NATS_URL=<the fabric> NATS_CREDS=<your creds file> npm run example:charge` (Python needs `nkeys` for a creds file, F30).
+The URL is the fabric's; NGS is shown. The examples in [`examples/`](../examples/README.md) and [`python/examples/`](../python/examples/README.md) read `NATS_URL` and, when it is set, `NATS_CREDS`, so they run on the fabric unchanged: `NATS_URL=<the fabric> NATS_CREDS=<your creds file> npm run example:charge` (Python needs `nkeys` for a creds file).
 
 ## Where the run lives
 
 | What                                         | Where                                                          | Mechanism                                                                                                  |
 | -------------------------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | the journal                                  | the DE account, `de.<tenant>.journal.<run id>` on `DE_JOURNAL` | the engine takes the tenant from the import's subject alone, never from the request                        |
-| the status, the lease, the timers, the blobs | the DE account, under the tenant's key                         | shared by every tenant, the tenant the first token (`docs/API.md` "The resources")                         |
+| the status, the lease, the timers, the blobs | the DE account, under the tenant's key                         | shared by every tenant, the tenant the first token (the engine's `API.md`, "The resources")                |
 | your account                                 | nothing                                                        | the import is the only thing there                                                                         |
 | who did it                                   | `by` on the `start`, `signal` and `cancel-requested` entries   | the server's stamp of the caller's user at the account boundary (`Nats-Request-Info`), not the SDK's claim |
 
@@ -95,7 +95,7 @@ This SDK knows none of it: it takes the run id and journals the input it is give
 
 ## The limits
 
-A tenant has five limits, set by the fabric's operator (`docs/API.md` "The limits"). A request over one is refused `tenant_limit` with `limit` naming it. No other tenant is affected.
+A tenant has five limits, set by the fabric's operator (the engine's `API.md`, "The limits"). A request over one is refused `tenant_limit` with `limit` naming it. No other tenant is affected.
 
 | `limit`     | Counts                                                            | Refused                                             |
 | ----------- | ----------------------------------------------------------------- | --------------------------------------------------- |
@@ -105,7 +105,7 @@ A tenant has five limits, set by the fabric's operator (`docs/API.md` "The limit
 | `polls`     | polls waiting, per engine instance                                | `poll`                                              |
 | `rate`      | requests per second, per engine instance                          | every op but `done` and `extend`                    |
 
-The SDK surfaces every one as **`LimitError`** (`code` `tenant_limit`, `limit`, the engine's message). **It is a refusal, never retried** (`docs/findings.md` F40):
+The SDK surfaces every one as **`LimitError`** (`code` `tenant_limit`, `limit`, the engine's message). **It is a refusal, never retried:**
 
 | Where                                                             | What happens                                                                                          |
 | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -118,12 +118,12 @@ The totals are eventual by a second: several instances together can pass a limit
 
 ## The refusals
 
-Every refusal on the fabric, with the engine's code (`docs/API.md` "Errors"; mirrored as `ENGINE_ERROR_CODES` in both languages):
+Every refusal on the fabric, with the engine's code (the engine's `API.md`, "Errors"; mirrored as `ENGINE_ERROR_CODES` in both languages):
 
 | `code`                    | On the fabric                                                                                                                    | Error                                                            | What you do                                                                                                                                                                                                                                                                                                    |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `tenant_limit`            | the tenant is at one of its five limits                                                                                          | `LimitError`                                                     | read `limit`; wait for runs to end, or ask the operator                                                                                                                                                                                                                                                        |
-| `licence_limit`           | not expected: the fabric's engine runs with no licence                                                                           | `LimitError`                                                     | ask the operator                                                                                                                                                                                                                                                                                               |
+| `licence_limit`           | not expected: on the fabric you need no licence; Synadia runs the engine                                                         | `LimitError`                                                     | ask the operator                                                                                                                                                                                                                                                                                               |
 | `not_found`               | `signal` or `cancel` of a run that is not **your tenant's** (never started, or another tenant's)                                 | `RunNotFoundError`                                               | check the run id                                                                                                                                                                                                                                                                                               |
 | `invalid`                 | a malformed request; an identifier outside `[A-Za-z0-9_-]+`; a request with no caller identity (an import without `share: true`) | `InvalidRequestError` (inside an execution `SerializationError`) | fix the request; for no identity, the onboarding                                                                                                                                                                                                                                                               |
 | `too_large`               | a value past `request_max` even in parts                                                                                         | `PayloadTooLargeError`                                           | make the value smaller                                                                                                                                                                                                                                                                                         |
@@ -139,7 +139,7 @@ Every refusal on the fabric, with the engine's code (`docs/API.md` "Errors"; mir
 |                      | Standalone                                                            | The fabric                                                                                |
 | -------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | the engine           | yours, next to your NATS: `durable-engine serve`                      | ours, in the DE account: `serve --tenancy`, the fabric build                              |
-| the licence          | required: `--licence FILE` or `DE_LICENCE`                            | none                                                                                      |
+| the licence          | required: `--licence FILE` or `DE_LICENCE`                            | you need none: Synadia runs the engine                                                    |
 | provisioning         | the engine's, at its start, in your account                           | the engine's, in the DE account; nothing in yours                                         |
 | your user's rights   | publish on `de.api.>` (the engine's own user holds the stream rights) | publish on `de.api.>`, through the import                                                 |
 | the prefix           | `de` unless the engine says `--prefix`                                | `de`                                                                                      |
@@ -150,9 +150,7 @@ Every refusal on the fabric, with the engine's code (`docs/API.md` "Errors"; mir
 
 ## Payload privacy
 
-What you pass the SDK — a run's input, a step's result, a signal's data, a child's input, the result — is written into the journal in the engine's account as the entry's payload slot, a value past the inline limit as a blob there. **Without a payload codec it is plaintext**, readable by whoever reads that account: the engine's operator and the fabric's console (its reader shows a run's values in the journal timeline). **With `payloadCodec: aesGcmPayloadCodec(key)` on every worker and client of your tenant** (32 bytes, from your own secret store, never the engine's), the slot is encrypted before it leaves your process and decrypted only there: the engine and the console see a run's shape, its step names, its timing and its status, and never a value (the console shows such a slot as _encrypted_). The key is yours alone; a worker without it cannot replay a run written with it, and a run's slots written without one stay plaintext. The codec's details are the protocol's §5.7 (the wire's `v:3`), and the engine's half — what its operator can and cannot read — is the engine's `docs/OPERATIONS.md`.
-
-**Walked on staging, 2026-10-05:** the quickstart's snippet above, as a tenant's user with its creds file, started a run that completed; its `start` entry in the engine's account carries that user's key as `by`; from another tenant the same run's `status` answered `pending` (the empty record) and a `cancel` was refused `not_found`. The `charge` example ran on staging in both languages with `NATS_CREDS`; one of three TypeScript runs stalled for a while: its signal landed 400 ms after the start, during the run's first execution, the worker appended the `await` and then sent no `done`, the engine's lease lapsed after its ack wait and the item redelivered to the next worker, which completed the run two minutes later (the run lost nothing). Settled since: the engine journals a signal when its request arrives (the engine's F72), so a signal that lands during an execution fences it and the run is driven again at once; and an item sent back unclaimed comes again within about 2 s, its delay capped there (F74). The SDK follows at `engine.pin` `91ac210` (`docs/findings.md` F46).
+What you pass the SDK — a run's input, a step's result, a signal's data, a child's input, the result — is written into the journal in the engine's account as the entry's payload slot, a value past the inline limit as a blob there. **Without a payload codec it is plaintext**, readable by whoever reads that account: the engine's operator and the fabric's console (its reader shows a run's values in the journal timeline). **With `payloadCodec: aesGcmPayloadCodec(key)` on every worker and client of your tenant** (32 bytes, from your own secret store, never the engine's), the slot is encrypted before it leaves your process and decrypted only there: the engine and the console see a run's shape, its step names, its timing and its status, and never a value (the console shows such a slot as _encrypted_). The key is yours alone; a worker without it cannot replay a run written with it, and a run's slots written without one stay plaintext. The codec's details are in the engine's protocol specification (the wire's `v:3`).
 
 ## What the SDK cannot do on the fabric
 
@@ -162,35 +160,3 @@ What you pass the SDK — a run's input, a step's result, a signal's data, a chi
 - **Bypass a limit.** A `LimitError` is never retried in a loop, and nothing the SDK sends raises a limit.
 - **Claim an identity.** `by` is the server's stamp of the connection's user; an entry the SDK appends carrying `by` or `for` is refused `invalid`. `onBehalfOf` is the console's alone.
 - **See the usage records.** They are the engine's, on its own subject in the DE account.
-
-## Walk it locally
-
-The fabric's shape on your laptop: a server with three accounts (`DE`, the engine's; `A`, a tenant; the import between them, as onboarding makes it) and the engine's fabric build in tenancy mode. No licence. From this repo's root, the engine checked out beside it at `engine.pin`:
-
-```sh
-cat > tenancy.conf <<'EOF'
-host: 127.0.0.1
-port: 14322
-jetstream { store_dir: "/tmp/de-tenancy" }
-accounts {
-  DE { jetstream: enabled, users: [ { user: de, password: de } ],
-       exports: [ { service: "de.A.api.>", accounts: [A] } ] }
-  A  { users: [ { user: a-client, password: a-client } ],
-       imports: [ { service: { account: DE, subject: "de.A.api.>" }, to: "de.api.>", share: true } ] }
-}
-EOF
-nats-server -c tenancy.conf &
-(cd ../durable-engine && make build-fabric)                         # bin/durable-engine-fabric: the only build with --tenancy (F43)
-../durable-engine/bin/durable-engine-fabric serve --tenancy --nats nats://de:de@127.0.0.1:14322 &
-nats --server nats://127.0.0.1:14322 --user a-client --password a-client req de.api.v1.info '{}'   # "tenant":{"id":"A",…}
-(cd python && NATS_URL=nats://a-client:a-client@127.0.0.1:14322 uv run python examples/charge.py)
-```
-
-The Python example runs unchanged as tenant A: nats-py reads `user:password@` from the URL. The TypeScript examples do not (nats.js takes no user from a URL), so use the quickstart's snippet with `connect({ servers: "nats://127.0.0.1:14322", user: "a-client", pass: "a-client" })`. Then, as the engine's account, see where the run went and who started it:
-
-```sh
-nats --server nats://127.0.0.1:14322 --user de --password de stream subjects DE_JOURNAL   # de.A.journal.<run id>
-nats --server nats://127.0.0.1:14322 --user de --password de stream get DE_JOURNAL 1      # …,"by":"a-client"}
-```
-
-The integration suites run the same way as a tenant (`DE_TENANT`; `docs/DEVELOPING.md`'s "As a tenant", `docs/findings.md` F38), and `limits` proves a `tenant_limit` refusal end to end (F40).

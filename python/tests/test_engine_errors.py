@@ -1,6 +1,6 @@
 """durable-sdk: the engine's refusal codes, against a fake connection (no server). The twin of
-``test/unit/engine-errors.test.ts``. Every code of the engine's table (``docs/API.md`` "Errors" at
-``engine.pin``) has a class here, so a code the engine adds fails this suite rather than reaching a
+``test/unit/engine-errors.test.ts``. Every code of the engine's table (its ``API.md``, "Errors")
+has a class here, so a code the engine adds fails this suite rather than reaching a
 caller as ``unavailable`` (the engine's F46; F40). The two limit codes are :class:`LimitError`,
 retried by no call: a client's call raises it, a worker's ``start()`` raises it when its first poll
 is refused, a refused poll is logged at error and backs off, and a worker's failing polls say so
@@ -15,7 +15,6 @@ import asyncio
 import json
 import os
 import re
-import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -35,8 +34,6 @@ from synadia_durable._engine.transport import Transport
 from synadia_durable._engine.worker import EveryLog, limit_backoff_s
 
 pytestmark = pytest.mark.asyncio
-
-REPO = Path(__file__).resolve().parents[2]
 
 
 class _Msg:
@@ -99,22 +96,17 @@ async def _body(_ctx: Any, _input: Any) -> str:
 
 WF = define_workflow("lim", _body)
 
-#: An engine at the floor's ``info`` (its #13 and later).
+#: An engine at the floor's ``info`` (commit 16cb3da and later).
 INFO = {"engine": "0.2.0-dev", "commit": "16cb3da", "capabilities": ["withdrawn-remembered"]}
 
 
 def _engines_codes() -> list[str] | None:
-    """The codes of the engine's table at engine.pin, or None without an engine checkout."""
-    src = Path(os.environ.get("DE_ENGINE_REPO") or REPO.parent / "durable-engine")
-    if not (src / ".git").exists():
+    """The codes of the engine's table, read from its API.md at ``DE_ENGINE_API_MD``, or None when
+    that is not given. A path given that cannot be read fails the test."""
+    path = os.environ.get("DE_ENGINE_API_MD", "")
+    if not path:
         return None
-    pin = (REPO / "engine.pin").read_text(encoding="utf-8").strip()
-    try:
-        doc = subprocess.check_output(
-            ["git", "-C", str(src), "show", f"{pin}:docs/API.md"], text=True
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return None
+    doc = Path(path).read_text(encoding="utf-8")
     section = re.split(r"^## Errors$", doc, flags=re.M)[1]
     section = re.split(r"^## ", section, flags=re.M)[0]
     return [c for c in re.findall(r"^\| `([a-z_]+)` \|", section, flags=re.M) if c != "code"]
@@ -123,10 +115,10 @@ def _engines_codes() -> list[str] | None:
 # --- every code of the engine's table has a class (F40) ------------------------------------------
 
 
-async def test_the_mirror_is_the_table_at_engine_pin_code_for_code() -> None:
+async def test_the_mirror_is_the_engines_table_code_for_code() -> None:
     codes = _engines_codes()
     if codes is None:
-        pytest.skip("no engine checkout to read docs/API.md at engine.pin from")
+        pytest.skip("no DE_ENGINE_API_MD: the path of the engine's API.md")
     assert sorted(ENGINE_ERROR_CODES) == sorted(codes)
 
 
@@ -187,7 +179,7 @@ async def test_start_signal_cancel_one_request_raised() -> None:
     assert [o for o in nc.ops if o != "info"] == ["start", "signal", "cancel"]  # info: the sizes
 
 
-# --- the signal id (engine #19: signals deduplicated by id) --------------------------------------
+# --- the signal id (the engine deduplicates signals by id) ---------------------------------------
 
 
 async def test_the_signal_id_is_sent_as_given_or_as_a_generated_uuid() -> None:

@@ -1,5 +1,5 @@
 // durable-sdk: the twin of python/tests/integration/test_metrics.py's "one ordinary run reports the
-// whole path" (docs/findings.md F21): the TypeScript worker emits `journal.load` once per item and
+// whole path" (F21): the TypeScript worker emits `journal.load` once per item and
 // the real size of every appended entry, as the Python worker does, so a dashboard reads one number
 // from both. The library's TypeScript tree has no metrics suite of its own to copy.
 

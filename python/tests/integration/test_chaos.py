@@ -133,7 +133,7 @@ async def test_a_signal_storm_across_four_workers_journals_every_step_exactly_on
         # across more than one worker.
         per_run = Counter(str(f["run_id"]) for f in sink.named("work.done"))
         # durable-sdk: assertion re-expressed through the engine (`info`), as the TypeScript matrix
-        # suite's `drives.piledUp` (docs/findings.md F10, F11). The engine hands a run's items to
+        # suite's `drives.piledUp` (F10, F11). The engine hands a run's items to
         # polls one at a time and acks an ended run's items itself, so most of a storm never
         # reaches a worker and `work.done` per run stays below 3 however hard it piled up. What
         # piles up is the engine's `de_engine_items_pulled_total` for the workflow: "driven >= 3
@@ -276,7 +276,7 @@ async def test_a_fan_out_survives_the_same_treatment(nc: Any, prefix: str) -> No
 # durable-sdk: "a fenced inbound event is retried, not lost" is dropped. It injected the fence by
 # patching the worker's own journal (`worker._journal.append`); recording an inbound event is the
 # engine's now (it journals the event before the poll hands the item out, retried past a fence:
-# durable-engine core.RecordInbound and its tests), and no SDK request carries it. The TypeScript
+# the engine's own tests prove it), and no SDK request carries it. The TypeScript
 # twin dropped the same test (test/integration/e2e.test.ts).
 
 

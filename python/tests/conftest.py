@@ -181,8 +181,7 @@ class LocalServer:
 
 
 def render_tenancy_config(port: int, store: str, prefix: str, tenants: list[str]) -> str:
-    """A server for the engine's fabric mode, as the engine's tests set one up
-    (``internal/testserver.TenancyConfig``): the account ``DE`` (user ``de``) exports
+    """A server for the engine's fabric mode, as the engine's tests set one up: the account ``DE`` (user ``de``) exports
     ``{prefix}.{T}.api.>`` to each tenant ``T``, whose account imports it as ``{prefix}.api.>`` with
     ``share: true``; users ``de``, ``<t>-client`` and ``<t>-worker``, each password its name. The
     twin of ``renderTenancyConfig`` in ``test/harness/nats-server.ts``."""

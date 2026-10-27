@@ -68,7 +68,7 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
     await nc.drain();
   });
 
-  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // durable-sdk: F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
   it(
     "multi-MiB input and step values round-trip; the stream carries refs, the bucket the bytes",
@@ -122,7 +122,7 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
     budget(30_000, 5),
   );
 
-  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // durable-sdk: F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
   it(
     "crash mid-run: a FRESH worker resolves blobs from the store and replays without re-executing",
@@ -161,7 +161,7 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
     budget(30_000, 4),
   );
 
-  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // durable-sdk: F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
   it(
     "a missing blob PARKS the run (loud, never a terminal) and a restored blob heals it",
@@ -199,7 +199,7 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
         // NAK with the distinct outcome, and the run's status never becomes a terminal.
         await client.signal(handle.runId, "go", null);
         // durable-sdk: the engine reads the journal before it hands an item over, so the parking is
-        // the engine's decision (docs/findings.md F10, F23): its `parked` ack, which `info` counts,
+        // the engine's decision (F10, F23): its `parked` ack, which `info` counts,
         // or the worker's outcome when a gone blob reaches it as `blob_gone` (the engine's F30,
         // the library's BlobMissingError since this repo's F31).
         const parked = async (): Promise<boolean> =>
@@ -223,7 +223,7 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
 
   // durable-sdk: the engine's F30 (`blob_gone`, naming the blob), which the transport makes the
   // library's BlobMissingError, or BlobIntegrityError for bytes that are not the digest's
-  // (docs/findings.md F31). Not the library's: its blob store was its own.
+  // (F31). Not the library's: its blob store was its own.
   it("blob_gone: a gone blob is BlobMissingError and a corrupt one BlobIntegrityError, at get and at result, and a restored one heals", async () => {
     const prefix = "off7";
     // The engine offloads past 1 KiB, so an 8 KiB result is a ref in the journal that `result`
@@ -270,7 +270,7 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
     }
   });
 
-  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // durable-sdk: F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
   it(
     "a multi-MiB SIGNAL rides the work queue as a ref and the journal entry carries it verbatim",
@@ -307,7 +307,7 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
     budget(30_000, 4),
   );
 
-  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // durable-sdk: F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
   it(
     "a big child INPUT and big child RESULT flow as refs through call/start/result/child-done/resolve",
@@ -343,10 +343,10 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
     budget(30_000 + BIG_CHILD_PER_RTT_MS * rtt, 12),
   );
 
-  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // durable-sdk: F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
   // durable-sdk: 1.5 × max_payload up, then down and up again per generation: 7.5 in the tally.
-  // The dev NGS run of 2026-10-04 timed it out at its 44.7 s of round-trip factor alone.
+  // A run against a remote server timed it out at its 44.7 s of round-trip factor alone.
   it(
     "a big continue-as-new INPUT crosses generations as refs",
     async () => {
@@ -370,7 +370,7 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
     budget(30_000, 8),
   );
 
-  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // durable-sdk: F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
   it(
     "a multi-MiB failure MESSAGE offloads (fail entry + KV hint) and result() rejects with it",
@@ -398,7 +398,7 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
     budget(30_000, 3),
   );
 
-  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // durable-sdk: F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
   it(
     "a multi-MiB RESULT round-trips and the KV hint stores a ref, not the value",
@@ -434,7 +434,7 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
     budget(30_000, 6),
   );
 
-  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // durable-sdk: F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
   it(
     "cancelling a run with offloaded entries stays clean (cancelled terminal, no value fetches needed)",
@@ -477,7 +477,7 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
       const handle = await client.start(wf, 20);
       expect(await handle.result(15_000)).toBe(41);
       // durable-sdk: against an existing server the run's own blobs, not the bucket's: the prefix
-      // is shared with the run's other tests and whatever a failed one left (docs/findings.md F33).
+      // is shared with the run's other tests and whatever a failed one left (F33).
       const all = await listObjects(nc, names(prefix).blobsBucket);
       expect(EXISTING ? all.filter((o) => o.name.startsWith(`${handle.runId}/`)) : all).toHaveLength(0); // prettier-ignore
     } finally {

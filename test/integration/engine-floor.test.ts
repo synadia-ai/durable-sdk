@@ -1,7 +1,7 @@
-// The engine's floor and the one withdrawal (docs/findings.md F45), against a real nats-server.
+// The engine's floor and the one withdrawal (F45), against a real nats-server.
 //
 // The floor: worker.start() reads `info.capabilities` and refuses an engine that does not announce
-// `withdrawn-remembered` (the engine's F53, announced from its #13), naming it by `engine` and
+// `withdrawn-remembered` (the engine's F53, from commit 16cb3da), naming it by `engine` and
 // `commit`, never by its version. A stub responder on a prefix of the test's own answers `info`
 // as an older engine would, and as one at the floor; and, for a start that found no engine, only
 // after start() has resolved, so the first answered poll checks the floor and stops the worker.

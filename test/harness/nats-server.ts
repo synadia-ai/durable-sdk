@@ -172,8 +172,7 @@ export function renderConfig(port: number, store: string, limits: ServerLimits |
 }
 
 /**
- * A server for the engine's fabric mode, as the engine's tests set one up
- * (`internal/testserver.TenancyConfig`): the account `DE` (user `de`) exports `{prefix}.{T}.api.>`
+ * A server for the engine's fabric mode, as the engine's tests set one up: the account `DE` (user `de`) exports `{prefix}.{T}.api.>`
  * to each tenant `T`, whose account imports it as `{prefix}.api.>` with `share: true`; users
  * `de`, `<t>-client` and `<t>-worker`, each password its name.
  */

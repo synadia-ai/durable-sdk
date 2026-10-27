@@ -1,4 +1,4 @@
-"""The call-level roster, re-expressed for the thin SDK (``docs/findings.md`` F4, F15). Twin of
+"""The call-level roster, re-expressed for the thin SDK (F4, F15). Twin of
 ``test/unit/call-roster.test.ts``.
 
 The library's suite of this name (``7456c75`` ``python/tests/test_call_roster.py``) pins every
@@ -10,7 +10,7 @@ nats-py's core alone. It creates no consumer, stream, bucket or subscription, pu
 and names no JetStream subject. A new call fails here, and whoever added it comes and says why —
 the conversation the library's roster exists to force.
 
-It is also the brief's grep: ``pyproject.toml`` depends on ``nats-py`` alone, and no file under
+It also checks that ``pyproject.toml`` depends on ``nats-py`` alone, and that no file under
 ``src/`` imports its JetStream, KV or object-store modules.
 """
 

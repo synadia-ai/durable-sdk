@@ -1,4 +1,4 @@
-// The call-level roster, re-expressed for the thin SDK (durable-sdk docs/findings.md F4).
+// The call-level roster, re-expressed for the thin SDK (F4).
 //
 // The library's suite of this name (7456c75 test/unit/call-roster.test.ts) pins every method the
 // library invokes on the broker's client libraries, by file, under src/nats/. That directory is
@@ -9,8 +9,8 @@
 // publishes nothing, and names no JetStream subject. A new call fails here, and whoever added it
 // comes and says why — the conversation the library's roster exists to force.
 //
-// It is also the brief's grep: package.json lists no @nats-io/jetstream, kv or obj among the
-// dependencies, and no file under src/ imports them.
+// It also checks that package.json lists no @nats-io/jetstream, kv or obj among the
+// dependencies, and that no file under src/ imports them.
 
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -96,7 +96,7 @@ describe("where the broker is spoken to at all", () => {
 
   it("every request goes through the one transport, to {prefix}.api.v1.<op>", () => {
     // durable-sdk: `rtt` is a PING to the server, no subject: the blob store's `put` scales its
-    // wait with it (docs/findings.md F33).
+    // wait with it (F33).
     expect(roster(lib, NC)).toEqual([
       "engine/client.ts: isClosed, rtt, status",
       "engine/transport.ts: request",

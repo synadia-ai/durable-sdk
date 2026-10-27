@@ -90,7 +90,7 @@ async def _engine_outcomes(nc: Any, prefix: str, labels: list[str]) -> list[str]
     repeated by its count), for the assertions that read the library worker's ``work.done``
     outcomes. A terminal re-drive and a missing journal are decided in the engine now and never
     reach a worker; the engine counts them in ``de_engine_acks_total{outcome, ack}`` (``info``).
-    Order is not observable through counts (docs/findings.md F10)."""
+    Order is not observable through counts (F10)."""
     counts = await engine_counts(nc, prefix)
     return [
         label
@@ -204,7 +204,7 @@ async def test_a_work_item_for_a_run_with_no_journal_retries_then_drops(
 # durable-sdk: "an event append that keeps fencing NAKs rather than losing the event" is dropped.
 # It injected the fences by patching the worker's own NatsJournal.append; recording the signal is
 # the engine's now (journaled before the poll hands the item out, nak'd when every attempt is
-# fenced: durable-engine core.RecordInbound, engine.TestRecordInbound*), and no SDK request carries
+# fenced, as the engine's own tests prove), and no SDK request carries
 # the signal entry. The TS twin dropped the same test.
 
 
@@ -268,7 +268,7 @@ async def test_a_terminal_redrive_repairs_a_stale_status_hint(nc: Any, prefix: s
         await worker.stop()
 
 
-# durable-sdk: docs/findings.md F7, answered by the engine's F19 (the work durable is bound on its
+# durable-sdk: F7, answered by the engine's F19 (the work durable is bound on its
 # own, so polls keep being served with DE_TIMERS gone).
 @existing.skip_in_mode(existing.DELETES_STREAMS)
 async def test_the_maintenance_pass_and_pumps_survive_a_deleted_timers_stream(

@@ -24,4 +24,4 @@ def test_a_caller_set_option_wins_and_nothing_is_mutated() -> None:
 # durable-sdk: "the runbook's provisioning call is importable from the package root" is dropped.
 # It pinned `Names`, `ProvisionOptions`, `provision`, `deprovision` and `resource_streams` in the
 # package's exports; provisioning is the engine's (`durable-engine serve` provisions at its start)
-# and the brief removes them (docs/findings.md F15).
+# and the SDK does not export them (F15).

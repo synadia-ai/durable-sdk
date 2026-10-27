@@ -105,7 +105,7 @@ afterEach(async () => {
   }
 });
 
-// A test that failed or timed out is cleaned like any other (docs/findings.md F33): vitest runs
+// A test that failed or timed out is cleaned like any other (F33): vitest runs
 // this hook after both, and everything below the leftover check is in its `finally`. Its workers
 // are stopped (bounded) and its polls withdrawn first, so neither a worker it left running nor a
 // fetch the engine still holds re-creates what the cleanup deletes.

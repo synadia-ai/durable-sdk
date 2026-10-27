@@ -6,7 +6,7 @@ SDKs, and it is deliberately cheap: no server, no workflow engine, just bytes.
 
 If a vector fails here, exactly one of two things is true — this codec changed, or the wire did. The
 second is a breaking change for every other implementation and must be a deliberate act (regenerate
-the vectors, bump the wire version, say so in ``durable-engine`` ``docs/protocol/PROTOCOL.md``).
+the vectors, bump the wire version, say so in the engine's protocol specification).
 """
 
 from __future__ import annotations

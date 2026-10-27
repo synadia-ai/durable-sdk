@@ -1,8 +1,8 @@
 // durable-sdk: two tests that FAIL ON PURPOSE, run only under DE_INJECT_FAILURE=1, to prove the
-// existing-server mode's cleanup (docs/findings.md F33): a test that throws with its worker still
+// existing-server mode's cleanup (F33): a test that throws with its worker still
 // running and putting blobs, and one that times out while its worker is putting blobs (vitest
 // moves on; the body keeps running), then a passing test while those workers would keep writing:
-// the dev NGS run's shape (a failed test's worker polled on for minutes). The run is expected to
+// the shape of a run against a remote server (a failed test's worker polled on for minutes). The run is expected to
 // report the two as failed and to leave nothing behind on the prefix: no message in any of its
 // eight, no durable but the engine's pair (it goes with the streams at the run's end).
 // The Python twin is python/tests/integration/test_injected_failure.py.

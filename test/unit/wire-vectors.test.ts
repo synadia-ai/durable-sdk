@@ -4,8 +4,8 @@
 // redefine the golden and the "agreement" would be circular.
 //
 // A failure here is not a broken test: it is the wire format changing. That is a breaking change for
-// every other implementation (regenerate the vectors, and say so in
-// durable-engine docs/protocol/PROTOCOL.md).
+// every other implementation (regenerate the vectors, and say so in the engine's protocol
+// specification).
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

@@ -2,7 +2,7 @@
 //
 // The Python suite spawns this (`python/tests/integration/test_interop.py`), then drives it with a
 // PYTHON client: start, result, status, signal, cancel. Nothing is shared between the two sides
-// except the NATS streams and the protocol (durable-engine docs/protocol/PROTOCOL.md) — which is
+// except the NATS streams and the protocol (the engine's protocol specification) — which is
 // the entire point.
 //
 //   NATS_URL=… DE_PREFIX=… npx tsx conformance/interop/ts-worker.ts
@@ -44,7 +44,7 @@ const boom = defineWorkflow("boom", (_ctx, _input: unknown): Promise<never> => {
 
 // NATS_CREDS: a creds file, when the server needs one (the harness's existing-server mode). A
 // `user:password@` in NATS_URL is the connection's user and password: nats.js ignores it in a URL,
-// and a config-file server's tenant users are names and passwords (docs/findings.md F38).
+// and a config-file server's tenant users are names and passwords (F38).
 const creds = process.env.NATS_CREDS;
 const url = new URL(process.env.NATS_URL ?? "nats://127.0.0.1:4222");
 const user = decodeURIComponent(url.username);

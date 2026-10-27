@@ -6,11 +6,8 @@
 // (`ackWaitMs` → `--ack-wait`, `lease: false` → `--no-lease`, …) become the engine's command line.
 // setup-each.ts stops every engine after each test, before it deletes the streams.
 //
-// The binary: `DE_ENGINE` (a path), or built with `go build -o` from the engine checkout
-// (`DE_ENGINE_REPO`, default ../durable-engine) at the commit `engine.pin` names. A checkout at
-// another commit, or with local changes, is refused unless `DE_ENGINE_ANY=1`. Without either the
-// integration suites skip, saying why (global-setup.ts). Nothing reaches beyond 127.0.0.1 unless
-// DE_NATS_URL says so.
+// The binary: `DE_ENGINE` (a path; engine-bin.ts). Without one the integration suites skip,
+// saying why (global-setup.ts). Nothing reaches beyond 127.0.0.1 unless DE_NATS_URL says so.
 //
 // Against an existing server (existing.ts, `DE_NATS_URL`) there is one prefix and one engine for
 // the run instead: every prefix a test names is the run's (`mapPrefix`), the engine is
@@ -223,7 +220,7 @@ export function createWorker(opts: WorkerOptions & EngineFlags): Worker {
 }
 
 /**
- * setup-each.ts, after each test in the mode, before its cleanup (docs/findings.md F33): a worker
+ * setup-each.ts, after each test in the mode, before its cleanup (F33): a worker
  * the test left running (it failed, or timed out and its body still runs) is stopped, bounded; and
  * every waiting poll for each of the test's workflow sets is withdrawn (`poll {cancelPoll}`), so
  * the engine holds no pending fetch that would re-create the durables the cleanup deletes.

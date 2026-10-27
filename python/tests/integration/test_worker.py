@@ -236,7 +236,7 @@ async def test_cancel_hard_stops_a_parked_python_run(running: Any) -> None:
     with pytest.raises(CancelledError):
         await handle.result(RESULT_TIMEOUT_MS)
     # durable-sdk: ``status`` read the engine's hint, written at the worker's ``done``, one round
-    # trip after the terminal ``result`` answers from (docs/findings.md F27): wait for it. Harmless
+    # trip after the terminal ``result`` answers from (F27): wait for it. Harmless
     # now: the engine guarantees the state since ee81460 (its F29), so a failure is the engine's.
     await _wait_for_state(handle, "cancelled", 10.0)
     assert compensated == ["released the hold"]

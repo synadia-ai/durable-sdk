@@ -321,7 +321,7 @@ describe.skipIf(!natsUrl)("end-to-end (worker + client, real nats-server)", () =
   // durable-sdk: "a FENCED inbound event is retried, not lost" is dropped. It injected the fence by
   // patching NatsJournal.prototype.append inside the worker; recording an inbound event is the
   // engine's now (it journals the event before the poll hands the item out, retried past a fence:
-  // durable-engine core.RecordInbound and its tests), and no SDK request carries it.
+  // the engine's own tests prove it), and no SDK request carries it.
   it("ctx.await timeout fires when no signal arrives (real timer)", async () => {
     const wf = defineWorkflow("await_to_e2e", async (ctx) => {
       try {
@@ -769,7 +769,7 @@ describe.skipIf(!natsUrl)("end-to-end (worker + client, real nats-server)", () =
       await client.signal(handle.runId, "go", "done");
       expect(await handle.result(15_000)).toBe("done");
       // suspended → completed on resume. durable-sdk: `status` lagged `result` by the worker's `done`
-      // (docs/findings.md F27): wait for it, bounded. Harmless now: the engine guarantees the state
+      // (F27): wait for it, bounded. Harmless now: the engine guarantees the state
       // since ee81460 (its F29), so a failure here is the engine's again.
       await waitUntil(async () => (await handle.status()).state === "completed", 10_000);
     } finally {
@@ -937,7 +937,7 @@ describe.skipIf(!natsUrl)("end-to-end (worker + client, real nats-server)", () =
       await waitUntil(async () => (await handle.status()).state === "suspended", 10_000);
       await client.cancel(handle.runId, { reason: "user bailed" });
       await expect(handle.result(15_000)).rejects.toThrow(CancelledError);
-      // durable-sdk: `status` lagged `result` by the worker's `done` (docs/findings.md F27). Harmless
+      // durable-sdk: `status` lagged `result` by the worker's `done` (F27). Harmless
       // now: the engine guarantees the state since ee81460 (its F29); a failure is the engine's.
       await waitUntil(async () => (await handle.status()).state === "cancelled", 10_000);
     } finally {

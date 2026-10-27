@@ -3,7 +3,7 @@
 The twin of ``conformance/interop/ts-worker.ts``. The TypeScript suite spawns this
 (``test/integration/interop-py.test.ts``) and drives it with a TYPESCRIPT client: start, result,
 status, signal, cancel. Nothing is shared between the two sides except the engine's API and the
-protocol (``durable-engine`` ``docs/protocol/PROTOCOL.md``).
+protocol (the engine's protocol specification).
 
     NATS_URL=… DE_PREFIX=… uv run --project python python python/conformance/worker.py
 

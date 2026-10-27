@@ -1,10 +1,12 @@
 """durable-sdk: the engine's two limit refusals, end to end (F40; the engine's F46). The twin of
 ``test/integration/limits.test.ts``. A licence limit on a standalone engine of the test's own (a
-test licence with ``-workflows 1 -runs-in-flight 1``), and a tenant limit on an engine in the fabric
+licence of one workflow and one run in flight), and a tenant limit on an engine in the fabric
 mode on a three-account server of the test's own (the tenant's record ``maxWorkflows: 1`` in
 ``KV_DE_TENANTS``, as an operator sets it). Each is a :class:`LimitError` naming the limit:
 ``worker.start()`` raises it, ``client.start()`` raises it after one request. Both need a server
-and an engine of their own, so neither runs against an existing server.
+and an engine of their own, so neither runs against an existing server. The licence limit needs
+the engine's licence tool (``DE_LICENCE_TOOL``), the tenant limit its fabric build
+(``DE_ENGINE_FABRIC``); without them they skip, saying so.
 """
 
 from __future__ import annotations
@@ -19,7 +21,15 @@ import pytest
 
 import existing
 from conftest import render_tenancy_config, spawn_server
-from engine import EngineFlags, EngineProcess, count_of, engine_counts, mint_test_licence
+from engine import (
+    EngineFlags,
+    EngineProcess,
+    count_of,
+    engine_counts,
+    fabric_engine,
+    licence_tool,
+    mint_licence,
+)
 from synadia_durable import LimitError, create_client, create_worker, define_workflow
 from synadia_durable.types import StartOptions
 
@@ -72,11 +82,14 @@ OTHER = define_workflow("lim_other", _other)
 
 
 @existing.skip_in_mode(OWN)
+@pytest.mark.skipif(
+    licence_tool() is None, reason="needs the engine's licence tool (DE_LICENCE_TOOL)"
+)
 async def test_a_licence_limit_refuses_a_workflow_at_start_and_a_run_past_its_runs_in_flight(
     scope: Scope, engine_bin: str, nats_direct_url: str, nats_url: str
 ) -> None:
     prefix = "delimpy"
-    licence = mint_test_licence(engine_bin, "durable-sdk-limits", workflows=1, runs_in_flight=1)
+    licence = mint_licence("durable-sdk-limits", workflows=1, runs_in_flight=1)
     eng = EngineProcess(
         engine_bin, nats_direct_url, prefix, EngineFlags(stream_max_bytes=16 * MIB), licence=licence
     )
@@ -115,6 +128,9 @@ async def test_a_licence_limit_refuses_a_workflow_at_start_and_a_run_past_its_ru
 
 
 @existing.skip_in_mode(OWN)
+@pytest.mark.skipif(
+    fabric_engine() is None, reason="needs the engine's fabric build (DE_ENGINE_FABRIC)"
+)
 async def test_a_tenant_limit_refuses_a_workflow_at_start(scope: Scope, engine_bin: str) -> None:
     prefix = "de"
     server = spawn_server(
@@ -130,7 +146,7 @@ async def test_a_tenant_limit_refuses_a_workflow_at_start(scope: Scope, engine_b
         f"nats://de:de@127.0.0.1:{server.port}",
         prefix,
         EngineFlags(),
-        licence=None,  # the fabric mode needs none, and one would bound its tenants
+        licence=None,
         extra_args=["--tenancy", "--tenant-max-bytes", "0"],
     )
     await eng.start()

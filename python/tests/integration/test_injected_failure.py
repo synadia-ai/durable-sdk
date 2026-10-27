@@ -1,5 +1,5 @@
 """durable-sdk: two tests that FAIL ON PURPOSE, run only under ``DE_INJECT_FAILURE=1``, to prove
-the existing-server mode's cleanup (docs/findings.md F33): a test that raises with its worker still
+the existing-server mode's cleanup (F33): a test that raises with its worker still
 running and its runs' blobs written, and one whose ``result()`` times out while its worker is still
 putting blobs. The run is expected to report these two as failed and to leave nothing behind on the
 prefix: no message in any of its eight, no durable but the engine's pair (it goes with the

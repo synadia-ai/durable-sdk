@@ -157,7 +157,7 @@ async def test_stop_drains_the_work_it_already_dispatched(nc: Any, prefix: str) 
     client = create_client(nc, prefix=prefix, stream_max_bytes=16 * MB)
     handle = await client.start(wf, None)
     # durable-sdk: wait until the step is executing, rather than 0.4 s: over a WAN round trip
-    # (docs/findings.md F29) the item reaches the worker later than that.
+    # (F29) the item reaches the worker later than that.
     await asyncio.to_thread(executing.wait, existing.scaled(10))
     assert executing.is_set(), "the step never started"
 

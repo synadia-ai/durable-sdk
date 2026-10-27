@@ -60,14 +60,10 @@ export default async function setup(ctx: SetupContext): Promise<() => Promise<vo
   const existing = existingFromEnv();
   if (existing) return setupExisting(ctx, existing);
   const profile = profileFromEnv();
-  // The engine first: without it no suite can run, and a wrong checkout must fail the run loud.
-  let engineBin: string | null = null;
-  try {
-    engineBin = resolveEngineBinary();
-    console.warn(`\nengine: ${engineBin} (engine.pin ${enginePin()})\n`);
-  } catch (e) {
-    if (!(e instanceof EngineNotAvailableError)) throw e;
-    console.warn(`\n⚠ durable-engine unavailable (${e.message}) — integration tests will be skipped.\n`); // prettier-ignore
+  // The engine and its licence first: without them no suite can run, and a variable that names no
+  // file must fail the run loud.
+  const standalone = standaloneEngine(ctx);
+  if (standalone === null) {
     ctx.provide("engineBin", null);
     ctx.provide("natsUrl", null);
     ctx.provide("natsDirectUrl", null);
@@ -75,8 +71,7 @@ export default async function setup(ctx: SetupContext): Promise<() => Promise<vo
     ctx.provide("natsRttMs", 0);
     return () => Promise.resolve();
   }
-  // A standalone engine starts only with a licence (F42): one for the run, minted here.
-  const licence = provideLicence(ctx, engineBin);
+  const { bin: engineBin, licence } = standalone;
   ctx.provide("engineBin", engineBin);
   const server = new NatsServerProcess({ profile });
   try {
@@ -115,12 +110,31 @@ export default async function setup(ctx: SetupContext): Promise<() => Promise<vo
 }
 
 /**
- * The run's licence for its standalone engines (F42): the caller's `DE_LICENCE`, or a test licence
- * minted once for the run (`durable-licence mint -test -name durable-sdk-tests`), removed at the end.
+ * The engine (`DE_ENGINE`) and the run's licence, or null when either is not given: the suites
+ * skip, saying why.
  */
-function provideLicence(ctx: SetupContext, engineBin: string): { file: string; remove(): void } {
-  const lic = runLicence(engineBin);
-  console.warn(lic.minted ? `licence: a test licence minted for the run, ${lic.file}\n` : `licence: DE_LICENCE ${lic.file}\n`); // prettier-ignore
+function standaloneEngine(
+  ctx: SetupContext,
+): { bin: string; licence: { file: string; remove(): void } } | null {
+  try {
+    const bin = resolveEngineBinary();
+    console.warn(`\nengine: ${bin} (engine.pin ${enginePin()})\n`);
+    // A standalone engine starts only with a licence (F42): the run's.
+    return { bin, licence: provideLicence(ctx) };
+  } catch (e) {
+    if (!(e instanceof EngineNotAvailableError)) throw e;
+    console.warn(`\n⚠ durable-engine unavailable (${e.message}) — integration tests will be skipped.\n`); // prettier-ignore
+    return null;
+  }
+}
+
+/**
+ * The run's licence for its standalone engines (F42): the caller's `DE_LICENCE`, or one made once
+ * for the run with `DE_LICENCE_TOOL` and removed at the end.
+ */
+function provideLicence(ctx: SetupContext): { file: string; remove(): void } {
+  const lic = runLicence();
+  console.warn(lic.minted ? `licence: made for the run, ${lic.file}\n` : `licence: DE_LICENCE ${lic.file}\n`); // prettier-ignore
   ctx.provide("licenceFile", lic.file);
   return {
     file: lic.file,
@@ -159,7 +173,7 @@ const freePort = (): Promise<number> =>
  */
 async function setupExisting(ctx: SetupContext, ex: ExistingServer): Promise<() => Promise<void>> {
   const engineBin = ex.engineUrl === undefined ? resolveEngineBinary() : null;
-  const licence = engineBin !== null ? provideLicence(ctx, engineBin) : undefined;
+  const licence = engineBin !== null ? provideLicence(ctx) : undefined;
   const scope = scopeOf(ex.prefix);
   // The tests' identity, for the round trip, the probe and the engine's API; the admin connection
   // (DE_ADMIN_URL, the tests' own by default) for the streams: as a tenant the tests see none.
@@ -244,11 +258,11 @@ async function setupExisting(ctx: SetupContext, ex: ExistingServer): Promise<() 
       await run.stop();
       licence?.remove();
       // The engine stopped, nothing writes a blob: what a test that failed or timed out left after
-      // its own cleanup goes now (docs/findings.md F33). The pair stays: it is the engine's, and
+      // its own cleanup goes now (F33). The pair stays: it is the engine's, and
       // goes with the prefix's streams (existing.ts purgeSince).
       const swept = await sweepRun(nc, scope, run.runIds);
       // Under DE_ENGINE_URL the engine still runs: a late-stopped worker's step can put a blob
-      // after the sweep. Again after a pause, until a round finds nothing (docs/findings.md F38).
+      // after the sweep. Again after a pause, until a round finds nothing (F38).
       for (let round = 0; run.external && round < 3; round++) {
         await new Promise((r) => setTimeout(r, 2_000 * factor));
         const again = await sweepRun(nc, scope, run.runIds);

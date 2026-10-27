@@ -168,7 +168,7 @@ async def test_a_python_failure_surfaces_to_the_typescript_client(
     assert "refused it" in line
 
 
-# durable-sdk: docs/findings.md F1/F2, answered by the engine's F25 (put and get) and F22
+# durable-sdk: F1/F2, answered by the engine's F25 (put and get) and F22
 # (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 async def test_typescript_reads_a_payload_python_offloaded(
     python_worker: Any, nc: Any, nats_url: str, prefix: str
@@ -243,7 +243,7 @@ async def test_typescript_reads_a_payload_python_encrypted(nats_url: str) -> Non
         await nc.drain()
 
 
-# durable-sdk: docs/findings.md F1/F2, answered by the engine's F25 (put and get) and F22
+# durable-sdk: F1/F2, answered by the engine's F25 (put and get) and F22
 # (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 @pytest.mark.usefixtures("_node_available")
 async def test_a_python_worker_honours_the_payload_enc_flag_typescript_wrote(

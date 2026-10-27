@@ -289,7 +289,7 @@ describe.skipIf(!natsUrl)("feature × concurrency crossings", () => {
     }
   }, 120_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
-  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // durable-sdk: F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
   // prettier-ignore
   it("OFFLOAD × multi-worker: a storm over blob-backed payloads journals each step once", async () => {

@@ -49,7 +49,7 @@ async def raced(ctx: Ctx, n: int) -> str:
 
 async def main() -> None:
     url = os.environ.get("NATS_URL", "nats://127.0.0.1:4222")
-    # NATS_CREDS: a creds file, for the fabric (docs/FABRIC.md; needs nkeys, findings F30); absent, a plain local server.
+    # NATS_CREDS: a creds file, for the fabric (docs/FABRIC.md; needs nkeys); absent, a plain local server.
     creds = os.environ.get("NATS_CREDS")
     nc = await nats.connect(
         url, **({"user_credentials": creds} if creds else {}), **with_reconnect_defaults()

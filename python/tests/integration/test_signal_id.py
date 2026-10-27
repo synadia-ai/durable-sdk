@@ -1,5 +1,5 @@
-"""The signal ``id`` (durable-engine #19: signals journaled at send, deduplicated by ``id``; its
-docs/API.md "signal"). The SDK sends an id on every signal, the caller's or a generated UUID, so a
+"""The signal ``id`` (the engine journals a signal at send, deduplicated by ``id``; the engine's
+API.md, "signal"). The SDK sends an id on every signal, the caller's or a generated UUID, so a
 caller that retries after ``EngineUnavailableError`` can pass the id of the first try. The twin of
 ``test/integration/signal-id.test.ts``.
 """
