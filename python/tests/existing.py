@@ -1,4 +1,4 @@
-"""The harness's mode for an EXISTING server (docs/findings.md F28, F29): ``DE_NATS_URL`` names a
+"""The harness's mode for an EXISTING server (F28, F29): ``DE_NATS_URL`` names a
 server the run does not own, instead of the ``nats-server`` the harness spawns. The twin of
 ``test/harness/existing.ts``.
 
@@ -20,7 +20,7 @@ No spawn, no account profile (the server's own limits apply), one prefix and one
 run, a cleanup that purges what each test wrote under the prefix and never deletes a stream during
 the run, the leftovers check on the prefix's streams only, and every wait scaled by the measured
 round trip. A test that failed or timed out is cleaned like any other, and its runs' blobs are
-deleted by name, after it and again at the run's end (docs/findings.md F33).
+deleted by name, after it and again at the run's end (F33).
 
 As a tenant (``DE_TENANT``) the eight are the engine account's, shared by every tenant: everything
 above is read through the admin connection and counts the tenant's subjects
@@ -454,7 +454,7 @@ async def delete_run_blobs(nc: Any, prefix: str, run_ids: set[str] | frozenset[s
     """Delete the blobs of ``run_ids`` from the prefix's blob store by name: each object's meta
     record and its chunks, purged. By name, not by the snapshot's diff: a test that timed out
     leaves its worker and the engine writing after its cleanup (the dev NGS run left 17 blobs so),
-    and those land in the next test's snapshot, out of every diff's reach (docs/findings.md F33).
+    and those land in the next test's snapshot, out of every diff's reach (F33).
     Returns how many objects were deleted."""
     import asyncio
 

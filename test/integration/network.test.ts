@@ -464,7 +464,7 @@ ownLink("latency", () => {
     expect(r.executions()).toBe(1);
   });
 
-  // durable-sdk: docs/findings.md F9, answered by the engine's F18 (past maxWorkMs the lease is
+  // durable-sdk: F9, answered by the engine's F18 (past maxWorkMs the lease is
   // lapsed, not gone). The takeover is the engine's to see now: its log, `run taken over past max
   // work` (or `run lease taken over`, across instances), stands for the `lease.gate` event.
   it("…and the control: the same run with renewal cut short IS taken over, and the step runs twice", async () => {

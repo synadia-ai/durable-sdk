@@ -311,7 +311,7 @@ describe.skipIf(!natsUrl)("worker recovery paths (real nats-server)", () => {
     }
   }, 90_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
-  // durable-sdk: docs/findings.md F8, answered by the engine's F21: the gating run lease is the
+  // durable-sdk: F8, answered by the engine's F21: the gating run lease is the
   // engine's, so the "lease lost" line is the engine's log, read below.
   // prettier-ignore
   it("the run lease being taken away mid-drive is survivable — it is advisory, not correctness", async () => {
@@ -367,7 +367,7 @@ brokenTimers("worker recovery — a broken timers stream", () => {
     await nc.drain();
   });
 
-  // durable-sdk: docs/findings.md F7, answered by the engine's F19 (the work durable is bound on
+  // durable-sdk: F7, answered by the engine's F19 (the work durable is bound on
   // its own, so polls keep being served with DE_TIMERS gone).
   // prettier-ignore
   it("the maintenance pass and the pumps survive DE_TIMERS disappearing, and heal on restart", async () => {
@@ -560,7 +560,7 @@ describe.skipIf(!natsUrl)("worker recovery — kills, chains and oversized failu
     }
   }, 90_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
-  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // durable-sdk: F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
   // prettier-ignore
   it("a child failing with an OVERSIZED message resolves the parent through a blob ref", async () => {

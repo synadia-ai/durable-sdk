@@ -1,9 +1,9 @@
 """Per-test hygiene on the shared server — the integration directory's autouse companion to the
 session fixture in ``tests/conftest.py`` (mirrors ``test/harness/setup-each.ts``).
 
-durable-sdk: the engine first. A session fixture resolves ``durable-engine`` once (``DE_ENGINE``, or
-a build of ``../durable-engine`` at ``engine.pin``; ``tests/engine.py``, the twin of
-``test/harness/global-setup.ts``'s engine half) and every test here skips without it, saying why.
+durable-sdk: the engine first. A session fixture resolves ``durable-engine`` once (``DE_ENGINE``;
+``tests/engine.py``, the twin of ``test/harness/global-setup.ts``'s engine half) and every test
+here skips without it, saying why.
 Each test's engines are started on first use by ``engine.create_worker`` / ``create_client`` and
 stopped here, before anything else (a graceful stop naks what they hold).
 
@@ -38,8 +38,8 @@ from conftest import delete_all_streams, leftover_message, list_ephemeral_consum
 @pytest.fixture(scope="session")
 def engine_bin() -> Iterator[str]:
     """The engine binary for the run, resolved once; the integration suites skip without one. With
-    it the run's licence (F42): the caller's ``DE_LICENCE``, or a test licence minted once for the
-    run (``durable-licence mint -test -name durable-sdk-tests``), removed at the end."""
+    it the run's licence (F42): the caller's ``DE_LICENCE``, or one made once for the run and
+    removed at the end."""
     if existing.EXISTING is not None and existing.EXISTING.engine_url is not None:
         yield ""  # DE_ENGINE_URL: the engine is not the harness's
         return
@@ -49,10 +49,10 @@ def engine_bin() -> Iterator[str]:
         pytest.skip(f"durable-engine unavailable ({e})")
     print(f"\nengine: {binary} (engine.pin {engine.engine_pin()})", file=sys.stderr)
     given = os.environ.get("DE_LICENCE", "")
-    # No limit on workflow names (``-workflows 0``): since the engine's F77 standalone keeps the
-    # set of names in ``{P}_TENANTS`` (7 days' retention) and the licence counts it at every poll;
-    # the set persists across tests, so the tool's default of 100 would refuse polls mid-run (the
-    # existing-server run puts every test's names on one prefix). The engine's cap of 1000 stays.
+    # No limit on workflow names: a standalone engine keeps the set of names in ``{P}_TENANTS``
+    # (7 days' retention) and the licence counts it at every poll; the set persists across tests
+    # (the existing-server run puts every test's names on one prefix). The engine's cap of 1000
+    # stays.
     licence = given or engine.mint_test_licence(binary, workflows=0)
     print(
         f"licence: DE_LICENCE {licence}"
@@ -121,7 +121,7 @@ def run_engine(
             asyncio.run(run.stop())
             engine.configure_run(None)
             # The engine stopped, nothing writes a blob: what a test that failed or timed out left
-            # after its own cleanup goes now (docs/findings.md F33). The pair stays: it is the
+            # after its own cleanup goes now (F33). The pair stays: it is the
             # engine's, and goes with the prefix's streams (existing.purge_since).
             blobs = asyncio.run(_sweep(ex))
             # Under DE_ENGINE_URL the engine still runs: a late-stopped worker's step can put a
@@ -312,7 +312,7 @@ async def _existing_hygiene(
         await engine.begin_test(nc)
         yield
         engine.set_engine_server(None)
-        # A test that failed or timed out is cleaned like any other (docs/findings.md F33): its
+        # A test that failed or timed out is cleaned like any other (F33): its
         # workers are stopped (bounded) and its polls withdrawn first, so neither a worker it left
         # running nor a fetch the engine still holds re-creates what the cleanup deletes.
         try:

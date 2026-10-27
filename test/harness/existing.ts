@@ -1,4 +1,4 @@
-// The harness's mode for an EXISTING server (docs/findings.md F28, F29): `DE_NATS_URL` names a
+// The harness's mode for an EXISTING server (F28, F29): `DE_NATS_URL` names a
 // server the run does not own, instead of the nats-server the harness spawns. Everything here is
 // vitest-free, for global-setup.ts (the main process) and the test side alike.
 //
@@ -19,9 +19,9 @@
 // run, a cleanup that purges what each test wrote under the prefix and never deletes a stream
 // during the run, the leftovers check on the prefix's streams only, and every wait scaled by the
 // measured round trip. A test that failed or timed out is cleaned like any other, and its runs'
-// blobs are deleted by name, after it and again at the run's end (docs/findings.md F33).
+// blobs are deleted by name, after it and again at the run's end (F33).
 //
-// As a tenant (DE_TENANT, docs/findings.md F36) the eight are the engine account's, shared by every
+// As a tenant (DE_TENANT, F36) the eight are the engine account's, shared by every
 // tenant, and the tests reach the engine through an import: everything above is read through the
 // admin connection and counts the tenant's subjects (`{prefix}.{tenant}.…`, `$KV.<bucket>.{tenant}.…`),
 // objects (`{tenant}/…`) and durables (`{prefix}~{tenant}~…`) alone. Another tenant's are never
@@ -124,7 +124,7 @@ export function connectAdmin(opts: ConnectionOptions = {}): Promise<NatsConnecti
 /**
  * A server URL's `user:password@`, as the connection's `user` and `pass`: nats.js ignores it in a
  * URL (the engine's Go client and nats-py read it), and a config-file server's users, the
- * engine's tenancy test setup among them, are names and passwords (docs/findings.md F38).
+ * engine's tenancy test setup among them, are names and passwords (F38).
  */
 export function userInfo(opts: ConnectionOptions): ConnectionOptions {
   const servers = typeof opts.servers === "string" ? [opts.servers] : (opts.servers ?? []);

@@ -75,8 +75,8 @@ async def _object_names(nc: Any, prefix: str, *run_ids: str) -> list[str]:
     """The bucket's objects; against an existing server only those of ``run_ids``.
 
     durable-sdk: there the prefix is the run's, shared with its other tests and whatever a failed
-    one left, so an assertion over the store counts the test's own runs only (docs/findings.md
-    F33). A spawned server's prefix is the test's own: every object, as the library counted.
+    one left, so an assertion over the store counts the test's own runs only (F33). A spawned
+    server's prefix is the test's own: every object, as the library counted.
     """
     from conftest import list_object_names
 
@@ -86,7 +86,7 @@ async def _object_names(nc: Any, prefix: str, *run_ids: str) -> list[str]:
     return [n for n in names if n.split("/", 1)[0] in run_ids]
 
 
-# durable-sdk: docs/findings.md F1/F2, answered by the engine's F25 (put and get) and F22
+# durable-sdk: F1/F2, answered by the engine's F25 (put and get) and F22
 # (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 async def test_a_big_step_value_is_offloaded_and_replays_inline(
     nc: Any, prefix: str, running: Any
@@ -123,7 +123,7 @@ async def test_a_big_step_value_is_offloaded_and_replays_inline(
     assert blob["size"] > 0
 
 
-# durable-sdk: docs/findings.md F1/F2, answered by the engine's F25 (put and get) and F22
+# durable-sdk: F1/F2, answered by the engine's F25 (put and get) and F22
 # (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 async def test_an_oversized_start_input_and_signal_travel_as_refs(
     nc: Any, prefix: str, running: Any
@@ -153,7 +153,7 @@ async def test_an_oversized_start_input_and_signal_travel_as_refs(
     assert "data" not in signal
 
 
-# durable-sdk: docs/findings.md F1/F2, answered by the engine's F25 (put and get) and F22
+# durable-sdk: F1/F2, answered by the engine's F25 (put and get) and F22
 # (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 async def test_a_big_child_result_reaches_its_parent_as_a_ref(
     nc: Any, prefix: str, running: Any
@@ -180,7 +180,7 @@ async def test_a_big_child_result_reaches_its_parent_as_a_ref(
     assert "value" not in resolve
 
 
-# durable-sdk: docs/findings.md F1/F2, answered by the engine's F25 (put and get) and F22
+# durable-sdk: F1/F2, answered by the engine's F25 (put and get) and F22
 # (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 async def test_a_big_result_does_not_wedge_the_status_hint(
     nc: Any, prefix: str, running: Any
@@ -243,7 +243,7 @@ async def test_offload_disabled_still_fails_loud_on_an_oversized_payload(
         await worker.stop()
 
 
-# durable-sdk: docs/findings.md F1/F2, answered by the engine's F25 (put and get) and F22
+# durable-sdk: F1/F2, answered by the engine's F25 (put and get) and F22
 # (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 async def test_the_same_value_in_two_runs_is_stored_per_run(
     nc: Any, prefix: str, running: Any
@@ -275,7 +275,7 @@ async def _delete_object(nc: Any, bucket: str, name: str) -> None:
     """Delete an object out of band, as the engine's Go object store will read it: its meta and its
     chunks purged. durable-sdk: nats-py's ``ObjectStore.delete`` writes a deleted marker with
     ``mtime: ""``, which nats.go cannot parse (``object-store meta information invalid``), so the
-    engine would read that blob as a transient fault, not a gone one (docs/findings.md F32)."""
+    engine would read that blob as a transient fault, not a gone one (F32)."""
     import base64
 
     store = await nc.jetstream().object_store(bucket)
@@ -296,7 +296,7 @@ async def _wait_until(cond: Any, timeout_s: float) -> None:
 
 # durable-sdk: the twin of TypeScript `offload` "a missing blob PARKS the run (loud, never a
 # terminal) and a restored blob heals it" (the library's, in TypeScript only). The engine reads the
-# journal before it hands an item over, so the parking is the engine's (docs/findings.md F23): its
+# journal before it hands an item over, so the parking is the engine's (F23): its
 # `parked` ack, which `info` counts, or the worker's outcome when `blob_gone` reaches it (F31).
 async def test_a_missing_blob_parks_the_run_and_a_restored_blob_heals_it(
     nc: Any, prefix: str, running: Any
@@ -351,7 +351,7 @@ async def test_a_missing_blob_parks_the_run_and_a_restored_blob_heals_it(
 
 # durable-sdk: the engine's F30 (`blob_gone`, naming the blob), which the transport makes the
 # library's BlobMissingError, or BlobIntegrityError for bytes that are not the digest's
-# (docs/findings.md F31). The twin of TypeScript `offload` "blob_gone: …". Not the library's: its
+# (F31). The twin of TypeScript `offload` "blob_gone: …". Not the library's: its
 # blob store was its own.
 async def test_blob_gone_is_blob_missing_or_integrity_at_get_and_at_result_and_heals(
     nc: Any, prefix: str, running: Any

@@ -1,4 +1,4 @@
-// The engine's floor and the one withdrawal (docs/findings.md F45), against a real nats-server.
+// The engine's floor and the one withdrawal (F45), against a real nats-server.
 //
 // The floor: worker.start() reads `info.capabilities` and refuses an engine that does not announce
 // `withdrawn-remembered` (the engine's F53, announced from its #13), naming it by `engine` and

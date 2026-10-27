@@ -164,7 +164,7 @@ async def test_the_cap_says_so_when_it_fires(running: Any, prefix: str) -> None:
     )
 
     handle = await client.start(wf, None)
-    # durable-sdk: both waits re-expressed (docs/findings.md F10). The cap is the engine's now
+    # durable-sdk: both waits re-expressed (F10). The cap is the engine's now
     # (`serve --max-work`): past it the item's lease ends and the engine announces it in its own
     # log, so the first wait reads the engine's line. The release is the worker's: its next request
     # under that lease answers `expired` and it lets go of the item, loud — the second wait reads

@@ -1,6 +1,6 @@
 """durable-sdk: the engine's two limit refusals, end to end (F40; the engine's F46). The twin of
 ``test/integration/limits.test.ts``. A licence limit on a standalone engine of the test's own (a
-test licence with ``-workflows 1 -runs-in-flight 1``), and a tenant limit on an engine in the fabric
+licence of one workflow and one run in flight), and a tenant limit on an engine in the fabric
 mode on a three-account server of the test's own (the tenant's record ``maxWorkflows: 1`` in
 ``KV_DE_TENANTS``, as an operator sets it). Each is a :class:`LimitError` naming the limit:
 ``worker.start()`` raises it, ``client.start()`` raises it after one request. Both need a server

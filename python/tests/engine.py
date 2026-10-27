@@ -8,16 +8,14 @@ to the SDK's. The library's per-worker options that are the engine's flags now (
 ``--ack-wait``, ``lease=False`` → ``--no-lease``, …) become the engine's command line.
 ``tests/integration/conftest.py`` stops every engine after each test, before it deletes the streams.
 
-The binary: ``DE_ENGINE`` (a path), or built with ``go build -o`` from the engine checkout
-(``DE_ENGINE_REPO``, default ``../durable-engine``) at the commit ``engine.pin`` names. A checkout
-at another commit, or with local changes, is refused unless ``DE_ENGINE_ANY=1``. Without either the
-integration suites skip, saying why. Nothing reaches beyond 127.0.0.1 unless ``DE_NATS_URL`` says
-so.
+The binary: ``DE_ENGINE``, the path of an engine build from Synadia. A standalone ``serve`` starts
+only with a licence: every standalone engine the run spawns gets the run's licence as
+``DE_LICENCE`` (F42). ``engine.pin`` names the engine version the suites were last run against.
+Nothing reaches beyond 127.0.0.1 unless ``DE_NATS_URL`` says so.
 
-The build is the engine's ``make build-dev`` (F42): ``-tags devlicence``, so it trusts the test
-licence issuer, and ``durable-licence`` beside it. A standalone ``serve`` starts only with a
-licence: the run mints one test licence (``durable-licence mint -test``) and every standalone engine
-it spawns gets it as ``DE_LICENCE``, unless the caller's ``DE_LICENCE`` names one.
+Without ``DE_ENGINE``, the engine's developers get a build of the engine's source
+(``DE_ENGINE_REPO``) at ``engine.pin``; a source at another commit, or with local changes, is
+refused unless ``DE_ENGINE_ANY=1``. Without either the integration suites skip, saying why.
 
 Against an existing server (``existing.py``, ``DE_NATS_URL``) there is one prefix and one engine
 for the run instead: every prefix a test names is the run's, the engine is the session's
@@ -109,8 +107,7 @@ def resolve_engine_binary(build: str = "dev") -> str:
     out = out_dir / f"durable-engine-{build}-{tag}"
     tool = out_dir / f"durable-licence-{tag}"
     if not out.exists() or not tool.exists() or dirty:
-        # `make build-dev`'s two builds, into this repo's .engine-bin: nothing is written in the
-        # checkout.
+        # Into this repo's .engine-bin: nothing is written in the source checkout.
         subprocess.run(
             [
                 "go",
@@ -134,9 +131,7 @@ def resolve_engine_binary(build: str = "dev") -> str:
 
 
 def licence_tool(binary: str) -> str:
-    """``durable-licence``, for the engine binary: beside a build of ours
-    (``durable-licence-<commit>``) or beside a ``DE_ENGINE`` (``make build-dev`` puts both in
-    ``bin/``), or ``DE_LICENCE_TOOL``."""
+    """The engine's licence tool, for the engine binary: beside it, or ``DE_LICENCE_TOOL``."""
     given = os.environ.get("DE_LICENCE_TOOL", "")
     if given:
         return given
@@ -153,9 +148,9 @@ def licence_tool(binary: str) -> str:
 
 
 def mint_test_licence(binary: str, name: str = "durable-sdk-tests", **limits: int) -> str:
-    """A test licence (``durable-licence mint -test``), written to a fresh temporary file: the
-    run's (``name`` durable-sdk-tests, the tool's generous defaults) or a test's own, with
-    ``limits`` (``workflows=1``, ``runs_in_flight=1``, …: the tool's flags)."""
+    """A licence for the tests, written to a fresh temporary file: the run's (``name``
+    durable-sdk-tests) or a test's own, with ``limits`` (``workflows=1``,
+    ``runs_in_flight=1``, …)."""
     out = Path(tempfile.mkdtemp(prefix="de-licence-")) / "licence.jwt"
     flags = [x for k, v in limits.items() for x in (f"-{k.replace('_', '-')}", str(v))]
     subprocess.run(
@@ -723,7 +718,7 @@ def create_worker(nc: Any, workflows: list[Workflow[Any, Any]], **opts: Any) -> 
 
 
 async def end_test_workers(nc: Any) -> None:
-    """The hygiene, after each test in the mode, before its cleanup (docs/findings.md F33): a
+    """The hygiene, after each test in the mode, before its cleanup (F33): a
     worker the test left running (it failed, or timed out) is stopped, bounded; and every waiting
     poll for each of the test's workflow sets is withdrawn (``poll {cancelPoll}``), so the engine
     holds no pending fetch that would re-create the durables the cleanup deletes."""

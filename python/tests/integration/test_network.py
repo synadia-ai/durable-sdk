@@ -462,7 +462,7 @@ PINNED_ROUND_TRIPS_CLIENT_FIRST_START = 5.0
 
 # durable-sdk: "an offloaded payload costs one dependent round trip per chunk" is dropped. It timed
 # the library's blob writer (NatsBlobStore) through the proxy; the blob writes are the engine's now,
-# next to the server, and the SDK sends every value inline in one request (docs/findings.md F1).
+# next to the server, and the SDK sends every value inline in one request (F1).
 
 
 async def _identity(i: int) -> int:
@@ -567,7 +567,7 @@ async def test_lease_at_rtt_500_ttl_2s_a_live_holder_is_never_taken_over(
     assert r["executions"]() == 1
 
 
-# durable-sdk: docs/findings.md F9, answered by the engine's F18 (past max_work_ms the lease is
+# durable-sdk: F9, answered by the engine's F18 (past max_work_ms the lease is
 # lapsed, not gone). The takeover is the engine's to see now: its log, `run taken over past max work`
 # (or `run lease taken over`, across instances), stands for the `lease.gate` event.
 async def test_control_the_same_run_with_renewal_cut_short_is_taken_over(
@@ -714,7 +714,7 @@ async def test_a_lost_ack_the_append_landed_its_reply_did_not(
     # and finishes (≈10.3 s from the append, measured quiet and beside the engine's race suite).
     # This test's engine has the default ack wait and lease TTL, 30 s, so a run that reaches the
     # bound fell to the engine's lapse instead: the `done` did not land. Its failure says which
-    # (docs/findings.md F45).
+    # (F45).
     t0 = time.monotonic()
     try:
         assert await handle.result(30_000) == "ok"

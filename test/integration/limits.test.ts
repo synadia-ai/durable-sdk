@@ -1,6 +1,6 @@
 // durable-sdk: the engine's two limit refusals, end to end (F40; the engine's F46). A licence
-// limit on a standalone engine of the test's own (a test licence with `-workflows 1
-// -runs-in-flight 1`), and a tenant limit on an engine in the fabric mode on a three-account
+// limit on a standalone engine of the test's own (a licence of one workflow and one run in
+// flight), and a tenant limit on an engine in the fabric mode on a three-account
 // server of the test's own (the tenant's record `maxWorkflows: 1` in `KV_DE_TENANTS`, as an
 // operator sets it). Each is a `LimitError` naming the limit: `worker.start()` rejects with it,
 // `client.start()` rejects with it after one request. Both need a server and an engine of their

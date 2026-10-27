@@ -305,7 +305,7 @@ describe.skipIf(!natsUrl)("payload encryption — the work-item boundary", () =>
     bigSecret = `${SECRET}-${"s".repeat(2 * maxPayload(nc))}`;
   });
 
-  // durable-sdk: docs/findings.md F6, answered by the engine's F20 (an inline `signal.dataEnc` on
+  // durable-sdk: F6, answered by the engine's F20 (an inline `signal.dataEnc` on
   // the work item, journaled verbatim).
   // prettier-ignore
   it("a SMALL signal is encrypted inline — the baseline the large one has to match", async () => {
@@ -333,7 +333,7 @@ describe.skipIf(!natsUrl)("payload encryption — the work-item boundary", () =>
     }
   }, 60_000 * WAN); // durable-sdk: × the round-trip factor (harness/mode.ts)
 
-  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // durable-sdk: F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
   // prettier-ignore
   it("a LARGE signal's BLOB holds ciphertext too — encryption cannot depend on payload size", async () => {
@@ -369,7 +369,7 @@ describe.skipIf(!natsUrl)("payload encryption — the work-item boundary", () =>
     }
   }, budget(60_000, 6)); // durable-sdk: × the round-trip factor and the bytes over the throughput (harness/mode.ts)
 
-  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // durable-sdk: F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
   // prettier-ignore
   it("CONTROL: without a codec the very same large signal lands in the bucket in the clear", async () => {
@@ -396,7 +396,7 @@ describe.skipIf(!natsUrl)("payload encryption — the work-item boundary", () =>
     }
   }, budget(60_000, 6)); // durable-sdk: × the round-trip factor and the bytes over the throughput (harness/mode.ts)
 
-  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // durable-sdk: F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
   // prettier-ignore
   it("a LARGE child outcome is encrypted in the PARENT's blob, not only in the child's journal", async () => {
@@ -815,7 +815,7 @@ describe.skipIf(!natsUrl)("payload encryption — the completeness sweep", () =>
   // durable-sdk: against an existing server (EXISTING) `run` scopes a read to one run's own
   // messages and keys (its id, its generations' and children's, which begin with it, in the
   // subject or the body): the prefix is shared with the run's other tests and what a failed one
-  // left (docs/findings.md F33). A spawned server's prefix is the test's own: no filtering there.
+  // left (F33). A spawned server's prefix is the test's own: no filtering there.
   const ofRun = (run: string | undefined, subject: string, text: string): boolean =>
     !EXISTING || run === undefined || subject.includes(run) || text.includes(run);
   const runBlobs = (objects: ObjectMeta[], run: string): ObjectMeta[] =>
@@ -870,7 +870,7 @@ describe.skipIf(!natsUrl)("payload encryption — the completeness sweep", () =>
     return out.join("\n");
   }
 
-  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // durable-sdk: F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
   // prettier-ignore
   it("a run touching EVERY payload path leaves the secret in no durable store", async () => {
@@ -943,7 +943,7 @@ describe.skipIf(!natsUrl)("payload encryption — the completeness sweep", () =>
     }
   }, budget(180_000, 24)); // durable-sdk: × the round-trip factor and the bytes over the throughput (harness/mode.ts)
 
-  // durable-sdk: docs/findings.md F1, answered by the engine's F25 (put and get) and the SDK's
+  // durable-sdk: F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
   // prettier-ignore
   it("CONTROL: the same run without a codec leaves the secret in journal, blobs AND the hint", async () => {

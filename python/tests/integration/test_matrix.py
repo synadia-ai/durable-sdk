@@ -65,7 +65,7 @@ class _Drives:
     makes ("the storm never piled up").
 
     durable-sdk: re-expressed through the engine (``info``), so the four "the storm never piled up"
-    assertions read the engine's count (docs/findings.md F10, F11; the TS twin's ``Drives``). The
+    assertions read the engine's count (F10, F11; the TS twin's ``Drives``). The
     library's workers drove every item of a storm, the ones that arrived after the run ended
     included (a terminal re-drive each). The engine hands a run's items to polls one at a time and
     acks an ended run's items itself, so most of a storm never reaches a worker and ``work.done``
@@ -297,7 +297,7 @@ async def _state_is_not(client: Any, run_id: str, state: str) -> bool:
     return str((await client.get(run_id).status()).state) != state
 
 
-# durable-sdk: docs/findings.md F1/F2, answered by the engine's F25 (put and get) and F22
+# durable-sdk: F1/F2, answered by the engine's F25 (put and get) and F22
 # (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 async def test_offload_x_multi_worker_a_storm_over_blob_backed_payloads(
     nc: Any, prefix: str

@@ -115,8 +115,8 @@ export default async function setup(ctx: SetupContext): Promise<() => Promise<vo
 }
 
 /**
- * The run's licence for its standalone engines (F42): the caller's `DE_LICENCE`, or a test licence
- * minted once for the run (`durable-licence mint -test -name durable-sdk-tests`), removed at the end.
+ * The run's licence for its standalone engines (F42): the caller's `DE_LICENCE`, or one made once
+ * for the run and removed at the end.
  */
 function provideLicence(ctx: SetupContext, engineBin: string): { file: string; remove(): void } {
   const lic = runLicence(engineBin);
@@ -244,11 +244,11 @@ async function setupExisting(ctx: SetupContext, ex: ExistingServer): Promise<() 
       await run.stop();
       licence?.remove();
       // The engine stopped, nothing writes a blob: what a test that failed or timed out left after
-      // its own cleanup goes now (docs/findings.md F33). The pair stays: it is the engine's, and
+      // its own cleanup goes now (F33). The pair stays: it is the engine's, and
       // goes with the prefix's streams (existing.ts purgeSince).
       const swept = await sweepRun(nc, scope, run.runIds);
       // Under DE_ENGINE_URL the engine still runs: a late-stopped worker's step can put a blob
-      // after the sweep. Again after a pause, until a round finds nothing (docs/findings.md F38).
+      // after the sweep. Again after a pause, until a round finds nothing (F38).
       for (let round = 0; run.external && round < 3; round++) {
         await new Promise((r) => setTimeout(r, 2_000 * factor));
         const again = await sweepRun(nc, scope, run.runIds);

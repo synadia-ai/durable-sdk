@@ -95,7 +95,7 @@ async function main(): Promise<void> {
 
     // simulate the payment webhook firing a moment later. Over a slow link the signal may land
     // before the workflow reaches its `await`: the engine journals it and the run takes it on the
-    // next replay (durable-engine F51), so the 400 ms is for the narration, not for correctness.
+    // next replay, so the 400 ms is for the narration, not for correctness.
     await new Promise((r) => setTimeout(r, 400));
     console.log("approving payment via client.signal(...)");
     await client.signal(handle.runId, "payment", { approved: true });

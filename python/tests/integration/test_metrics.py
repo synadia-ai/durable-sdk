@@ -115,7 +115,7 @@ async def test_one_ordinary_run_reports_the_whole_path(running: Any) -> None:
     assert sink.named("journal.load"), "no journal.load events"
     assert set(sink.outcomes("journal.load")) == {"ok"}
     # durable-sdk: one per item, with the journal's size (the twin of the TypeScript worker's,
-    # docs/findings.md F21; test/integration/metrics.test.ts asserts the same).
+    # F21; test/integration/metrics.test.ts asserts the same).
     loads = sink.named("journal.load")
     assert len(loads) >= len(sink.named("work.dispatch"))
     assert all(ld["entries"] > 0 and ld["bytes"] > 0 for ld in loads)
@@ -128,7 +128,7 @@ async def test_one_ordinary_run_reports_the_whole_path(running: Any) -> None:
 
     # durable-sdk: assertions removed — the two on ``lease.gate``. The gating run lease is the
     # engine's (taken before a poll hands the item out), so no worker arbitrates or reports it;
-    # the engine neither logs nor counts a lost one (docs/findings.md F8).
+    # the engine neither logs nor counts a lost one (F8).
 
 
 # durable-sdk: "the hygiene pass reports its gauge and its sweep" is dropped. The maintenance pass
@@ -139,7 +139,7 @@ async def test_one_ordinary_run_reports_the_whole_path(running: Any) -> None:
 # durable-sdk: "offload traffic is visible" is dropped. Offload is the engine's (API.md "Sizes"): no
 # blob store is reachable from the SDK, so ``blob.put`` / ``blob.get`` are never the worker's, and
 # its 1-byte ``OffloadOptions`` threshold has no engine equivalent (``serve`` has no
-# ``--offload-threshold``: docs/findings.md F2).
+# ``--offload-threshold``: F2).
 
 
 async def test_a_broken_sink_cannot_break_a_run(running: Any) -> None:
@@ -176,7 +176,7 @@ async def test_health_reports_what_the_worker_is_doing(nc: Any, prefix: str) -> 
         client = create_client(nc, prefix=prefix, stream_max_bytes=16 * MB)
         handle = await client.start(wf, None)
         # durable-sdk: until the item is held, rather than 0.5 s: over a WAN round trip
-        # (docs/findings.md F29) it reaches the worker later than that.
+        # (F29) it reaches the worker later than that.
         deadline = asyncio.get_running_loop().time() + existing.scaled(10)
         while worker.health().inflight == 0 and asyncio.get_running_loop().time() < deadline:
             await asyncio.sleep(0.05)

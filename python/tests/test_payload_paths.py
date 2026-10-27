@@ -66,7 +66,7 @@ def test_every_caller_outside_the_choke_point_is_a_known_payload_route() -> None
     )
     # durable-sdk: ``_engine/payload.py`` (``fit_slot``) is the fourth route, and it says what it is:
     # a start's input, a signal's data or a child's input too large for one request, ``put`` in
-    # parts (docs/findings.md F1, F25 of the engine). The codec decision is still this function's.
+    # parts (F1, F25 of the engine). The codec decision is still this function's.
     assert callers == [
         "_engine/payload.py",  # a start's input, a signal's data, a child's input over request_max
         "_nats/protocol.py",  # a work item's signal data / child outcome

@@ -69,7 +69,7 @@ async def order(ctx: Ctx, cart: dict[str, Any]) -> dict[str, Any]:
 
 async def main() -> None:
     url = os.environ.get("NATS_URL", "nats://127.0.0.1:4222")
-    # NATS_CREDS: a creds file, for the fabric (docs/FABRIC.md; needs nkeys, findings F30); absent, a plain local server.
+    # NATS_CREDS: a creds file, for the fabric (docs/FABRIC.md; needs nkeys); absent, a plain local server.
     creds = os.environ.get("NATS_CREDS")
     nc = await nats.connect(
         url, **({"user_credentials": creds} if creds else {}), **with_reconnect_defaults()
@@ -92,7 +92,7 @@ async def main() -> None:
 
         # The payment webhook fires a moment later. Over a slow link the signal may land before the
         # workflow reaches its `wait`: the engine journals it and the run takes it on the next
-        # replay (durable-engine F51), so the 0.4 s is for the narration, not for correctness.
+        # replay, so the 0.4 s is for the narration, not for correctness.
         await asyncio.sleep(0.4)
         print("approving payment via client.signal(...)")
         await client.signal(handle.run_id, "payment", {"approved": True})

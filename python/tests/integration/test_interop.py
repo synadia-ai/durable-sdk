@@ -110,7 +110,7 @@ async def test_status_reports_the_terminal_state(client: Any) -> None:
     handle = await client.start(greet, {"name": "grace"})
     await handle.result(20_000)
 
-    # durable-sdk: docs/findings.md F27 — `status` could lag `result` by a round trip; it lost the
+    # durable-sdk: F27 — `status` could lag `result` by a round trip; it lost the
     # race in the existing-server mode at 150 ms (F29): wait for the state. Harmless now: the engine
     # guarantees the state since ee81460 (its F29), so a failure here is the engine's again.
     await _wait_for_state(handle, "completed", 10.0)
@@ -278,7 +278,7 @@ async def test_a_python_client_without_the_key_fails_loud_against_a_typescript_w
         await blind.get(handle.run_id).result(5_000)
 
 
-# durable-sdk: docs/findings.md F1/F2, answered by the engine's F25 (put and get) and F22
+# durable-sdk: F1/F2, answered by the engine's F25 (put and get) and F22
 # (serve --offload-threshold), with the SDK's chunked transport (_engine/blobs.py).
 async def test_a_typescript_worker_honours_the_payload_enc_flag_python_wrote(
     nc: Any, prefix: str, ts_worker_encrypted: Any

@@ -201,7 +201,7 @@ describe.skipIf(!natsUrl || !uv)("interop: a TypeScript client drives a Python w
       expect(e).toBeInstanceOf(WorkflowFailure);
       expect(String((e as Error).message)).toContain("carrier rejected");
       // durable-sdk: `status` read the engine's hint, written at the worker's `done`, one round
-      // trip after the terminal `result` answers from (docs/findings.md F27): wait for it. Harmless
+      // trip after the terminal `result` answers from (F27): wait for it. Harmless
       // now: the engine guarantees the state since ee81460 (its F29), so a failure is the engine's.
       await waitForState(() => h.status(), "failed", 10_000);
     });

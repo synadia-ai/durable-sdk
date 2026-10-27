@@ -1,4 +1,4 @@
-"""The engine's floor and the one withdrawal (``docs/findings.md`` F45), against a real
+"""The engine's floor and the one withdrawal (F45), against a real
 nats-server. The twin of ``test/integration/engine-floor.test.ts``.
 
 The floor: ``worker.start()`` reads ``info.capabilities`` and refuses an engine that does not

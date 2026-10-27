@@ -1,12 +1,11 @@
-// The engine binary, for global-setup.ts (which may not import vitest) and engine.ts: `DE_ENGINE`
-// (a path), or built with `go build -o` from the engine checkout (`DE_ENGINE_REPO`, default
-// ../durable-engine) at the commit `engine.pin` names. A checkout at another commit, or with local
-// changes, is refused unless `DE_ENGINE_ANY=1`.
+// The engine binary, for global-setup.ts (which may not import vitest) and engine.ts: `DE_ENGINE`,
+// the path of an engine build from Synadia. A standalone `serve` starts only with a licence: every
+// standalone engine the run spawns gets the run's licence as `DE_LICENCE` (F42). `engine.pin`
+// names the engine version the suites were last run against.
 //
-// The build is the engine's `make build-dev` (F42): `-tags devlicence`, so it trusts the test
-// licence issuer, and `durable-licence` beside it. A standalone `serve` starts only with a licence:
-// the run mints one test licence (`durable-licence mint -test`) and every standalone engine it
-// spawns gets it as `DE_LICENCE`, unless the caller's `DE_LICENCE` names one.
+// Without `DE_ENGINE`, the engine's developers get a build of the engine's source
+// (`DE_ENGINE_REPO`) at `engine.pin`; a source at another commit, or with local changes, is
+// refused unless `DE_ENGINE_ANY=1`.
 
 import { execFileSync } from "node:child_process";
 import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
@@ -46,7 +45,7 @@ function onPath(name: string): string | null {
  * EngineNotAvailableError when neither can be had (the suites skip), and a plain Error when the
  * checkout is at the wrong commit (the run fails: a silent skip would hide it).
  */
-/** Which build of the engine: `dev` (-tags devlicence, standalone with a test licence) or `fabric` (-tags fabric, the only build with --tenancy; no licence). */
+/** Which build of the engine: `dev`, the standalone one (`DE_ENGINE`), or `fabric`, the only build with --tenancy (`DE_ENGINE_FABRIC`). */
 export type EngineBuild = "dev" | "fabric";
 
 export function resolveEngineBinary(build: EngineBuild = "dev"): string {
@@ -89,7 +88,7 @@ export function resolveEngineBinary(build: EngineBuild = "dev"): string {
   const out = join(outDir, `durable-engine-${build}-${tag}`);
   const tool = join(outDir, `durable-licence-${tag}`);
   if (!existsSync(out) || !existsSync(tool) || dirty) {
-    // `make build-dev`'s two builds, into this repo's .engine-bin: nothing is written in the checkout.
+    // Into this repo's .engine-bin: nothing is written in the source checkout.
     execFileSync("go", ["build", "-tags", build === "fabric" ? "fabric" : "devlicence", "-o", out, "./cmd/durable-engine"], { cwd: src, stdio: "inherit" }); // prettier-ignore
     execFileSync("go", ["build", "-o", tool, "./cmd/durable-licence"], { cwd: src, stdio: "inherit" }); // prettier-ignore
   }
@@ -97,8 +96,7 @@ export function resolveEngineBinary(build: EngineBuild = "dev"): string {
 }
 
 /**
- * `durable-licence`, for the engine binary `bin`: beside a build of ours (`durable-licence-<commit>`)
- * or beside a `DE_ENGINE` (`make build-dev` puts both in `bin/`), or `DE_LICENCE_TOOL`.
+ * The engine's licence tool, for the engine binary `bin`: beside it, or `DE_LICENCE_TOOL`.
  */
 export function licenceTool(bin: string): string {
   const given = process.env.DE_LICENCE_TOOL;
@@ -113,14 +111,14 @@ export function licenceTool(bin: string): string {
   );
 }
 
-/** Flags of `durable-licence mint` (`-workflows 1`, …): a licence whose limits a test meets. */
+/** A licence's limits (`workflows: 1`, …), for a test that meets them. */
 export type LicenceLimits = Partial<
   Record<"workflows" | "workers" | "runs-in-flight" | "runs-per-day" | "tenants", number>
 >;
 
 /**
- * A test licence (`durable-licence mint -test`), written to a fresh temporary file: the run's
- * (`name` durable-sdk-tests, the tool's generous defaults) or a test's own, with `limits`.
+ * A licence for the tests, written to a fresh temporary file: the run's (`name`
+ * durable-sdk-tests) or a test's own, with `limits`.
  */
 export function mintTestLicence(
   bin: string,
@@ -134,12 +132,11 @@ export function mintTestLicence(
 }
 
 /**
- * The run's licence: the caller's `DE_LICENCE`, or a test licence minted once for the run, with no
- * limit on workflow names (`-workflows 0`). Since the engine's F77 standalone keeps the set of
- * names in `{P}_TENANTS` (key `workflows`, 7 days' retention) and the licence's `maxWorkflows`
- * counts it at every poll; the set persists across tests, and the existing-server run puts about
- * 150 names on one prefix, so the tool's default of 100 would refuse polls mid-run. The engine's
- * own cap of 1000 names stays. A test's own mint (`limits.test.ts`) keeps its limits.
+ * The run's licence: the caller's `DE_LICENCE`, or one made once for the run with no limit on
+ * workflow names. A standalone engine keeps the set of names in `{P}_TENANTS` (key `workflows`,
+ * 7 days' retention) and the licence's `maxWorkflows` counts it at every poll; the set persists
+ * across tests, and the existing-server run puts about 150 names on one prefix. The engine's own
+ * cap of 1000 names stays. `limits.test.ts` makes licences of its own, with limits.
  */
 export function runLicence(bin: string): { file: string; minted: boolean } {
   const given = process.env.DE_LICENCE;
