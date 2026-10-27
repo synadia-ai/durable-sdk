@@ -123,7 +123,7 @@ A refusal from the engine is a typed error, one per code of the engine's closed 
 
 A closed connection is `ConnectionClosedError`. An engine older than this SDK's floor (no `withdrawn-remembered` in `info.capabilities`) is `UnsupportedEngineError` (`code` `unsupported`, this SDK's, with `engine`, `commit`, `capabilities`, `missing`), never retried ([Which engine](#quickstart)). A code the SDK does not know (an engine newer than it) stays `EngineUnavailableError`, logged at warn. A worker whose polls fail (no engine, a slow link) says `poll failed; retrying` once a minute, with the count of failures since.
 
-**Sizes:** a value of any size the blob store holds; one larger than a request (`request_max`, about `max_payload` − 16 KiB) costs a `put` round trip per part of about 6 MiB on an 8 MiB server. After `result()`, `status()` can read the previous state for a round trip of the worker's.
+**Sizes:** a value of any size the blob store holds; one larger than a request (`request_max`, about `max_payload` − 16 KiB) takes a `put` round trip per part of about 6 MiB on an 8 MiB server. After `result()`, `status()` can read the previous state for a round trip of the worker's.
 
 ## Running a worker
 
