@@ -1,5 +1,5 @@
-// The signal `id` (durable-engine #19: signals journaled at send, deduplicated by `id`; its
-// docs/API.md "signal"). The SDK sends an id on every signal, the caller's or a generated UUID, so
+// The signal `id` (the engine journals a signal at send, deduplicated by `id`; the engine's
+// API.md, "signal"). The SDK sends an id on every signal, the caller's or a generated UUID, so
 // a caller that retries after EngineUnavailableError can pass the id of the first try. The twin is
 // python/tests/integration/test_signal_id.py.
 
@@ -14,14 +14,15 @@ import { connect } from "../harness/existing.js";
 import { NatsJournal } from "../harness/shell/journal-store.js";
 import { names, skipAsTenant } from "../harness/shell/names.js";
 
+const natsUrl = inject("natsUrl");
 let nc: NatsConnection;
 
 beforeAll(async () => {
-  nc = await connect({ servers: inject("natsUrl")! });
+  if (natsUrl) nc = await connect({ servers: natsUrl });
 });
 
 afterAll(async () => {
-  await nc.drain();
+  if (natsUrl) await nc.drain();
 });
 
 const factor = (): number => inject("rttFactor");
@@ -67,7 +68,7 @@ const rolls = defineWorkflow("sigid_rolls", async (ctx, input: { n: number }) =>
   return ctx.await<string>("never");
 });
 
-describe("the signal id", () => {
+describe.skipIf(!natsUrl)("the signal id", () => {
   it("two signals with the same id journal one entry, and the run takes it once", async () => {
     skipAsTenant(); // the test reads the journal itself (shell/names.ts)
     const worker = createWorker({ nc, workflows: [twice], prefix: PREFIX, streamMaxBytes: 64 * 1024 * 1024 }); // prettier-ignore

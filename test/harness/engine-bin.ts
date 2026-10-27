@@ -1,16 +1,21 @@
-// The engine binary, for global-setup.ts (which may not import vitest) and engine.ts: `DE_ENGINE`,
-// the path of an engine build from Synadia. A standalone `serve` starts only with a licence: every
-// standalone engine the run spawns gets the run's licence as `DE_LICENCE` (F42). `engine.pin`
-// names the engine version the suites were last run against.
+// The engine binaries and the licence, for global-setup.ts (which may not import vitest),
+// engine.ts, engine-process.ts and the `limits` suite. The harness reads four variables and
+// nothing else:
 //
-// Without `DE_ENGINE`, the engine's developers get a build of the engine's source
-// (`DE_ENGINE_REPO`) at `engine.pin`; a source at another commit, or with local changes, is
-// refused unless `DE_ENGINE_ANY=1`.
+// - `DE_ENGINE`: an engine build from Synadia (a path). Without it the integration suites skip.
+// - `DE_LICENCE`: the licence every standalone engine the run spawns gets (F42).
+// - `DE_LICENCE_TOOL`: the engine's licence tool (a path). The `limits` suite makes its low-limit
+//   licence with it, and without `DE_LICENCE` the run's licence too.
+// - `DE_ENGINE_FABRIC`: the engine's fabric build (a path), the only one with --tenancy, for the
+//   `limits` suite's tenant limit.
+//
+// A variable that is set but names no executable file fails the run, loud: a silent skip would
+// hide it. `engine.pin` names the engine version the suites were last run against.
 
 import { execFileSync } from "node:child_process";
-import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = fileURLToPath(new URL("../..", import.meta.url));
@@ -22,93 +27,51 @@ export class EngineNotAvailableError extends Error {
   }
 }
 
-/** The commit `engine.pin` names. */
+/** The engine version `engine.pin` names. */
 export function enginePin(): string {
   return readFileSync(join(repo, "engine.pin"), "utf8").trim();
 }
 
-function onPath(name: string): string | null {
-  for (const dir of (process.env.PATH ?? "").split(":")) {
-    if (!dir) continue;
-    try {
-      accessSync(join(dir, name), constants.X_OK);
-      return join(dir, name);
-    } catch {
-      /* keep looking */
-    }
+type Executable = "DE_ENGINE" | "DE_ENGINE_FABRIC" | "DE_LICENCE_TOOL";
+
+/** The executable `name` gives, or undefined when it is unset; one that is not an executable file throws. */
+function executable(name: Executable): string | undefined {
+  const given = process.env[name];
+  if (given === undefined || given === "") return undefined;
+  let ok = false;
+  try {
+    accessSync(given, constants.X_OK);
+    ok = statSync(given).isFile();
+  } catch {
+    ok = false;
   }
-  return null;
+  if (!ok) throw new Error(`${name}=${given}: not an executable file`);
+  return given;
 }
 
-/**
- * The engine binary to run: `DE_ENGINE`, or a build of the pinned checkout. Throws
- * EngineNotAvailableError when neither can be had (the suites skip), and a plain Error when the
- * checkout is at the wrong commit (the run fails: a silent skip would hide it).
- */
 /** Which build of the engine: `dev`, the standalone one (`DE_ENGINE`), or `fabric`, the only build with --tenancy (`DE_ENGINE_FABRIC`). */
 export type EngineBuild = "dev" | "fabric";
 
+/**
+ * The engine binary to run: `DE_ENGINE`, or `DE_ENGINE_FABRIC` for the fabric build. Throws
+ * EngineNotAvailableError when the variable is unset (the suites skip), and a plain Error when it
+ * names no executable file (the run fails).
+ */
 export function resolveEngineBinary(build: EngineBuild = "dev"): string {
-  const given = build === "fabric" ? process.env.DE_ENGINE_FABRIC : process.env.DE_ENGINE;
-  if (given !== undefined && given !== "") {
-    try {
-      accessSync(given, constants.X_OK);
-    } catch {
-      throw new Error(`DE_ENGINE=${given}: not an executable file`);
-    }
-    return given;
-  }
-  const pin = enginePin();
-  const src = process.env.DE_ENGINE_REPO ?? join(repo, "..", "durable-engine");
-  if (!existsSync(join(src, "go.mod"))) {
-    throw new EngineNotAvailableError(
-      `no ${build === "fabric" ? "DE_ENGINE_FABRIC" : "DE_ENGINE"} and no engine checkout at ${src} (DE_ENGINE_REPO)`,
-    );
-  }
-  if (onPath("go") === null) {
-    throw new EngineNotAvailableError(`no DE_ENGINE, and Go is not on PATH to build ${src}`);
-  }
-  const git = (...args: string[]): string =>
-    execFileSync("git", ["-C", src, ...args], { encoding: "utf8" }).trim();
-  const head = git("rev-parse", "HEAD");
-  const any = process.env.DE_ENGINE_ANY === "1";
-  if (!head.startsWith(pin) && !any) {
-    throw new Error(
-      `the engine checkout ${src} is at ${head.slice(0, 7)}, engine.pin names ${pin}: ` +
-        `check out ${pin} there, point DE_ENGINE at a binary, or set DE_ENGINE_ANY=1`,
-    );
-  }
-  const dirty = git("status", "--porcelain", "--untracked-files=no") !== "";
-  if (dirty && !any) {
-    throw new Error(`the engine checkout ${src} has local changes; it is not ${pin} (DE_ENGINE_ANY=1 to run it anyway)`); // prettier-ignore
-  }
-  const outDir = join(repo, ".engine-bin");
-  mkdirSync(outDir, { recursive: true });
-  const tag = `${head.slice(0, 12)}${dirty ? "-dirty" : ""}`;
-  const out = join(outDir, `durable-engine-${build}-${tag}`);
-  const tool = join(outDir, `durable-licence-${tag}`);
-  if (!existsSync(out) || !existsSync(tool) || dirty) {
-    // Into this repo's .engine-bin: nothing is written in the source checkout.
-    execFileSync("go", ["build", "-tags", build === "fabric" ? "fabric" : "devlicence", "-o", out, "./cmd/durable-engine"], { cwd: src, stdio: "inherit" }); // prettier-ignore
-    execFileSync("go", ["build", "-o", tool, "./cmd/durable-licence"], { cwd: src, stdio: "inherit" }); // prettier-ignore
-  }
-  return out;
+  const name = build === "fabric" ? "DE_ENGINE_FABRIC" : "DE_ENGINE";
+  const bin = executable(name);
+  if (bin === undefined) throw new EngineNotAvailableError(`no ${name}`);
+  return bin;
 }
 
-/**
- * The engine's licence tool, for the engine binary `bin`: beside it, or `DE_LICENCE_TOOL`.
- */
-export function licenceTool(bin: string): string {
-  const given = process.env.DE_LICENCE_TOOL;
-  if (given !== undefined && given !== "") return given;
-  const ours = bin.replace(/durable-engine-dev-([^/]+)$/, "durable-licence-$1");
-  for (const p of [ours, join(dirname(bin), "durable-licence")]) {
-    if (p !== bin && existsSync(p)) return p;
-  }
-  throw new Error(
-    `no durable-licence beside ${bin} to mint the run's test licence: set DE_LICENCE to a licence ` +
-      `file, DE_LICENCE_TOOL to the tool, or build both with \`make build-dev\` in the engine`,
-  );
+/** The engine's fabric build (`DE_ENGINE_FABRIC`), or undefined when it is not given. */
+export function fabricEngine(): string | undefined {
+  return executable("DE_ENGINE_FABRIC");
+}
+
+/** The engine's licence tool (`DE_LICENCE_TOOL`), or undefined when it is not given. */
+export function licenceTool(): string | undefined {
+  return executable("DE_LICENCE_TOOL");
 }
 
 /** A licence's limits (`workflows: 1`, …), for a test that meets them. */
@@ -117,29 +80,35 @@ export type LicenceLimits = Partial<
 >;
 
 /**
- * A licence for the tests, written to a fresh temporary file: the run's (`name`
- * durable-sdk-tests) or a test's own, with `limits`.
+ * A licence made by `DE_LICENCE_TOOL`, written to a fresh temporary file: the run's (`name`
+ * durable-sdk-tests) or a test's own, with `limits`. The tool signs it with the key its own
+ * environment gives it.
  */
-export function mintTestLicence(
-  bin: string,
-  name = "durable-sdk-tests",
-  limits: LicenceLimits = {},
-): string {
+export function mintLicence(name = "durable-sdk-tests", limits: LicenceLimits = {}): string {
+  const tool = licenceTool();
+  if (tool === undefined) throw new EngineNotAvailableError("no DE_LICENCE_TOOL");
   const out = join(mkdtempSync(join(tmpdir(), "de-licence-")), "licence.jwt");
   const flags = Object.entries(limits).flatMap(([k, v]) => [`-${k}`, String(v)]);
-  execFileSync(licenceTool(bin), ["mint", "-test", "-name", name, ...flags, "-out", out], { stdio: "pipe" }); // prettier-ignore
+  execFileSync(tool, ["mint", "-name", name, ...flags, "-out", out], { stdio: "pipe" });
   return out;
 }
 
 /**
- * The run's licence: the caller's `DE_LICENCE`, or one made once for the run with no limit on
- * workflow names. A standalone engine keeps the set of names in `{P}_TENANTS` (key `workflows`,
- * 7 days' retention) and the licence's `maxWorkflows` counts it at every poll; the set persists
- * across tests, and the existing-server run puts about 150 names on one prefix. The engine's own
- * cap of 1000 names stays. `limits.test.ts` makes licences of its own, with limits.
+ * The run's licence: the caller's `DE_LICENCE`, or, with `DE_LICENCE_TOOL`, one made once for the
+ * run with no limit on workflow names. A standalone engine keeps the set of names in `{P}_TENANTS`
+ * (key `workflows`, 7 days' retention) and the licence's `maxWorkflows` counts it at every poll;
+ * the set persists across tests, and the existing-server run puts about 150 names on one prefix.
+ * The engine's own cap of 1000 names stays. Throws EngineNotAvailableError with neither: a
+ * standalone engine starts only with a licence.
  */
-export function runLicence(bin: string): { file: string; minted: boolean } {
+export function runLicence(): { file: string; minted: boolean } {
   const given = process.env.DE_LICENCE;
-  if (given !== undefined && given !== "") return { file: given, minted: false };
-  return { file: mintTestLicence(bin, "durable-sdk-tests", { workflows: 0 }), minted: true };
+  if (given !== undefined && given !== "") {
+    if (!existsSync(given)) throw new Error(`DE_LICENCE=${given}: no such file`);
+    return { file: given, minted: false };
+  }
+  if (licenceTool() === undefined) {
+    throw new EngineNotAvailableError("no DE_LICENCE: a standalone engine starts only with a licence"); // prettier-ignore
+  }
+  return { file: mintLicence("durable-sdk-tests", { workflows: 0 }), minted: true };
 }

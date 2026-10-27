@@ -1,5 +1,5 @@
 // durable-sdk: the engine's refusal codes, against a fake connection (no server). Every code of the
-// engine's table (docs/API.md "Errors" at engine.pin) has a class here, so a code the engine adds
+// engine's table (its API.md, "Errors") has a class here, so a code the engine adds
 // fails this suite rather than reaching a caller as `unavailable` (the engine's F46; F40). The two
 // limit codes are `LimitError`, retried by no call: a client's call rejects with it, a worker's
 // start() rejects when its first poll is refused, a refused poll is logged at error and backs off,
@@ -7,10 +7,7 @@
 // (`info.capabilities` without `withdrawn-remembered`) is refused at start(), or at the first
 // answered poll when start() found none, and stop() withdraws once (F45).
 
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import { type NatsConnection, NoRespondersError } from "@nats-io/nats-core";
 import { describe, expect, it } from "vitest";
 import { createClient } from "../../src/engine/client.js";
@@ -70,21 +67,17 @@ const refusal = (code: string, extra: object = {}): object => ({
 
 const wf = defineWorkflow("lim", () => Promise.resolve("ok"));
 
-/** An engine at the floor's `info` (its #13 and later). */
+/** An engine at the floor's `info` (commit 16cb3da and later). */
 const INFO = { engine: "0.2.0-dev", commit: "16cb3da", capabilities: ["withdrawn-remembered"] };
 
-/** The codes of the engine's table at engine.pin, or undefined without an engine checkout. */
+/**
+ * The codes of the engine's table, read from its API.md at `DE_ENGINE_API_MD`, or undefined when
+ * that is not given. A path given that cannot be read fails the suite.
+ */
 function enginesCodes(): string[] | undefined {
-  const repo = fileURLToPath(new URL("../..", import.meta.url));
-  const src = process.env.DE_ENGINE_REPO ?? join(repo, "..", "durable-engine");
-  if (!existsSync(join(src, ".git"))) return undefined;
-  const pin = readFileSync(join(repo, "engine.pin"), "utf8").trim();
-  let doc: string;
-  try {
-    doc = execFileSync("git", ["-C", src, "show", `${pin}:docs/API.md`], { encoding: "utf8" });
-  } catch {
-    return undefined;
-  }
+  const path = process.env.DE_ENGINE_API_MD;
+  if (path === undefined || path === "") return undefined;
+  const doc = readFileSync(path, "utf8");
   const section = doc.split(/^## Errors$/m)[1]!.split(/^## /m)[0]!;
   return [...section.matchAll(/^\| `([a-z_]+)` \|/gm)]
     .map((m) => m[1]!)
@@ -94,9 +87,12 @@ function enginesCodes(): string[] | undefined {
 describe("every code of the engine's table has a class (F40)", () => {
   const codes = enginesCodes();
 
-  it.skipIf(codes === undefined)("the mirror is the table at engine.pin, code for code", () => {
-    expect(Object.keys(ENGINE_ERROR_CODES).sort()).toEqual([...codes!].sort());
-  });
+  it.skipIf(codes === undefined)(
+    "the mirror is the engine's table (DE_ENGINE_API_MD), code for code",
+    () => {
+      expect(Object.keys(ENGINE_ERROR_CODES).sort()).toEqual([...codes!].sort());
+    },
+  );
 
   it.each(Object.entries(ENGINE_ERROR_CODES))("%s is %s", async (code, cls) => {
     const extra = code === "blob_gone" ? { blob: `r1/sha256:${"a".repeat(64)}` } : code.endsWith("_limit") ? { limit: "runs" } : {}; // prettier-ignore
@@ -155,7 +151,7 @@ describe("no client call retries a limit", () => {
   });
 });
 
-describe("the signal id (engine #19: signals deduplicated by id)", () => {
+describe("the signal id (the engine deduplicates signals by id)", () => {
   it("is sent as given, or as a generated UUID", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const { nc } = fakeNc((op, body) => {

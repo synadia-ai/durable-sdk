@@ -51,8 +51,8 @@ export interface EngineExtras {
   onLine?: (line: string) => void;
   /**
    * `DE_LICENCE` for `serve` (a standalone engine starts only with a licence; F42): a file, or
-   * `null` for none (the fabric mode needs none, and one given would bound its tenants). Absent:
-   * the run's, which global-setup.ts put in the environment.
+   * `null` for none (an engine in the fabric mode). Absent: the run's, which global-setup.ts put
+   * in the environment.
    */
   licence?: string | null;
   /** Arguments before `--prefix` (`--tenancy`, `--tenant-max-bytes 0`, …). */
@@ -89,8 +89,8 @@ export class EngineProcess {
     const env = { ...process.env };
     if (this.extras.licence === null) delete env.DE_LICENCE;
     else if (this.extras.licence !== undefined) env.DE_LICENCE = this.extras.licence;
-    // The fabric mode (--tenancy) exists only in the fabric build since the engine's #9 (its F44):
-    // a tenancy-mode spawn runs that build, resolved beside the dev one (DE_ENGINE_FABRIC names it).
+    // The fabric mode (--tenancy) exists only in the fabric build: a tenancy-mode spawn runs
+    // DE_ENGINE_FABRIC.
     const bin = this.extras.args?.includes("--tenancy") ? resolveEngineBinary("fabric") : this.bin;
     const proc = spawn(bin, this.args, { stdio: ["ignore", "ignore", "pipe"], env });
     this.#proc = proc;

@@ -8,14 +8,18 @@ to the SDK's. The library's per-worker options that are the engine's flags now (
 ``--ack-wait``, ``lease=False`` → ``--no-lease``, …) become the engine's command line.
 ``tests/integration/conftest.py`` stops every engine after each test, before it deletes the streams.
 
-The binary: ``DE_ENGINE``, the path of an engine build from Synadia. A standalone ``serve`` starts
-only with a licence: every standalone engine the run spawns gets the run's licence as
-``DE_LICENCE`` (F42). ``engine.pin`` names the engine version the suites were last run against.
-Nothing reaches beyond 127.0.0.1 unless ``DE_NATS_URL`` says so.
+The harness reads four variables and nothing else:
 
-Without ``DE_ENGINE``, the engine's developers get a build of the engine's source
-(``DE_ENGINE_REPO``) at ``engine.pin``; a source at another commit, or with local changes, is
-refused unless ``DE_ENGINE_ANY=1``. Without either the integration suites skip, saying why.
+- ``DE_ENGINE``: an engine build from Synadia (a path). Without it the integration suites skip.
+- ``DE_LICENCE``: the licence every standalone engine the run spawns gets (F42).
+- ``DE_LICENCE_TOOL``: the engine's licence tool (a path). ``test_limits`` makes its low-limit
+  licence with it, and without ``DE_LICENCE`` the run's licence too.
+- ``DE_ENGINE_FABRIC``: the engine's fabric build (a path), the only one with ``--tenancy``, for
+  ``test_limits``'s tenant limit.
+
+A variable that is set but names no executable file fails the run, loud. ``engine.pin`` names the
+engine version the suites were last run against. Nothing reaches beyond 127.0.0.1 unless
+``DE_NATS_URL`` says so.
 
 Against an existing server (``existing.py``, ``DE_NATS_URL``) there is one prefix and one engine
 for the run instead: every prefix a test names is the run's, the engine is the session's
@@ -31,7 +35,6 @@ import contextlib
 import dataclasses
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -56,109 +59,83 @@ REPO = Path(__file__).resolve().parents[2]
 
 
 class EngineNotAvailableError(Exception):
-    """No engine binary, and none can be built: the integration suites skip."""
+    """No engine binary, or no licence for it: the integration suites skip."""
 
 
 def engine_pin() -> str:
-    """The commit ``engine.pin`` names."""
+    """The engine version ``engine.pin`` names."""
     return (REPO / "engine.pin").read_text(encoding="utf-8").strip()
 
 
+def _executable(name: str) -> str | None:
+    """The executable the variable ``name`` gives, or None when it is unset; one that is not an
+    executable file raises."""
+    given = os.environ.get(name, "")
+    if not given:
+        return None
+    if not (os.path.isfile(given) and os.access(given, os.X_OK)):
+        raise RuntimeError(f"{name}={given}: not an executable file")
+    return given
+
+
 def resolve_engine_binary(build: str = "dev") -> str:
-    """The engine binary to run: ``DE_ENGINE``, or a build of the pinned checkout.
+    """The engine binary to run: ``DE_ENGINE``, or ``DE_ENGINE_FABRIC`` for the fabric build.
 
-    Raises :class:`EngineNotAvailableError` when neither can be had (the suites skip), and a plain
-    ``RuntimeError`` when the checkout is at the wrong commit (the run fails: a silent skip would
-    hide it).
+    Raises :class:`EngineNotAvailableError` when the variable is unset (the suites skip), and a
+    plain ``RuntimeError`` when it names no executable file (the run fails).
     """
-    given = os.environ.get("DE_ENGINE_FABRIC" if build == "fabric" else "DE_ENGINE", "")
-    if given:
-        if not (os.path.isfile(given) and os.access(given, os.X_OK)):
-            raise RuntimeError(f"DE_ENGINE={given}: not an executable file")
-        return given
-    pin = engine_pin()
-    src = Path(os.environ.get("DE_ENGINE_REPO") or REPO.parent / "durable-engine")
-    if not (src / "go.mod").exists():
-        raise EngineNotAvailableError(
-            f"no {'DE_ENGINE_FABRIC' if build == 'fabric' else 'DE_ENGINE'} and no engine checkout at {src} (DE_ENGINE_REPO)"
-        )
-    if shutil.which("go") is None:
-        raise EngineNotAvailableError(f"no DE_ENGINE, and Go is not on PATH to build {src}")
+    name = "DE_ENGINE_FABRIC" if build == "fabric" else "DE_ENGINE"
+    binary = _executable(name)
+    if binary is None:
+        raise EngineNotAvailableError(f"no {name}")
+    return binary
 
-    def git(*args: str) -> str:
-        return subprocess.check_output(["git", "-C", str(src), *args], text=True).strip()
 
-    head = git("rev-parse", "HEAD")
-    any_ = os.environ.get("DE_ENGINE_ANY") == "1"
-    if not head.startswith(pin) and not any_:
-        raise RuntimeError(
-            f"the engine checkout {src} is at {head[:7]}, engine.pin names {pin}: check out {pin} "
-            "there, point DE_ENGINE at a binary, or set DE_ENGINE_ANY=1"
-        )
-    dirty = git("status", "--porcelain", "--untracked-files=no") != ""
-    if dirty and not any_:
-        raise RuntimeError(
-            f"the engine checkout {src} has local changes; it is not {pin} (DE_ENGINE_ANY=1 to "
-            "run it anyway)"
-        )
-    out_dir = REPO / ".engine-bin"
-    out_dir.mkdir(exist_ok=True)
-    tag = f"{head[:12]}{'-dirty' if dirty else ''}"
-    out = out_dir / f"durable-engine-{build}-{tag}"
-    tool = out_dir / f"durable-licence-{tag}"
-    if not out.exists() or not tool.exists() or dirty:
-        # Into this repo's .engine-bin: nothing is written in the source checkout.
-        subprocess.run(
-            [
-                "go",
-                "build",
-                "-tags",
-                "fabric" if build == "fabric" else "devlicence",
-                "-o",
-                str(out),
-                "./cmd/durable-engine",
-            ],
-            cwd=src,
-            check=True,
-        )
-        subprocess.run(
-            ["go", "build", "-o", str(tool), "./cmd/durable-licence"], cwd=src, check=True
-        )
-    return str(out)
+def fabric_engine() -> str | None:
+    """The engine's fabric build (``DE_ENGINE_FABRIC``), or None when it is not given."""
+    return _executable("DE_ENGINE_FABRIC")
 
 
 # --- the licence (F42) ---------------------------------------------------------------------------
 
 
-def licence_tool(binary: str) -> str:
-    """The engine's licence tool, for the engine binary: beside it, or ``DE_LICENCE_TOOL``."""
-    given = os.environ.get("DE_LICENCE_TOOL", "")
-    if given:
-        return given
-    b = Path(binary)
-    ours = b.with_name(b.name.replace("durable-engine-dev-", "durable-licence-", 1))
-    for p in (ours, b.with_name("durable-licence")):
-        if p != b and p.exists():
-            return str(p)
-    raise RuntimeError(
-        f"no durable-licence beside {binary} to mint the run's test licence: set DE_LICENCE to a "
-        "licence file, DE_LICENCE_TOOL to the tool, or build both with `make build-dev` in the "
-        "engine"
-    )
+def licence_tool() -> str | None:
+    """The engine's licence tool (``DE_LICENCE_TOOL``), or None when it is not given."""
+    return _executable("DE_LICENCE_TOOL")
 
 
-def mint_test_licence(binary: str, name: str = "durable-sdk-tests", **limits: int) -> str:
-    """A licence for the tests, written to a fresh temporary file: the run's (``name``
-    durable-sdk-tests) or a test's own, with ``limits`` (``workflows=1``,
-    ``runs_in_flight=1``, …)."""
+def mint_licence(name: str = "durable-sdk-tests", **limits: int) -> str:
+    """A licence made by ``DE_LICENCE_TOOL``, written to a fresh temporary file: the run's
+    (``name`` durable-sdk-tests) or a test's own, with ``limits`` (``workflows=1``,
+    ``runs_in_flight=1``, …). The tool signs it with the key its own environment gives it."""
+    tool = licence_tool()
+    if tool is None:
+        raise EngineNotAvailableError("no DE_LICENCE_TOOL")
     out = Path(tempfile.mkdtemp(prefix="de-licence-")) / "licence.jwt"
     flags = [x for k, v in limits.items() for x in (f"-{k.replace('_', '-')}", str(v))]
     subprocess.run(
-        [licence_tool(binary), "mint", "-test", "-name", name, *flags, "-out", str(out)],
-        check=True,
-        capture_output=True,
+        [tool, "mint", "-name", name, *flags, "-out", str(out)], check=True, capture_output=True
     )
     return str(out)
+
+
+def run_licence() -> tuple[str, bool]:
+    """The run's licence and whether it was made for the run: the caller's ``DE_LICENCE``, or, with
+    ``DE_LICENCE_TOOL``, one made once for the run with no limit on workflow names (a standalone
+    engine keeps the set of names in ``{P}_TENANTS``, 7 days' retention, and the licence counts it
+    at every poll; the set persists across tests, and the existing-server run puts every test's
+    names on one prefix; the engine's cap of 1000 stays). Raises :class:`EngineNotAvailableError`
+    with neither: a standalone engine starts only with a licence."""
+    given = os.environ.get("DE_LICENCE", "")
+    if given:
+        if not os.path.isfile(given):
+            raise RuntimeError(f"DE_LICENCE={given}: no such file")
+        return given, False
+    if licence_tool() is None:
+        raise EngineNotAvailableError(
+            "no DE_LICENCE: a standalone engine starts only with a licence"
+        )
+    return mint_licence(workflows=0), True
 
 
 #: The licence of the run's standalone engines (integration/conftest.py), or None: the environment's.
@@ -280,8 +257,8 @@ class EngineProcess:
         self.metrics_addr = metrics_addr
         self.start_timeout_s = start_timeout_s
         self.on_line = on_line
-        #: ``DE_LICENCE`` for ``serve``: a file, ``None`` for none (the fabric mode needs none, and
-        #: one given would bound its tenants), or the run's (``RUN_LICENCE``).
+        #: ``DE_LICENCE`` for ``serve``: a file, ``None`` for none (an engine in the fabric mode),
+        #: or the run's (``RUN_LICENCE``).
         self.licence = licence
         #: Arguments before ``--prefix`` (``--tenancy``, ``--tenant-max-bytes 0``, …).
         self.extra_args = extra_args or []
@@ -329,8 +306,8 @@ class EngineProcess:
                 env.pop("DE_LICENCE", None)
         else:
             env["DE_LICENCE"] = str(licence)
-        # The fabric mode (--tenancy) exists only in the fabric build since the engine's #9 (its
-        # F44): a tenancy-mode spawn runs that build, resolved beside the dev one.
+        # The fabric mode (--tenancy) exists only in the fabric build: a tenancy-mode spawn runs
+        # DE_ENGINE_FABRIC.
         binary = resolve_engine_binary("fabric") if "--tenancy" in self.extra_args else self.binary
         proc = subprocess.Popen(
             [binary, *self.args], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=env
@@ -825,11 +802,13 @@ __all__ = [
     "engine_log",
     "engine_pin",
     "ensure_engine",
+    "fabric_engine",
     "licence_tool",
-    "mint_test_licence",
+    "mint_licence",
     "provision",
     "resolve_engine_binary",
     "restart_engine",
+    "run_licence",
     "set_engine_server",
     "stop_engines",
 ]

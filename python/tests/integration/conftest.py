@@ -38,26 +38,19 @@ from conftest import delete_all_streams, leftover_message, list_ephemeral_consum
 @pytest.fixture(scope="session")
 def engine_bin() -> Iterator[str]:
     """The engine binary for the run, resolved once; the integration suites skip without one. With
-    it the run's licence (F42): the caller's ``DE_LICENCE``, or one made once for the run and
-    removed at the end."""
+    it the run's licence (F42): the caller's ``DE_LICENCE``, or one made once for the run with
+    ``DE_LICENCE_TOOL`` and removed at the end; they skip without either."""
     if existing.EXISTING is not None and existing.EXISTING.engine_url is not None:
         yield ""  # DE_ENGINE_URL: the engine is not the harness's
         return
     try:
         binary = engine.resolve_engine_binary()
+        print(f"\nengine: {binary} (engine.pin {engine.engine_pin()})", file=sys.stderr)
+        licence, minted = engine.run_licence()
     except engine.EngineNotAvailableError as e:
         pytest.skip(f"durable-engine unavailable ({e})")
-    print(f"\nengine: {binary} (engine.pin {engine.engine_pin()})", file=sys.stderr)
-    given = os.environ.get("DE_LICENCE", "")
-    # No limit on workflow names: a standalone engine keeps the set of names in ``{P}_TENANTS``
-    # (7 days' retention) and the licence counts it at every poll; the set persists across tests
-    # (the existing-server run puts every test's names on one prefix). The engine's cap of 1000
-    # stays.
-    licence = given or engine.mint_test_licence(binary, workflows=0)
     print(
-        f"licence: DE_LICENCE {licence}"
-        if given
-        else f"licence: a test licence minted for the run, {licence}",
+        f"licence: made for the run, {licence}" if minted else f"licence: DE_LICENCE {licence}",
         file=sys.stderr,
     )
     engine.configure_licence(licence)
@@ -65,7 +58,7 @@ def engine_bin() -> Iterator[str]:
         yield binary
     finally:
         engine.configure_licence(None)
-        if not given:
+        if minted:
             shutil.rmtree(os.path.dirname(licence), ignore_errors=True)
 
 

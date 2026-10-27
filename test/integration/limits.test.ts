@@ -4,7 +4,9 @@
 // server of the test's own (the tenant's record `maxWorkflows: 1` in `KV_DE_TENANTS`, as an
 // operator sets it). Each is a `LimitError` naming the limit: `worker.start()` rejects with it,
 // `client.start()` rejects with it after one request. Both need a server and an engine of their
-// own, so neither runs against an existing server.
+// own, so neither runs against an existing server. The licence limit needs the engine's licence
+// tool (`DE_LICENCE_TOOL`), the tenant limit its fabric build (`DE_ENGINE_FABRIC`); without them
+// they skip, saying so.
 
 import { Kvm } from "@nats-io/kv";
 import { type NatsConnection } from "@nats-io/nats-core";
@@ -13,7 +15,7 @@ import { defineWorkflow } from "../../src/core/workflow.js";
 import { createClient } from "../../src/engine/client.js";
 import { LimitError } from "../../src/engine/errors.js";
 import { createWorker, type Worker } from "../../src/engine/worker.js";
-import { mintTestLicence } from "../harness/engine-bin.js";
+import { fabricEngine, licenceTool, mintLicence } from "../harness/engine-bin.js";
 import { countOf } from "../harness/engine.js";
 import { EngineProcess } from "../harness/engine-process.js";
 import { connect } from "../harness/existing.js";
@@ -22,7 +24,16 @@ import { NatsServerProcess, renderTenancyConfig } from "../harness/nats-server.j
 
 const bin = inject("engineBin");
 const OWN = "needs a server and an engine of its own, with a licence or a tenant's limits of its own"; // prettier-ignore
-const own = describeUnlessExisting(OWN, !!bin && !!inject("natsDirectUrl"));
+const available = !!bin && !!inject("natsDirectUrl");
+
+/** A suite of its own, skipped without `given` too, its title then saying what it needs. */
+function own(given: string | undefined, needs: string) {
+  const d = describeUnlessExisting(OWN, available && given !== undefined);
+  return (title: string, fn: () => void): void =>
+    d(given === undefined ? `${title} [skipped: needs ${needs}]` : title, fn);
+}
+const withTool = own(licenceTool(), "the engine's licence tool (DE_LICENCE_TOOL)");
+const withFabric = own(fabricEngine(), "the engine's fabric build (DE_ENGINE_FABRIC)");
 const MIB = 1024 * 1024;
 
 /** What a test opened, closed after it whatever happened. */
@@ -53,14 +64,14 @@ async function counts(nc: NatsConnection, prefix: string): Promise<Record<string
   return r.json<{ counts?: Record<string, number> }>().counts ?? {};
 }
 
-own("a licence limit (a standalone engine)", () => {
+withTool("a licence limit (a standalone engine)", () => {
   const scope = new Scope();
   afterEach(() => scope.close());
 
   it("a worker for a workflow past the licence's is refused at start(), and a run past its runs in flight at start()", async () => {
     const prefix = "delim";
     const url = inject("natsDirectUrl")!;
-    const licence = mintTestLicence(bin!, "durable-sdk-limits", { workflows: 1, "runs-in-flight": 1 }); // prettier-ignore
+    const licence = mintLicence("durable-sdk-limits", { workflows: 1, "runs-in-flight": 1 });
     const engine = new EngineProcess(bin!, url, prefix, { streamMaxBytes: 16 * MIB }, { licence });
     await engine.start();
     scope.defer(() => engine.stop());
@@ -93,7 +104,7 @@ own("a licence limit (a standalone engine)", () => {
   });
 });
 
-own("a tenant limit (the fabric mode)", () => {
+withFabric("a tenant limit (the fabric mode)", () => {
   const scope = new Scope();
   afterEach(() => scope.close());
 
@@ -103,7 +114,7 @@ own("a tenant limit (the fabric mode)", () => {
     await server.start();
     scope.defer(() => server.stop());
     const engine = new EngineProcess(bin!, `nats://de:de@127.0.0.1:${server.url.split(":").at(-1)!}`, prefix, {}, {
-      licence: null, // the fabric mode needs none, and one would bound its tenants
+      licence: null,
       args: ["--tenancy", "--tenant-max-bytes", "0"],
     }); // prettier-ignore
     await engine.start();
