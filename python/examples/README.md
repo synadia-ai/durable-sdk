@@ -32,7 +32,7 @@ CRASH=1 DE_RUN_ID=crash-demo NATS_URL=nats://127.0.0.1:4222 uv run python exampl
 
 ## On the fabric
 
-The workflows run unchanged on the fabric; the prefix is `de` on both. **The connection is what differs** ([`../../docs/FABRIC.md`](../../docs/FABRIC.md)): your tenant's user. nats-py reads `user:password@` from `NATS_URL`, so a tenant whose user has a password runs the examples as they are (as on the local three-account server of [Walk it locally](../../docs/FABRIC.md#walk-it-locally)). The examples take no creds file, so with one (NGS) each example is the code to copy, with its `nats.connect(…)` line replaced by [the fabric's](../../docs/FABRIC.md#the-code). What each shows there:
+The workflows run unchanged on the fabric; the prefix is `de` on both. **The connection is what differs** ([`../../docs/FABRIC.md`](../../docs/FABRIC.md)): your tenant's user. nats-py reads `user:password@` from `NATS_URL`, so a tenant whose user has a password runs the examples as they are. The examples take no creds file, so with one (NGS) each example is the code to copy, with its `nats.connect(…)` line replaced by [the fabric's](../../docs/FABRIC.md#the-code). What each shows there:
 
 | Example                                           | On the fabric                                                                                                                                                                                      |
 | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

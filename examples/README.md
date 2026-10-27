@@ -40,6 +40,6 @@ The workflows run unchanged on the fabric; the prefix is `de` on both. **The con
 
 ## The rest
 
-The rest of the library's examples (the dashboard, the AI and scale demos) and its walkthroughs stayed in the library, which is retired. The byte-level journal of a whole run is in the durable execution protocol, Appendix C.
+The rest of the library's examples (the dashboard, the AI and scale demos) and its walkthroughs stayed in the library, which is retired. The byte-level journal of a whole run is in the engine's protocol specification.
 
 On the fabric every example takes `NATS_CREDS=<your creds file>` next to `NATS_URL` (Python needs `nkeys`): the code does not change, the connection does ([`docs/FABRIC.md`](../docs/FABRIC.md)).
