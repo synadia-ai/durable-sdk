@@ -1,6 +1,6 @@
 # Examples
 
-Runnable, self-contained workflows for `synadia-durable`, the library's examples on the thin SDK. Each one is a small `@workflow` plus a worker/client harness you can read top to bottom. The files were copied from the library at `7456c75` and edited since; their header comments predate the engine, so the commands below are the ones to use. TypeScript's are in [`../../examples/`](../../examples/README.md).
+Runnable, self-contained workflows for `synadia-durable`, the library's examples on the thin SDK. Each one is a small `@workflow` plus a worker/client harness you can read top to bottom. The files come from the retired library and were edited since; their header comments predate the engine, so the commands below are the ones to use. TypeScript's are in [`../../examples/`](../../examples/README.md).
 
 | Example                              | Shows                                                                                                                                                                                     |
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -12,11 +12,11 @@ Runnable, self-contained workflows for `synadia-durable`, the library's examples
 
 ## Standalone
 
-The quickstart's NATS and engine (the [README](../README.md#quickstart): `make build-dev` and a test licence), then the example with `uv`, from the repo's root:
+The quickstart's NATS and engine (the [README](../README.md#quickstart): the engine Synadia sent you, with your licence), then the example with `uv`, from the repo's root:
 
 ```sh
 nats-server -js &
-../durable-engine/bin/durable-engine-dev serve --nats nats://127.0.0.1:4222 --licence de.licence &
+./durable-engine_<version>_<os>_<arch>/durable-engine serve --nats nats://127.0.0.1:4222 --licence durable.licence &
 cd python
 NATS_URL=nats://127.0.0.1:4222 uv run python examples/<name>.py
 ```
@@ -32,7 +32,7 @@ CRASH=1 DE_RUN_ID=crash-demo NATS_URL=nats://127.0.0.1:4222 uv run python exampl
 
 ## On the fabric
 
-The workflows run unchanged on the fabric; the prefix is `de` on both. **The connection is what differs** ([`../../docs/FABRIC.md`](../../docs/FABRIC.md)): your tenant's user. nats-py reads `user:password@` from `NATS_URL`, so a tenant whose user has a password runs the examples as they are (walked on a local three-account server, [Walk it locally](../../docs/FABRIC.md#walk-it-locally)). The examples take no creds file, so with one (NGS) each example is the code to copy, with its `nats.connect(…)` line replaced by [the fabric's](../../docs/FABRIC.md#the-code). What each shows there:
+The workflows run unchanged on the fabric; the prefix is `de` on both. **The connection is what differs** ([`../../docs/FABRIC.md`](../../docs/FABRIC.md)): your tenant's user. nats-py reads `user:password@` from `NATS_URL`, so a tenant whose user has a password runs the examples as they are (as on the local three-account server of [Walk it locally](../../docs/FABRIC.md#walk-it-locally)). The examples take no creds file, so with one (NGS) each example is the code to copy, with its `nats.connect(…)` line replaced by [the fabric's](../../docs/FABRIC.md#the-code). What each shows there:
 
 | Example                                           | On the fabric                                                                                                                                                                                      |
 | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -41,6 +41,6 @@ The workflows run unchanged on the fabric; the prefix is `de` on both. **The con
 
 ## The rest
 
-The rest of the library's examples (the AI, scale and journal-dump demos) stayed in the library, which is retired (history). The `durable_agent` example is left out: its front door registers it as a Synadia agent through the fabric's agent SDK (`synadia-ai-agent-service`), which this repo does not depend on (`docs/findings.md` F18); the fabric SDK's reference agents carry a durable agent of their own (its `docs/durable.md`).
+The rest of the library's examples (the AI, scale and journal-dump demos) stayed in the library, which is retired. The `durable_agent` example is left out: its front door registers it as a Synadia agent through the fabric's agent SDK (`synadia-ai-agent-service`), which this repo does not depend on; the fabric SDK's reference agents carry a durable agent of their own (its `docs/durable.md`).
 
-On the fabric every example takes `NATS_CREDS=<your creds file>` next to `NATS_URL` (since 2026-10-05; Python needs `nkeys`): the code does not change, the connection does ([`docs/FABRIC.md`](../../docs/FABRIC.md)).
+On the fabric every example takes `NATS_CREDS=<your creds file>` next to `NATS_URL` (Python needs `nkeys`): the code does not change, the connection does ([`docs/FABRIC.md`](../../docs/FABRIC.md)).

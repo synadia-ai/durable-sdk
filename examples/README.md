@@ -1,6 +1,6 @@
 # Examples
 
-Runnable, self-contained workflows for `@synadia-ai/durable`, the library's examples on the thin SDK. Each one is a small `defineWorkflow` plus a worker/client harness you can read top to bottom. The files were copied from the library at `7456c75` and edited since; their header comments predate the engine, so the commands below are the ones to use. Python's are in [`../python/examples/`](../python/examples/README.md).
+Runnable, self-contained workflows for `@synadia-ai/durable`, the library's examples on the thin SDK. Each one is a small `defineWorkflow` plus a worker/client harness you can read top to bottom. The files come from the retired library and were edited since; their header comments predate the engine, so the commands below are the ones to use. Python's are in [`../python/examples/`](../python/examples/README.md).
 
 | Example                                     | Shows                                                                                                                                                           |
 | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -12,11 +12,11 @@ Runnable, self-contained workflows for `@synadia-ai/durable`, the library's exam
 
 ## Standalone
 
-The quickstart's NATS and engine (the root [README](../README.md#quickstart): `make build-dev` and a test licence), then the example's npm script from the repo's root:
+The quickstart's NATS and engine (the root [README](../README.md#quickstart): the engine Synadia sent you, with your licence), then the example's npm script from the repo's root:
 
 ```sh
 nats-server -js &
-../durable-engine/bin/durable-engine-dev serve --nats nats://127.0.0.1:4222 --licence de.licence &
+./durable-engine_<version>_<os>_<arch>/durable-engine serve --nats nats://127.0.0.1:4222 --licence durable.licence &
 NATS_URL=nats://127.0.0.1:4222 npm run example:<name>
 ```
 
@@ -40,6 +40,6 @@ The workflows run unchanged on the fabric; the prefix is `de` on both. **The con
 
 ## The rest
 
-The rest of the library's examples (the dashboard, the AI and scale demos) and its walkthroughs stayed in the library, which is retired (history). The byte-level journal of a whole run is the engine's `docs/protocol/PROTOCOL.md` Appendix C.
+The rest of the library's examples (the dashboard, the AI and scale demos) and its walkthroughs stayed in the library, which is retired. The byte-level journal of a whole run is in the durable execution protocol, Appendix C.
 
-On the fabric every example takes `NATS_CREDS=<your creds file>` next to `NATS_URL` (since 2026-10-05; Python needs `nkeys`): the code does not change, the connection does ([`docs/FABRIC.md`](../docs/FABRIC.md)).
+On the fabric every example takes `NATS_CREDS=<your creds file>` next to `NATS_URL` (Python needs `nkeys`): the code does not change, the connection does ([`docs/FABRIC.md`](../docs/FABRIC.md)).
