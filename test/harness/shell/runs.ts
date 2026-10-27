@@ -2,7 +2,7 @@
 // source of truth (invariant #1), so status writes use a plain put (not a progress gate).
 // v0.1 has no gating lease — single-delivery via the work-queue plus the journal CAS provides
 // single-writer correctness; an explicit KV lease to cut wasted concurrent work is a documented
-// next refinement (the original design, durable-engine docs/protocol/DESIGN.md §6, invariant #3).
+// next refinement (the original design).
 
 import { type KV } from "@nats-io/kv";
 import { decodeJson, encodeJson } from "../../../src/internal/json.js";

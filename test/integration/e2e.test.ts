@@ -321,7 +321,7 @@ describe.skipIf(!natsUrl)("end-to-end (worker + client, real nats-server)", () =
   // durable-sdk: "a FENCED inbound event is retried, not lost" is dropped. It injected the fence by
   // patching NatsJournal.prototype.append inside the worker; recording an inbound event is the
   // engine's now (it journals the event before the poll hands the item out, retried past a fence:
-  // durable-engine core.RecordInbound and its tests), and no SDK request carries it.
+  // the engine's own tests prove it), and no SDK request carries it.
   it("ctx.await timeout fires when no signal arrives (real timer)", async () => {
     const wf = defineWorkflow("await_to_e2e", async (ctx) => {
       try {

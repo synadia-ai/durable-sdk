@@ -10,8 +10,8 @@
 //                   (`http://host:port`); without it the harness starts one for the run
 //   DE_CLEANUP      `delete` or `keep` the prefix's eight at the run's end; by default a generated
 //                   prefix is deleted (only this run can have made it) and a DE_PREFIX one kept
-//   DE_TENANT       the tests run as this tenant of an engine in tenancy mode (`serve --tenancy`,
-//                   the engine's PR #7): the token the tenant's import places, `{prefix}.{tenant}.…`
+//   DE_TENANT       the tests run as this tenant of an engine in tenancy mode (`serve --tenancy`):
+//                   the token the tenant's import places, `{prefix}.{tenant}.…`
 //   DE_ADMIN_URL    where the harness reads the engine's streams and consumers (default DE_NATS_URL):
 //   DE_ADMIN_CREDS  as a tenant the tests' own connection sees none (default DE_NATS_CREDS)
 //
@@ -367,8 +367,9 @@ function ofRuns(name: string, runIds: Set<string>): boolean {
 /**
  * Delete the blobs of `runIds` from the prefix's blob store by name: each object's meta record and
  * its chunks, purged. By name, not by the snapshot's diff: a test that timed out leaves its worker
- * and the engine writing after its cleanup (the dev NGS run left 17 blobs so), and those land in
- * the next test's snapshot, out of every diff's reach. Returns how many objects were deleted.
+ * and the engine writing after its cleanup (a run against a remote server left 17 blobs so), and
+ * those land in the next test's snapshot, out of every diff's reach. Returns how many objects
+ * were deleted.
  */
 export async function deleteRunBlobs(
   nc: NatsConnection,

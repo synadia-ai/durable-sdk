@@ -192,7 +192,7 @@ describe.skipIf(!natsUrl)("worker recovery paths (real nats-server)", () => {
   // durable-sdk: "an event append that keeps losing its CAS NAKs — the event is never acked away"
   // is dropped. It injected the fences by patching NatsJournal.prototype.append inside the worker;
   // recording the signal is the engine's now (journaled before the poll hands the item out, nak'd
-  // when every attempt is fenced: durable-engine core.RecordInbound, engine.TestRecordInbound*),
+  // when every attempt is fenced, as the engine's own tests prove),
   // and no SDK request carries the signal entry.
   // prettier-ignore
   it("a terminal RE-DRIVE repairs a status hint the crash window left stale", async () => {

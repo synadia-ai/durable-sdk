@@ -1,7 +1,7 @@
 // The cross-language proof, the TypeScript side: a TYPESCRIPT client driving a PYTHON worker
 // process (python/conformance/worker.py, the twin of conformance/interop/ts-worker.ts), through
 // durable-engine serve. Nothing is shared between the two processes except the engine's API and
-// the protocol (durable-engine docs/protocol/PROTOCOL.md). Each case runs twice: plain, and with
+// the protocol (the engine's protocol specification). Each case runs twice: plain, and with
 // DE_PAYLOAD_KEY (the two SDKs' AES-GCM payload codecs must agree, and nothing on the journal may
 // be plaintext).
 //

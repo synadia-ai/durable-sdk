@@ -346,7 +346,7 @@ describe.skipIf(!natsUrl)("large-payload offload (real nats-server + object stor
   // durable-sdk: F1, answered by the engine's F25 (put and get) and the SDK's
   // chunked transport (src/engine/blobs.ts).
   // durable-sdk: 1.5 × max_payload up, then down and up again per generation: 7.5 in the tally.
-  // The dev NGS run of 2026-10-04 timed it out at its 44.7 s of round-trip factor alone.
+  // A run against a remote server timed it out at its 44.7 s of round-trip factor alone.
   it(
     "a big continue-as-new INPUT crosses generations as refs",
     async () => {

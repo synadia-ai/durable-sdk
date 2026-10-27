@@ -204,7 +204,7 @@ async def test_a_work_item_for_a_run_with_no_journal_retries_then_drops(
 # durable-sdk: "an event append that keeps fencing NAKs rather than losing the event" is dropped.
 # It injected the fences by patching the worker's own NatsJournal.append; recording the signal is
 # the engine's now (journaled before the poll hands the item out, nak'd when every attempt is
-# fenced: durable-engine core.RecordInbound, engine.TestRecordInbound*), and no SDK request carries
+# fenced, as the engine's own tests prove), and no SDK request carries
 # the signal entry. The TS twin dropped the same test.
 
 

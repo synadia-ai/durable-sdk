@@ -1,7 +1,7 @@
 """**The cross-language proof**: a PYTHON client driving a TYPESCRIPT worker.
 
 Nothing is shared between the two processes except the NATS streams and the protocol
-(``durable-engine`` ``docs/protocol/PROTOCOL.md``). No
+(the engine's protocol specification). No
 generated code, no shared library, no bridge. If the spec is a real contract, this passes; if it is a
 description of some TypeScript, it does not.
 

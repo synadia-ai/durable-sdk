@@ -276,7 +276,7 @@ async def test_a_fan_out_survives_the_same_treatment(nc: Any, prefix: str) -> No
 # durable-sdk: "a fenced inbound event is retried, not lost" is dropped. It injected the fence by
 # patching the worker's own journal (`worker._journal.append`); recording an inbound event is the
 # engine's now (it journals the event before the poll hands the item out, retried past a fence:
-# durable-engine core.RecordInbound and its tests), and no SDK request carries it. The TypeScript
+# the engine's own tests prove it), and no SDK request carries it. The TypeScript
 # twin dropped the same test (test/integration/e2e.test.ts).
 
 

@@ -135,11 +135,11 @@ export class LimitError extends EngineError {
  * What this SDK needs of the engine, read from `info.capabilities` (the engine's API.md
  * `info`, its F57), never from `info.engine`: the repo has no tag, so every build says `0.2.0-dev`.
  * `withdrawn-remembered` (its F53): a worker withdrawn by `cancelPoll` is remembered 5 s on every
- * instance, so stop() sends one `cancelPoll`. The engine announces it from its #13 (`16cb3da`).
+ * instance, so stop() sends one `cancelPoll`. The engine announces it from commit `16cb3da`.
  */
 export const ENGINE_FLOOR = {
   capabilities: ["withdrawn-remembered"],
-  since: "the engine's #13 (16cb3da)",
+  since: "commit 16cb3da",
 } as const;
 
 /**

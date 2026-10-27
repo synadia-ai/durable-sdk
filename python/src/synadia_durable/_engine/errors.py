@@ -143,7 +143,7 @@ class LimitError(EngineError):
 #: ``cancelPoll`` is remembered 5 s on every instance, so ``stop()`` sends one ``cancelPoll``.
 ENGINE_FLOOR_CAPABILITIES: tuple[str, ...] = ("withdrawn-remembered",)
 #: The engine that first announces them.
-ENGINE_FLOOR_SINCE = "the engine's #13 (16cb3da)"
+ENGINE_FLOOR_SINCE = "commit 16cb3da"
 
 
 class UnsupportedEngineError(EngineError):

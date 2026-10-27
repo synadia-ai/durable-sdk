@@ -137,7 +137,7 @@ describe.skipIf(!natsUrl)("ack-progress heartbeats for long steps (real nats-ser
       // durable-sdk: assertion touched, `toBe(1)` → `toBeLessThanOrEqual(1)`. The queued signal
       // item now waits in the engine, behind the run's held item, with its ack wait kept there;
       // when it comes up the run has ended, and the engine never hands an ended run's item to a
-      // poll (it acks it itself: durable-engine docs/API.md "poll"). So it reaches this worker 0
+      // poll (it acks it itself: the engine's API.md, "poll"). So it reaches this worker 0
       // times, never twice — the claim of the test, "never redelivers", is what still holds.
       expect(signalDispatches.length).toBeLessThanOrEqual(1); // at most one delivery of the queued signal item
     } finally {

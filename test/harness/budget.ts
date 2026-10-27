@@ -1,8 +1,8 @@
 // The bandwidth term of a large-value test's budget (docs/DEVELOPING.md "Against an existing server"). The
 // round-trip factor (existing.ts `rttFactor`) scales a test's waits with the link's latency; a
 // test that moves values over the inline limit also waits for their bytes, which over a WAN take
-// longer than its round trips: the dev NGS run of 2026-10-04 moved one test's ~42 MiB in 81 s at a
-// 51 ms round trip. So such a test's budget adds the bytes it moves over the throughput measured
+// longer than its round trips: a run against a remote server moved one test's ~42 MiB in 81 s at
+// a 51 ms round trip. So such a test's budget adds the bytes it moves over the throughput measured
 // at the start (existing.ts `measureThroughput`: a put and a get through the engine), × HEADROOM.
 // Vitest-free: global-setup.ts prints the headroom next to the throughput.
 
