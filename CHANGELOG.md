@@ -24,5 +24,3 @@ The first published version of the thin TypeScript SDK, continuing the frozen li
 - **Payload offload through the engine:** a value too large for one request goes up in `put` parts and travels as a ref; one too large for a reply comes down in `get` parts, its digest checked. `offload: false` makes a value too large for a request fail loud instead.
 - **Typed engine errors:** one class per refusal code of the engine's API (`InvalidRequestError`, `LeaseExpiredError`, `RunNotFoundError`, `EngineUnavailableError`, `LimitError` for `tenant_limit` and `licence_limit`, `EngineFencedError`), all `EngineError`s.
 - **`aesGcmPayloadCodec`:** payloads encrypted before they leave the process; the engine sees a run's shape and never a value.
-
-The development before this version: the repository's `docs/HISTORY.md`.
