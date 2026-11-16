@@ -22,7 +22,7 @@ The Python suites, in `python/`, read the same variables (`python/tests/engine.p
 ```sh
 cd python
 uv run ruff format --check . && uv run ruff check . && uv run mypy
-uv run pytest -rs                  # the unit suites, then the integration suites
+uv run pytest -rs                  # all suites; the integration suites skip without DE_ENGINE
 ```
 
 Their interop suites also need `npx` and the repo's `node_modules` (`bun install` at the root). nats-py reads `user:password@` from a URL; a creds file needs `nkeys` next to it, a dev dependency there.
