@@ -12,11 +12,20 @@ classifiers = [
   "Development Status :: 3 - Alpha",
   "Framework :: AsyncIO",
   "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Topic :: System :: Distributed Computing",
+  "Typing :: Typed",
 ]
+
+[project.urls]
+Homepage = "https://github.com/synadia-ai/durable-sdk/tree/main/python"
+Repository = "https://github.com/synadia-ai/durable-sdk"
+Issues = "https://github.com/synadia-ai/durable-sdk/issues"
+Changelog = "https://github.com/synadia-ai/durable-sdk/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 # The core library has no crypto dependency. `aes_gcm_payload_codec` — the ready-made
@@ -31,6 +40,11 @@ build-backend = "hatchling.build"
 packages = ["src/synadia_durable"]
 # PEP 561: ship the marker, or every downstream type checker silently ignores our annotations.
 artifacts = ["src/synadia_durable/py.typed"]
+
+[tool.hatch.build.targets.sdist]
+# What a build from the sdist needs, and what PyPI shows. The suites stay in the repository: they
+# read its conformance vectors, and the integration suites need an engine.
+include = ["/src", "/README.md", "/LICENSE", "/pyproject.toml"]
 
 [dependency-groups]
 dev = [
