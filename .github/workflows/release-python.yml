@@ -1,17 +1,15 @@
 name: Python package release
 
 # synadia-durable to PyPI by trusted publishing (docs/python-publication.md). A pull request that
-# changes the pipeline or the package's metadata runs every job but the last; a `python-v*` tag
-# runs them all, and only the last one may publish.
+# changes the package or the pipeline runs every job but the last; a `python-v*` tag runs them
+# all, and only the last one may publish.
 on:
   pull_request:
     paths:
       - ".github/workflows/release-python.yml"
       - "scripts/python-release.py"
       - "scripts/tests/test_python_release.py"
-      - "python/pyproject.toml"
-      - "python/README.md"
-      - "python/LICENSE"
+      - "python/**"
   push:
     tags: ["python-v*"]
 
@@ -78,10 +76,9 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Build exact committed source once
-        run: >-
-          python3 scripts/python-release.py build
-          --version "${{ steps.version.outputs.version }}"
-          --artifacts "$RUNNER_TEMP/python-artifacts"
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: python3 scripts/python-release.py build --version "$VERSION" --artifacts "$RUNNER_TEMP/python-artifacts"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: python-release-${{ github.sha }}
@@ -107,10 +104,9 @@ jobs:
           name: python-release-${{ github.sha }}
           path: ${{ runner.temp }}/python-artifacts
       - name: Verify the digests, install each artifact and run the smoke
-        run: >-
-          python3 scripts/python-release.py verify
-          --version "${{ needs.build.outputs.version }}"
-          --artifacts "$RUNNER_TEMP/python-artifacts" --install
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: python3 scripts/python-release.py verify --version "$VERSION" --artifacts "$RUNNER_TEMP/python-artifacts" --install
 
   publish:
     name: Publish verified bytes to PyPI
