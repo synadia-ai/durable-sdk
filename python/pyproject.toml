@@ -1,7 +1,7 @@
 [project]
 name = "synadia-durable"
 version = "0.2.0"
-description = "The thin durable execution SDK: the replay core of synadia-durable in your process, durable-engine behind it."
+description = "Durable execution for Python on NATS: workflows as async functions, every step journaled, durable-engine behind it."
 readme = "README.md"
 license = "Apache-2.0"
 authors = [{ name = "Synadia Communications" }]
@@ -33,7 +33,8 @@ Changelog = "https://github.com/synadia-ai/durable-sdk/blob/main/CHANGELOG.md"
 crypto = ["cryptography>=42"]
 
 [build-system]
-requires = ["hatchling"]
+# 1.27 is the first hatchling with PEP 639's licence expression (`license = "Apache-2.0"`).
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

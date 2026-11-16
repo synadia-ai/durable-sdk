@@ -8,6 +8,7 @@ import json
 import os
 import tarfile
 import tempfile
+import tomllib
 import unittest
 import zipfile
 from pathlib import Path
@@ -29,7 +30,7 @@ version = "{VERSION}"
 dependencies = ["nats-py>=2.15.0"]
 
 [build-system]
-requires = ["{release.BUILD_BACKEND}"]
+requires = ["{release.BACKEND_REQUIREMENT}"]
 build-backend = "hatchling.build"
 """
 SOURCES = {
@@ -63,6 +64,7 @@ def make_artifacts(
     sdist_extra: dict[str, str] | None = None,
     readme: str = README,
     description: str | None = None,
+    generator: str = release.BUILD_BACKEND.replace("==", " "),
 ) -> tuple[Path, Path]:
     wheel = root / f"{STEM}-py3-none-any.whl"
     sdist = root / f"{STEM}.tar.gz"
@@ -73,7 +75,7 @@ def make_artifacts(
         archive.writestr(
             info + "METADATA", metadata(readme if description is None else description)
         )
-        archive.writestr(info + "WHEEL", "Wheel-Version: 1.0\n")
+        archive.writestr(info + "WHEEL", f"Wheel-Version: 1.0\nGenerator: {generator}\n")
         archive.writestr(info + "licenses/LICENSE", LICENSE)
         archive.writestr(info + "RECORD", "")
     files = {
@@ -105,6 +107,14 @@ INJECTED_SKIPPED = (
     '<testcase classname="tests.integration.test_injected_failure" name="test_e">'
     '<skipped type="pytest.skip" message="DE_INJECT_FAILURE=1 only"/></testcase>'
 )
+UNIT_SKIPPED = (
+    '<testcase classname="tests.test_engine_errors" name="test_f">'
+    '<skipped type="pytest.skip" message="no DE_ENGINE_API_MD"/></testcase>'
+)
+UNIT_XFAILED = (
+    '<testcase classname="tests.test_replay" name="test_g">'
+    '<skipped type="pytest.xfail" message="known"/></testcase>'
+)
 UNIT_PASSED = '<testcase classname="tests.test_replay" name="test_a"/>'
 INTEGRATION_SKIPPED = (
     '<testcase classname="tests.integration.test_worker" name="test_b">'
@@ -128,30 +138,25 @@ class PythonReleaseTests(unittest.TestCase):
                 release.clean_uv_output(root)
             self.assertEqual(ignore.read_bytes(), b"unexpected")
 
-    def test_stage_pins_the_build_backend_and_keeps_the_rest(self) -> None:
-        source = (
-            '[project]\nname = "synadia-durable"\nversion = "0.2.0"\n'
-            'dependencies = ["nats-py>=2.15.0"]\n\n'
-            '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
-        )
-        staged = release.stage_project(source)
-        self.assertIn(f'requires = ["{release.BUILD_BACKEND}"]', staged)
-        self.assertIn('"nats-py>=2.15.0"', staged)
-        self.assertEqual(staged.replace(release.BUILD_BACKEND, "hatchling"), source)
-        with self.assertRaisesRegex(ValueError, "no build-system requires"):
-            release.stage_project('[project]\nname = "x"\n')
+    def test_the_project_declares_the_backend_requirement_not_the_pin(self) -> None:
+        project = tomllib.loads(PROJECT)
+        release.check_project(project)
+        pinned = tomllib.loads(PROJECT.replace(release.BACKEND_REQUIREMENT, release.BUILD_BACKEND))
+        with self.assertRaisesRegex(ValueError, "build-system requires"):
+            release.check_project(pinned)
+        project["tool"] = {"uv": {"sources": {"nats-py": {"path": "../nats"}}}}
         with self.assertRaisesRegex(ValueError, "source override"):
-            release.stage_project(source + '\n[tool.uv.sources]\nnats-py = { path = "../nats" }\n')
+            release.check_project(project)
 
-    def test_the_committed_project_stages(self) -> None:
+    def test_the_committed_project_declares_the_backend_requirement(self) -> None:
         text = (release.ROOT / "python" / "pyproject.toml").read_text()
-        self.assertIn(release.BUILD_BACKEND, release.stage_project(text))
+        release.check_project(tomllib.loads(text))
 
     def test_public_boundary_admits_this_repository_only(self) -> None:
         release.public_bytes(b"https://github.com/synadia-ai/durable-sdk/blob/main/x", "readme")
         release.public_bytes(b"git@github.com:synadia-ai/durable-sdk.git", "readme")
         with self.assertRaisesRegex(ValueError, "unapproved repository"):
-            release.public_bytes(b"https://github.com/synadia-ai/durable-engine", "readme")
+            release.public_bytes(b"https://github.com/synadia-ai/other-repo", "readme")
         with self.assertRaisesRegex(ValueError, "local build path"):
             release.public_bytes(b"built in /Users/someone/src", "module")
 
@@ -179,6 +184,13 @@ class PythonReleaseTests(unittest.TestCase):
             self.assertEqual(len(release.inspect(root, VERSION)), 2)
             with self.assertRaisesRegex(ValueError, "filename differs"):
                 release.inspect(root, "0.2.1")
+
+    def test_inspection_refuses_a_wheel_built_by_another_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            make_artifacts(root, generator="hatchling 1.27.0")
+            with self.assertRaisesRegex(ValueError, "not built by"):
+                release.inspect(root, VERSION)
 
     def test_inspection_refuses_a_wheel_that_is_not_the_sdists_sources(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -243,7 +255,11 @@ class PythonReleaseTests(unittest.TestCase):
     def test_the_suite_check_wants_units_passed_and_integration_skipped_for_no_engine(
         self,
     ) -> None:
-        self.check_suite([UNIT_PASSED, INTEGRATION_SKIPPED, INTEGRATION_SKIPPED, INJECTED_SKIPPED])
+        self.check_suite(
+            [UNIT_PASSED, INTEGRATION_SKIPPED, INTEGRATION_SKIPPED, INJECTED_SKIPPED]
+            + [UNIT_SKIPPED] * release.MAX_UNIT_SKIPS
+            + [UNIT_XFAILED] * 5
+        )
         cases = {
             "did not skip for want of an engine": [UNIT_PASSED, INJECTED_SKIPPED],
             "no unit test passed": [INTEGRATION_SKIPPED],
@@ -260,6 +276,7 @@ class PythonReleaseTests(unittest.TestCase):
                 '<testcase classname="tests.integration.test_worker" name="test_d">'
                 '<skipped type="pytest.skip" message="nats-server not found on PATH"/></testcase>',
             ],
+            "4 unit tests skipped": [UNIT_PASSED, INTEGRATION_SKIPPED, *[UNIT_SKIPPED] * 4],
             "t: failure": [
                 UNIT_PASSED,
                 INTEGRATION_SKIPPED,

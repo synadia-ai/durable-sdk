@@ -45,8 +45,10 @@ REPOSITORY = "synadia-ai/durable-sdk"
 # External dependencies (build and install) resolve as of this date: at least seven days before
 # the release. Move it deliberately for a later release (docs/python-publication.md).
 CUTOFF = "2026-11-09T00:00:00Z"
-# The build backend, exact, in the staged sdist's pyproject.toml.
+# The release build's backend, exact, by a build constraint; the wheel's WHEEL file names it.
 BUILD_BACKEND = "hatchling==1.33.0"
+# The project's own requirement, which the published sdist keeps (a licence expression needs 1.27).
+BACKEND_REQUIREMENT = "hatchling>=1.27"
 # The wheel's Requires-Dist, exactly, with spaces removed and quotes made double.
 REQUIRES = {"nats-py>=2.15.0", 'cryptography>=42;extra=="crypto"'}
 EXTRAS = {"crypto"}
@@ -55,6 +57,8 @@ PYTHONS = ("3.11", "3.12", "3.13")
 SDIST_FILES = {"PKG-INFO", "pyproject.toml", "README.md", "LICENSE"}
 # An integration test skips with this reason when no engine is given (tests/integration/conftest.py)
 NO_ENGINE = "durable-engine unavailable"
+# Without an engine the unit suites skip one test (no DE_ENGINE_API_MD); more means a lost suite.
+MAX_UNIT_SKIPS = 3
 
 
 def run(command: list[str], **kwargs: Any) -> None:
@@ -95,7 +99,7 @@ def requirement(value: str) -> str:
     return value.replace(" ", "").replace("'", '"')
 
 
-def wheel_metadata(values: Message, version: str, license_text: bytes, readme: str) -> None:
+def wheel_metadata(values: Message, version: str, readme: str) -> None:
     require(values["Name"] == NAME and values["Version"] == version, "wheel name/version differs")
     require(values["Requires-Python"] == ">=3.11", "wheel Requires-Python differs")
     require(values["License-Expression"] == "Apache-2.0", "wheel license expression differs")
@@ -120,7 +124,6 @@ def wheel_metadata(values: Message, version: str, license_text: bytes, readme: s
             target.startswith(f"https://github.com/{REPOSITORY}"),
             f"project URL outside this repository: {url}",
         )
-    require(license_text, "wheel license empty")
 
 
 def inspect(directory: Path, version: str) -> list[Path]:
@@ -165,8 +168,7 @@ def inspect(directory: Path, version: str) -> list[Path]:
         project["project"]["name"] == NAME and project["project"]["version"] == version,
         "sdist name/version differs",
     )
-    require(project["build-system"]["requires"] == [BUILD_BACKEND], "sdist build backend differs")
-    require("sources" not in project.get("tool", {}).get("uv", {}), "sdist has source overrides")
+    check_project(project)
     readme = files["README.md"].decode()
     links_work_from_pypi(readme, "the sdist's README")
     sources = {p.removeprefix("src/"): data for p, data in files.items() if p.startswith(package)}
@@ -193,29 +195,25 @@ def inspect(directory: Path, version: str) -> list[Path]:
         require(archive.read(f"{info}licenses/LICENSE") == license_text, "wheel license differs")
         # Core metadata is UTF-8 (the README in it has ≥, →, …): parsed as text, not as bytes.
         values = Parser().parsestr(archive.read(f"{info}METADATA").decode("utf-8"))
-        wheel_metadata(values, version, license_text, readme)
+        wheel_metadata(values, version, readme)
+        generator = f"Generator: {BUILD_BACKEND.replace('==', ' ')}"
+        require(
+            generator in archive.read(f"{info}WHEEL").decode().splitlines(),
+            f"the wheel was not built by {BUILD_BACKEND}",
+        )
         packaged = {n: archive.read(n) for n in names if n.startswith(f"{MODULE}/")}
     require(packaged == sources, "the wheel's package is not the sdist's sources")
     return [wheel, sdist]
 
 
-def stage_project(text: str) -> str:
-    """The staged pyproject.toml: the build backend exact, nothing else changed."""
-    lines, section, pinned = [], "", False
-    for line in text.splitlines(keepends=True):
-        heading = re.match(r"^\[([^]]+)\]\s*$", line)
-        if heading:
-            section = heading.group(1)
-        if section == "build-system" and line.startswith("requires ="):
-            line = f'requires = ["{BUILD_BACKEND}"]\n'
-            pinned = True
-        lines.append(line)
-    result = "".join(lines)
-    require(pinned, "no build-system requires to pin")
-    parsed = tomllib.loads(result)
-    require(parsed["build-system"]["requires"] == [BUILD_BACKEND], "build backend not pinned")
-    require("sources" not in parsed.get("tool", {}).get("uv", {}), "source override present")
-    return result
+def check_project(project: dict[str, Any]) -> None:
+    """The project as committed and as published: the backend requirement the project declares,
+    never the release build's pin, and no source overrides."""
+    require(
+        project["build-system"]["requires"] == [BACKEND_REQUIREMENT],
+        f"build-system requires is not [{BACKEND_REQUIREMENT!r}]",
+    )
+    require("sources" not in project.get("tool", {}).get("uv", {}), "source override present")
 
 
 def clean_uv_output(directory: Path) -> None:
@@ -266,15 +264,24 @@ def build(directory: Path, version: str) -> None:
             re.search(rf'^VERSION = "{re.escape(version)}"$', module_version, re.M),
             "the module's VERSION differs from pyproject.toml's",
         )
-        project.write_text(stage_project(project.read_text()))
-        run(["uv", "build", "--sdist", "--out-dir", str(directory), str(stage / PROJECT)], env=env)
+        check_project(tomllib.loads(project.read_text()))
+        constraints = stage / "build-constraints.txt"
+        constraints.write_text(BUILD_BACKEND + "\n")
+        pinned = ["--build-constraints", str(constraints)]
+        run(
+            ["uv", "build", "--sdist", *pinned, "--out-dir", str(directory), str(stage / PROJECT)],
+            env=env,
+        )
         (sdist,) = directory.glob("*.tar.gz")
         unpack = stage / "unpack"
         unpack.mkdir()
         with tarfile.open(sdist) as source:
             source.extractall(unpack, filter="data")
         (project_root,) = unpack.iterdir()
-        run(["uv", "build", "--wheel", "--out-dir", str(directory), str(project_root)], env=env)
+        run(
+            ["uv", "build", "--wheel", *pinned, "--out-dir", str(directory), str(project_root)],
+            env=env,
+        )
     clean_uv_output(directory)
     artifacts = inspect(directory, version)
     record = {
@@ -341,11 +348,11 @@ def verify(directory: Path, version: str, install: bool) -> None:
 
 
 def check_suite(report: Path) -> None:
-    """The source suite without an engine: no failure and no error, at least one unit test passed,
-    and every integration test collected and skipped, most for want of an engine (a skip, never a
-    pass of zero). The skips' reasons are printed with their counts."""
+    """The source suite without an engine: no failure and no error, at least one unit test passed
+    and at most a handful skipped, and every integration test collected and skipped, most for want
+    of an engine (a skip, never a pass of zero). The skips' reasons are printed with their counts."""
     tree = ElementTree.parse(report)
-    passed = skipped = 0
+    passed = skipped = xfailed = 0
     reasons: dict[str, int] = {}
     for case in tree.iter("testcase"):
         outcomes = [child for child in case if child.tag in {"failure", "error", "skipped"}]
@@ -357,17 +364,22 @@ def check_suite(report: Path) -> None:
             reason = outcomes[0].get("message") or ""
             reason = NO_ENGINE if NO_ENGINE in reason else reason
             reasons[reason] = reasons.get(reason, 0) + 1
-        elif outcomes:
-            skipped += 1
-        else:
+        elif not outcomes:
             passed += 1
+        elif outcomes[0].get("type") == "pytest.xfail":
+            xfailed += 1
+        else:
+            skipped += 1
     require(passed > 0, "no unit test passed")
+    require(skipped <= MAX_UNIT_SKIPS, f"{skipped} unit tests skipped, more than {MAX_UNIT_SKIPS}")
     total = sum(reasons.values())
     require(
         reasons.get(NO_ENGINE, 0) * 2 > total,
         "the integration tests did not skip for want of an engine",
     )
-    print(f"unit: {passed} passed, {skipped} skipped or xfailed; integration: {total} skipped")
+    print(
+        f"unit: {passed} passed, {skipped} skipped, {xfailed} xfailed; integration: {total} skipped"
+    )
     for reason, count in sorted(reasons.items(), key=lambda item: -item[1]):
         print(f"  {count:4d}  {reason}")
 
