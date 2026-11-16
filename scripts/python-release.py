@@ -32,7 +32,7 @@ import tempfile
 import tomllib
 import zipfile
 from email.message import Message
-from email.parser import BytesParser
+from email.parser import Parser
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
@@ -191,7 +191,8 @@ def inspect(directory: Path, version: str) -> list[Path]:
             "wheel metadata files differ",
         )
         require(archive.read(f"{info}licenses/LICENSE") == license_text, "wheel license differs")
-        values = BytesParser().parsebytes(archive.read(f"{info}METADATA"))
+        # Core metadata is UTF-8 (the README in it has ≥, →, …): parsed as text, not as bytes.
+        values = Parser().parsestr(archive.read(f"{info}METADATA").decode("utf-8"))
         wheel_metadata(values, version, license_text, readme)
         packaged = {n: archive.read(n) for n in names if n.startswith(f"{MODULE}/")}
     require(packaged == sources, "the wheel's package is not the sdist's sources")

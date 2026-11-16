@@ -21,7 +21,7 @@ SPEC.loader.exec_module(release)
 
 VERSION = "0.2.0"
 STEM = f"synadia_durable-{VERSION}"
-README = "# synadia-durable\n\nSee [the repository](https://github.com/synadia-ai/durable-sdk).\n"
+README = "# synadia-durable\n\nPython ≥ 3.11 → [the repository](https://github.com/synadia-ai/durable-sdk).\n"
 LICENSE = (release.ROOT / "LICENSE").read_text()
 PROJECT = f"""[project]
 name = "synadia-durable"
