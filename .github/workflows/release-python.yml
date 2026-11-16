@@ -1,0 +1,135 @@
+name: Python package release
+
+# synadia-durable to PyPI by trusted publishing (docs/python-publication.md). A pull request that
+# changes the package or the pipeline runs every job but the last; a `python-v*` tag runs them
+# all, and only the last one may publish.
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/release-python.yml"
+      - "scripts/python-release.py"
+      - "scripts/tests/test_python_release.py"
+      - "python/**"
+  push:
+    tags: ["python-v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  UV_VERSION: "0.9.26"
+
+jobs:
+  source:
+    name: Python source suite (no engine)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.12"
+          enable-cache: false
+      # The engine is not public: the integration suites skip without DE_ENGINE, saying why, and
+      # check-suite fails unless each of them did and the unit suites passed.
+      - name: Lint, types and the suites
+        working-directory: python
+        run: |
+          uv sync --locked
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy
+          uv run pytest -rs --junitxml="$RUNNER_TEMP/pytest.xml"
+      - name: The unit suites passed, the integration suites skipped for want of an engine
+        run: python3 scripts/python-release.py check-suite --junit "$RUNNER_TEMP/pytest.xml"
+
+  build:
+    name: Build and inspect distributions
+    needs: source
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.12"
+          enable-cache: false
+      - name: Test publication controls
+        run: python3 -m unittest discover -s scripts/tests -p test_python_release.py -v
+      - name: The version, and the tag that names it
+        id: version
+        run: |
+          version="$(python3 scripts/python-release.py version)"
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" != "python-v$version" ]; then
+            echo "::error::the tag $GITHUB_REF_NAME does not name python/pyproject.toml's version $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Build exact committed source once
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: python3 scripts/python-release.py build --version "$VERSION" --artifacts "$RUNNER_TEMP/python-artifacts"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: python-release-${{ github.sha }}
+          path: ${{ runner.temp }}/python-artifacts/
+          if-no-files-found: error
+          retention-days: 14
+
+  verify:
+    name: Install the wheel and the sdist on Python 3.11, 3.12 and 3.13
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.12"
+          enable-cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: python-release-${{ github.sha }}
+          path: ${{ runner.temp }}/python-artifacts
+      - name: Verify the digests, install each artifact and run the smoke
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: python3 scripts/python-release.py verify --version "$VERSION" --artifacts "$RUNNER_TEMP/python-artifacts" --install
+
+  publish:
+    name: Publish verified bytes to PyPI
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/python-v')
+    needs: verify
+    runs-on: ubuntu-24.04
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: python-release-${{ github.sha }}
+          path: release-artifacts
+      - name: Verify exact downloaded distributions
+        run: |
+          python3 scripts/python-release.py verify --version "${GITHUB_REF_NAME#python-v}" --artifacts release-artifacts
+          mkdir dist
+          cp release-artifacts/*.whl release-artifacts/*.tar.gz dist/
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/
