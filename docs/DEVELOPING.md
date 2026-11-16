@@ -1,6 +1,6 @@
 # Developing
 
-For contributors to this repo: the test suites, the harness's modes, and the interop worker. A user of the package needs none of it; the [README](../README.md) is theirs.
+For contributors to this repo: the test suites, the harness's modes, the interop worker, and the Python package's release. A user of the package needs none of it; the [README](../README.md) is theirs, and [`python/README.md`](../python/README.md) the Python user's.
 
 ## Testing
 
@@ -16,6 +16,16 @@ The integration suites spawn a `nats-server` (≥ 2.14, from `PATH`) under the l
 **The `limits` suite needs the engine's licence tool (`DE_LICENCE_TOOL`) and its fabric build (`DE_ENGINE_FABRIC`)**, for a licence with low limits and an engine in tenancy mode (`serve --tenancy`); without them its tests skip, saying so.
 
 `npm run check` adds the typecheck, lint and formatting.
+
+The Python suites, in `python/`, read the same variables (`python/tests/engine.py`):
+
+```sh
+cd python
+uv run ruff format --check . && uv run ruff check . && uv run mypy
+uv run pytest -rs                  # the unit suites, then the integration suites
+```
+
+Their interop suites also need `npx` and the repo's `node_modules` (`bun install` at the root). nats-py reads `user:password@` from a URL; a creds file needs `nkeys` next to it, a dev dependency there.
 
 ### Against an existing server
 
@@ -57,7 +67,11 @@ Against a remote server, `DE_TEST_RTT_MS` does not apply (the latency is real, a
 NATS_URL=nats://127.0.0.1:4222 DE_PREFIX=de npx tsx conformance/interop/ts-worker.ts   # prints READY
 ```
 
-The Python suites drive it (`python/tests/integration/test_interop.py`), and `test/integration/interop-py.test.ts` drives the Python interop worker (`python/conformance/worker.py`) with the TypeScript client, each with and without `DE_PAYLOAD_KEY`. `conformance/interop/ts-client.ts` is the library's TypeScript client for the Python reverse suite.
+The Python suites drive it (`python/tests/integration/test_interop.py`), and `test/integration/interop-py.test.ts` drives the Python interop worker (`python/conformance/worker.py`, its twin) with the TypeScript client, each with and without `DE_PAYLOAD_KEY`. `conformance/interop/ts-client.ts` is the library's TypeScript client for the Python reverse suite. The Python worker, likewise:
+
+```sh
+cd python && NATS_URL=nats://127.0.0.1:4222 DE_PREFIX=de uv run python conformance/worker.py   # prints READY
+```
 
 ## How the SDK works with the engine
 
@@ -107,3 +121,7 @@ The user's half of running it; the engine's operator has the other.
 | how soon a dead worker's run moves | the engine's `--ack-wait` (30 s by default)                                                                             | the item redelivers once the lease lapses                                                                                                                                                                        |
 | plaintext values in the journal    | `payloadCodec: aesGcmPayloadCodec(key)` on **every** worker and client of the prefix (32 bytes, from your secret store) | it transforms the payload slot only; the engine and the console see a run's shape and never a value. Not retroactive, one-way in practice, and the key's rotation is yours (the engine's protocol specification) |
 | who may start, signal or cancel    | the account's authorization (standalone), or your tenant's users ([on the fabric](FABRIC.md#standalone-and-the-fabric)) | every call is a request on `{prefix}.api.v1.<op>`                                                                                                                                                                |
+
+## Releasing the Python package
+
+`synadia-durable` goes to PyPI from a `python-v<version>` tag, by the workflow `.github/workflows/release-python.yml` and trusted publishing: the owner's steps, the qualification against the engine and the tag are in [`python-publication.md`](python-publication.md).

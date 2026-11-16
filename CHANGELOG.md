@@ -2,6 +2,12 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Python 0.2.0 on PyPI
+
+- **`synadia-durable` 0.2.0 is published to PyPI** (`pip install synadia-durable`, `uv add synadia-durable`; the `crypto` extra for `aes_gcm_payload_codec`), from the tag `python-v0.2.0` by the workflow `release-python.yml` with trusted publishing ([`docs/python-publication.md`](docs/python-publication.md)). The code is 0.2.0's.
+- **The Python README and the package metadata link to this repository**, which is public now: the README has the install lines, a Quickstart in a project of your own and the examples from a clone; the suites, the harness's modes and the interop worker are `docs/DEVELOPING.md`'s.
+- **`UnsupportedEngineError`'s message** names the engine that first meets the floor as `commit 16cb3da`, without the engine's pull-request number (`ENGINE_FLOOR_SINCE`; the TypeScript source says the same, not yet on npm). No behaviour changed.
+
 ## [0.2.0] — 2026-10-17
 
 - **Works with the current engine:** the engine keeps one pair of consumers per tenant for all its workflow names, drops a work item that has no journal after a time limit, and journals a signal when it arrives, once per `id`.
